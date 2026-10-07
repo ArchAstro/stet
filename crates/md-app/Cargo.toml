@@ -1,0 +1,32 @@
+[package]
+name = "md-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windowed shell for md: winit + wgpu"
+
+[[bin]]
+name = "md"
+path = "src/main.rs"
+
+[dependencies]
+md-core = { path = "../md-core" }
+winit = "0.30"
+wgpu = "30"
+glyphon = "0.12"
+pollster = "1"
+bytemuck = { version = "1", features = ["derive"] }
+arboard = { version = "3", default-features = false }
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "pollster"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+serde_json = "1"
+open = "5"
+ureq = { version = "3", optional = true }
+
+[features]
+default = ["remote-images"]
+# Fetch images referenced by http(s) URLs.
+remote-images = ["dep:ureq"]

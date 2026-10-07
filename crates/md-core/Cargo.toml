@@ -1,0 +1,17 @@
+[package]
+name = "md-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Platform-free editing core: buffer, vim, markdown, suggestions, themes"
+
+[dependencies]
+ropey = "1"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
+unicode-segmentation = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+regex = "1"
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+memchr = "2"
