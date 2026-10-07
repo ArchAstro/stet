@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libxkbcommon-dev libwayland-dev
+      - run: cargo test --locked --all-targets --all-features
+      # The editor never opens a window in tests, so this is the one place the
+      # binary itself is run.
+      - run: cargo run --locked --bin md -- --version
+
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libxkbcommon-dev libwayland-dev
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo doc --locked --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  msrv:
+    name: MSRV (1.90)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.90"
+          components: clippy
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libxkbcommon-dev libwayland-dev
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+  # Incremental markdown analysis must equal a full parse after any edit.
+  soak:
+    name: Incremental analysis soak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - run: cargo test --locked --release -p md-core incremental_analysis
+        env:
+          MD_FUZZ: "20000"
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  homebrew-formula:
+    name: Homebrew formula
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Render the formula
+        run: |
+          brew tap-new --no-git md-ci/public-release
+          formula="$(brew --repository md-ci/public-release)/Formula/md.rb"
+          zeros="$(printf '0%.0s' {1..64})"
+          sed \
+            -e "s/__VERSION__/0.0.0/g" \
+            -e "s/__SHA_DARWIN_ARM64__/${zeros}/g" \
+            -e "s/__SHA_DARWIN_X64__/${zeros}/g" \
+            -e "s/__SHA_LINUX_X64__/${zeros}/g" \
+            .github/homebrew/md.rb.template > "${formula}"
+          ruby -c "${formula}"
+          if grep -n -E 'HOMEBREW_GITHUB_API_TOKEN|api\.github\.com|download_strategy' "${formula}"; then
+            echo "Homebrew formula must use only anonymous public release URLs" >&2
+            exit 1
+          fi

@@ -1,0 +1,225 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # A dry run: builds and packages every target without publishing anything.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.90"
+          components: clippy, rustfmt
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libxkbcommon-dev libwayland-dev
+      - name: Validate tag and package version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test "v${package_version}" = "${GITHUB_REF_NAME}"
+          fi
+          echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets --all-features
+      # cargo-audit's own dependencies may require a newer compiler than md's
+      # MSRV. Keep md validation on 1.90, then install and run the audit tool
+      # with the current stable toolchain.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            artifact: md-linux-x64
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            artifact: md-darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: md-darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: md-windows-x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.90"
+          targets: ${{ matrix.target }}
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libxkbcommon-dev libwayland-dev
+      - run: cargo build --locked --release --target "${{ matrix.target }}"
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          reported="$("target/${{ matrix.target }}/release/md" --version)"
+          test "${reported}" = "md ${{ needs.verify.outputs.version }}"
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist stage
+          cp LICENSE README.md stage/
+          cp -R skill stage/skill
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "target/${{ matrix.target }}/release/md.exe" stage/
+            (cd stage && 7z a -tzip "../dist/${{ matrix.artifact }}.zip" . > /dev/null)
+          else
+            cp "target/${{ matrix.target }}/release/md" stage/
+            tar -czf "dist/${{ matrix.artifact }}.tar.gz" -C stage .
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+      - name: Create checksums
+        run: |
+          mkdir release-assets
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp '{}' release-assets/ \;
+          cd release-assets
+          sha256sum ./* | sed 's#  \./#  #' > ../SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event.repository.visibility == 'public'
+        with:
+          subject-path: release-assets/*
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: |
+            release-assets/*
+            SHA256SUMS
+          generate_release_notes: true
+          make_latest: legacy
+
+  publication-freshness:
+    name: Check publication freshness
+    needs: release
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.latest.outputs.should_publish }}
+    steps:
+      - name: Compare with latest release
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          newest_tag="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' |
+              sed -n '/^v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$/p' |
+              sort --version-sort |
+              tail -1
+          )"
+          test -n "${newest_tag}"
+          if [[ "${GITHUB_REF_NAME}" == "${newest_tag}" ]]; then
+            echo "should_publish=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Skipping stale ${GITHUB_REF_NAME}; newest release is ${newest_tag}"
+            echo "should_publish=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  update-homebrew:
+    name: Update Homebrew tap
+    if: needs.publication-freshness.outputs.should_publish == 'true' && github.event.repository.visibility == 'public'
+    needs: [verify, release, publication-freshness]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: md-homebrew-publishing
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          {
+            echo "darwin_arm64=$(sha256sum artifacts/md-darwin-arm64/md-darwin-arm64.tar.gz | cut -d' ' -f1)"
+            echo "darwin_x64=$(sha256sum artifacts/md-darwin-x64/md-darwin-x64.tar.gz | cut -d' ' -f1)"
+            echo "linux_x64=$(sha256sum artifacts/md-linux-x64/md-linux-x64.tar.gz | cut -d' ' -f1)"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.ARCHASTRO_RELEASE_GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ steps.checksums.outputs.darwin_arm64 }}
+          SHA_DARWIN_X64: ${{ steps.checksums.outputs.darwin_x64 }}
+          SHA_LINUX_X64: ${{ steps.checksums.outputs.linux_x64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "ARCHASTRO_RELEASE_GITHUB_TOKEN is not configured" >&2
+            exit 1
+          fi
+          gh auth setup-git
+          git clone https://github.com/ArchAstro/homebrew-tools.git "${RUNNER_TEMP}/homebrew-tools"
+          cd "${RUNNER_TEMP}/homebrew-tools"
+          mkdir -p Formula
+          sed \
+            -e "s/__VERSION__/${VERSION}/g" \
+            -e "s/__SHA_DARWIN_ARM64__/${SHA_DARWIN_ARM64}/g" \
+            -e "s/__SHA_DARWIN_X64__/${SHA_DARWIN_X64}/g" \
+            -e "s/__SHA_LINUX_X64__/${SHA_LINUX_X64}/g" \
+            "${GITHUB_WORKSPACE}/.github/homebrew/md.rb.template" > Formula/md.rb
+          ruby -c Formula/md.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/md.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula is already current"
+            exit 0
+          fi
+          git commit -m "Update md to ${VERSION}"
+          git push origin main
