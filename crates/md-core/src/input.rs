@@ -35,11 +35,20 @@ pub struct KeyEvent {
 
 impl KeyEvent {
     pub fn new(key: Key) -> Self {
-        KeyEvent { key, mods: Mods::default() }
+        KeyEvent {
+            key,
+            mods: Mods::default(),
+        }
     }
 
     pub fn ctrl(c: char) -> Self {
-        KeyEvent { key: Key::Char(c), mods: Mods { ctrl: true, ..Mods::default() } }
+        KeyEvent {
+            key: Key::Char(c),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::default()
+            },
+        }
     }
 
     /// The typed character, when no command modifier is held.
@@ -63,11 +72,12 @@ pub fn parse_keys(notation: &str) -> Vec<KeyEvent> {
     while let Some(c) = rest.chars().next() {
         if c == '<'
             && let Some(close) = rest.find('>')
-                && let Some(event) = parse_named(&rest[1..close]) {
-                    out.push(event);
-                    rest = &rest[close + 1..];
-                    continue;
-                }
+            && let Some(event) = parse_named(&rest[1..close])
+        {
+            out.push(event);
+            rest = &rest[close + 1..];
+            continue;
+        }
         out.push(KeyEvent::new(Key::Char(c)));
         rest = &rest[c.len_utf8()..];
     }

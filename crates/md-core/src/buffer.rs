@@ -193,11 +193,12 @@ impl Buffer {
             return;
         }
         if let Some(mut txn) = self.open.take()
-            && !txn.edits.is_empty() {
-                txn.cursor_after = cursor;
-                txn.state_after = self.state;
-                self.undo.push(txn);
-            }
+            && !txn.edits.is_empty()
+        {
+            txn.cursor_after = cursor;
+            txn.state_after = self.state;
+            self.undo.push(txn);
+        }
     }
 
     pub fn in_group(&self) -> bool {
@@ -243,7 +244,11 @@ impl Buffer {
             self.ops.drain(..OP_LOG / 2);
             self.ops_base += (OP_LOG / 2) as u64;
         }
-        self.ops.push(Op { at, removed: remove, inserted: insert.chars().count() });
+        self.ops.push(Op {
+            at,
+            removed: remove,
+            inserted: insert.chars().count(),
+        });
     }
 
     /// Carries `range`, as it was at `revision`, through every change since.
@@ -283,7 +288,10 @@ impl Buffer {
         let mut pos = pos;
         for op in &self.ops[(revision - self.ops_base) as usize..] {
             let gone = op.at + op.removed;
-            if pos > gone || (pos == gone && (op.removed > 0 || !stick_left) && pos > op.at) || (pos == op.at && op.removed == 0 && !stick_left) {
+            if pos > gone
+                || (pos == gone && (op.removed > 0 || !stick_left) && pos > op.at)
+                || (pos == op.at && op.removed == 0 && !stick_left)
+            {
                 pos = (pos as isize + op.inserted as isize - op.removed as isize) as usize;
             } else if pos > op.at {
                 pos = op.at + op.inserted;

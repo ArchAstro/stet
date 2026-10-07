@@ -3,6 +3,9 @@ name = "md-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Platform-free editing core: buffer, vim, markdown, suggestions, themes"
 
 [dependencies]

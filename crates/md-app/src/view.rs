@@ -131,12 +131,20 @@ impl View {
     }
 
     pub fn set_zoom(&mut self, step: i32) {
-        self.zoom = if step == 0 { 1.0 } else { (self.zoom * 1.1f32.powi(step)).clamp(0.5, 4.0) };
+        self.zoom = if step == 0 {
+            1.0
+        } else {
+            (self.zoom * 1.1f32.powi(step)).clamp(0.5, 4.0)
+        };
         self.invalidate();
     }
 
     fn sidebar_width(&self, ed: &Editor) -> f32 {
-        if ed.sidebar.visible { (250.0 * self.scale).min(self.width * 0.38).round() } else { 0.0 }
+        if ed.sidebar.visible {
+            (250.0 * self.scale).min(self.width * 0.38).round()
+        } else {
+            0.0
+        }
     }
 
     fn metrics(&mut self, ed: &Editor) -> Metrics {
@@ -175,7 +183,11 @@ impl View {
             .round();
         let ui = (13.0 * self.scale).round();
         let row = (28.0 * self.scale).round();
-        let top = if ed.tab_count() > 1 { (36.0 * self.scale).round() } else { 0.0 };
+        let top = if ed.tab_count() > 1 {
+            (36.0 * self.scale).round()
+        } else {
+            0.0
+        };
         Metrics {
             font,
             line,
@@ -215,7 +227,15 @@ impl View {
             Block::Frontmatter => 3,
             Block::Rule => 4,
         };
-        (block_id, m.column.to_bits(), m.font.to_bits(), m.line.to_bits(), dim, &ed.theme.name).hash(&mut hasher);
+        (
+            block_id,
+            m.column.to_bits(),
+            m.font.to_bits(),
+            m.line.to_bits(),
+            dim,
+            &ed.theme.name,
+        )
+            .hash(&mut hasher);
         let key = hasher.finish();
         let fonts = &mut self.fonts;
         let layout = self.layouts.entry(key).or_insert_with(|| {
@@ -243,7 +263,18 @@ impl View {
     fn label(&mut self, ed: &Editor, text: &str, rgb: Rgb, size: f32, face: Face, bold: bool) -> u64 {
         let font = size.round();
         let mut hasher = DefaultHasher::new();
-        ("label", text, rgb.0, rgb.1, rgb.2, font.to_bits(), face, bold, &ed.theme.name).hash(&mut hasher);
+        (
+            "label",
+            text,
+            rgb.0,
+            rgb.1,
+            rgb.2,
+            font.to_bits(),
+            face,
+            bold,
+            &ed.theme.name,
+        )
+            .hash(&mut hasher);
         let key = hasher.finish();
         let fonts = &mut self.fonts;
         let layout = self.layouts.entry(key).or_insert_with(|| {
@@ -400,7 +431,11 @@ impl View {
             None => {
                 // Far away: jump, landing a third of the way down.
                 ed.scroll_line = line;
-                let want = if ed.config.typewriter { centre } else { m.top + (m.bottom - m.top) / 3.0 };
+                let want = if ed.config.typewriter {
+                    centre
+                } else {
+                    m.top + (m.bottom - m.top) / 3.0
+                };
                 ed.scroll_px = row_top + m.top_pad - want;
             }
             Some(y) if ed.config.typewriter => ed.scroll_px += y - centre,
@@ -584,7 +619,11 @@ impl View {
                 for (index, (row, x0, x1)) in ranges.into_iter().enumerate() {
                     let row = &layout.rows[row];
                     // A selected line break shows as a sliver past the text.
-                    let tail = if through_newline && index + 1 == count { m.advance * 0.5 } else { 0.0 };
+                    let tail = if through_newline && index + 1 == count {
+                        m.advance * 0.5
+                    } else {
+                        0.0
+                    };
                     layer.back.push(Quad {
                         rect: clipped([left + x0, y + row.top, x1 - x0 + tail, row.height]),
                         color: linear(c.selection, 1.0),
@@ -668,7 +707,11 @@ impl View {
                 CmdKind::SearchBackward => "?".to_string(),
                 CmdKind::Agent => {
                     let name = ed.agent.as_ref().map_or("assistant", |agent| agent.name.as_str());
-                    let about = if ed.selection().is_some() { " (about the selection)" } else { "" };
+                    let about = if ed.selection().is_some() {
+                        " (about the selection)"
+                    } else {
+                        ""
+                    };
                     format!("→ {name}{about}: ")
                 }
             };
@@ -686,8 +729,14 @@ impl View {
                 Mode::VisualBlock => "V-BLOCK",
             };
             let suggesting = if ed.suggesting { "SUGGESTING" } else { "" };
-            let recording = ed.recording_macro().map(|register| format!("REC @{register}")).unwrap_or_default();
-            let joined: Vec<&str> = [mode, suggesting, &recording].into_iter().filter(|part| !part.is_empty()).collect();
+            let recording = ed
+                .recording_macro()
+                .map(|register| format!("REC @{register}"))
+                .unwrap_or_default();
+            let joined: Vec<&str> = [mode, suggesting, &recording]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect();
             (joined.join("  ·  "), if ed.suggesting { c.insert } else { c.status })
         };
         let mut left_width = 0.0;
@@ -698,7 +747,12 @@ impl View {
                 let height = self.layouts[&key].height;
                 let bar = (2.0 * self.scale).round().max(1.0);
                 layer.front.push(Quad {
-                    rect: [m.origin + pad + left_width + bar, (middle - height / 2.0).round(), bar, height],
+                    rect: [
+                        m.origin + pad + left_width + bar,
+                        (middle - height / 2.0).round(),
+                        bar,
+                        height,
+                    ],
                     color: linear(c.cursor, 1.0),
                     radius: bar / 2.0,
                 });
@@ -733,8 +787,17 @@ impl View {
         // Yield to a long message rather than overlap it.
         if m.origin + pad + left_width + pad < self.width - pad - width {
             self.put(layer, key, self.width - pad - width, middle, clip, c.status);
-            let hint_width = hint.chars().count() as f32 * width / right_text.trim_start().chars().count().max(1) as f32;
-            self.targets.push(([self.width - pad - hint_width, m.bottom, hint_width + pad, self.height - m.bottom], Target::MenuHint));
+            let hint_width =
+                hint.chars().count() as f32 * width / right_text.trim_start().chars().count().max(1) as f32;
+            self.targets.push((
+                [
+                    self.width - pad - hint_width,
+                    m.bottom,
+                    hint_width + pad,
+                    self.height - m.bottom,
+                ],
+                Target::MenuHint,
+            ));
         }
     }
 
@@ -754,7 +817,11 @@ impl View {
             .iter()
             .map(|tab| {
                 let title = tab.title.strip_suffix(".md").unwrap_or(&tab.title);
-                let text = if tab.dirty { format!("{title} •") } else { title.to_string() };
+                let text = if tab.dirty {
+                    format!("{title} •")
+                } else {
+                    title.to_string()
+                };
                 let rgb = if tab.active { c.text } else { c.status };
                 let key = self.label(ed, &text, rgb, m.ui, Face::Ui, false);
                 (key, self.layouts[&key].rows[0].width.min(max_width), tab.active)
@@ -762,15 +829,31 @@ impl View {
             .collect();
         let total: f32 = tabs.iter().map(|(_, width, _)| width + pad * 2.0 + gap).sum::<f32>() - gap;
         // Keep clear of the window buttons when nothing else is on the left.
-        let floor = m.origin + if m.origin == 0.0 && self.titlebar > 0.0 { 84.0 * self.scale } else { pad };
+        let floor = m.origin
+            + if m.origin == 0.0 && self.titlebar > 0.0 {
+                84.0 * self.scale
+            } else {
+                pad
+            };
         let mut x = (m.origin + (self.width - m.origin - total) / 2.0).max(floor).round();
         for (index, (key, width, active)) in tabs.into_iter().enumerate() {
             let rect = [x, (middle - pill / 2.0).round(), width + pad * 2.0, pill];
             if active {
-                layer.back.push(Quad { rect, color: linear(c.panel_active, 1.0), radius: pill / 2.0 });
+                layer.back.push(Quad {
+                    rect,
+                    color: linear(c.panel_active, 1.0),
+                    radius: pill / 2.0,
+                });
             }
             let clip = [x + pad, 0.0, x + pad + width, m.top];
-            self.put(layer, key, x + pad, middle, clip, if active { c.text } else { c.status });
+            self.put(
+                layer,
+                key,
+                x + pad,
+                middle,
+                clip,
+                if active { c.text } else { c.status },
+            );
             self.targets.push((rect, Target::Tab(index)));
             x += width + pad * 2.0 + gap;
         }
@@ -783,7 +866,11 @@ impl View {
         }
         let c = ed.theme.colors;
         let width = m.origin;
-        layer.back.push(Quad { rect: [0.0, 0.0, width, self.height], color: linear(c.panel, 1.0), radius: 0.0 });
+        layer.back.push(Quad {
+            rect: [0.0, 0.0, width, self.height],
+            color: linear(c.panel, 1.0),
+            radius: 0.0,
+        });
         layer.back.push(Quad {
             rect: [width - self.scale.max(1.0), 0.0, self.scale.max(1.0), self.height],
             color: linear(c.rule, 0.6),
@@ -794,9 +881,20 @@ impl View {
         let pad = (14.0 * self.scale).round();
         let indent = (14.0 * self.scale).round();
         let header_top = self.titlebar.max(10.0 * self.scale) + 6.0 * self.scale;
-        let root = ed.sidebar.root.file_name().map_or("/".to_string(), |name| name.to_string_lossy().to_uppercase());
+        let root = ed
+            .sidebar
+            .root
+            .file_name()
+            .map_or("/".to_string(), |name| name.to_string_lossy().to_uppercase());
         let key = self.label(ed, &root, c.status, m.ui * 0.82, Face::Ui, true);
-        self.put(layer, key, pad, header_top + m.row / 2.0, [0.0, 0.0, width - pad, self.height], c.status);
+        self.put(
+            layer,
+            key,
+            pad,
+            header_top + m.row / 2.0,
+            [0.0, 0.0, width - pad, self.height],
+            c.status,
+        );
 
         let top = (header_top + m.row + 4.0 * self.scale).round();
         let visible = (((self.height - top) / m.row).floor() as usize).max(1);
@@ -820,7 +918,11 @@ impl View {
             let open = ed.path.as_deref() == Some(entry.path.as_path());
             let selected = ed.sidebar.focused && index == ed.sidebar.selected;
             if selected || open {
-                let tint = if selected { linear(c.selection, 1.0) } else { linear(c.panel_active, 1.0) };
+                let tint = if selected {
+                    linear(c.selection, 1.0)
+                } else {
+                    linear(c.panel_active, 1.0)
+                };
                 layer.back.push(Quad {
                     rect: [inset, y + self.scale, width - inset * 2.0, m.row - self.scale * 2.0],
                     color: tint,
@@ -846,7 +948,14 @@ impl View {
         }
         if count == 0 {
             let key = self.label(ed, "Empty folder", c.status, m.ui, Face::Ui, false);
-            self.put(layer, key, pad, top + m.row / 2.0, [0.0, 0.0, width - pad, self.height], c.status);
+            self.put(
+                layer,
+                key,
+                pad,
+                top + m.row / 2.0,
+                [0.0, 0.0, width - pad, self.height],
+                c.status,
+            );
         }
     }
 
@@ -863,11 +972,16 @@ impl View {
             .iter()
             .map(|item| {
                 let label = self.label(ed, &item.label, c.text, m.ui, Face::Ui, false);
-                let key = item.key.map(|key| self.label(ed, &key.to_string(), c.status, m.ui * 0.92, Face::Mono, false));
+                let key = item
+                    .key
+                    .map(|key| self.label(ed, &key.to_string(), c.status, m.ui * 0.92, Face::Mono, false));
                 (label, key)
             })
             .collect();
-        let widest = labels.iter().map(|(label, _)| self.layouts[label].rows[0].width).fold(0.0, f32::max);
+        let widest = labels
+            .iter()
+            .map(|(label, _)| self.layouts[label].rows[0].width)
+            .fold(0.0, f32::max);
         let width = (widest + pad * 2.0 + 44.0 * s).max(180.0 * s).round();
         let groups = menu.items.iter().filter(|item| item.group_start).count();
         let height = menu.items.len() as f32 * row + groups as f32 * gap + 12.0 * s;
@@ -877,7 +991,12 @@ impl View {
         };
         // Keep it on screen: flip above the anchor if there is no room below.
         let left = x.min(self.width - width - 8.0 * s).max(8.0 * s).round();
-        let top = if y + height + 8.0 * s > self.height { (y - height - m.line).max(8.0 * s) } else { y + 4.0 * s }.round();
+        let top = if y + height + 8.0 * s > self.height {
+            (y - height - m.line).max(8.0 * s)
+        } else {
+            y + 4.0 * s
+        }
+        .round();
 
         self.targets.push(([0.0, 0.0, self.width, self.height], Target::Scrim));
         let radius = 9.0 * s;
@@ -886,7 +1005,11 @@ impl View {
             color: linear(c.rule, 1.0),
             radius: radius + s,
         });
-        layer.back.push(Quad { rect: [left, top, width, height], color: linear(c.panel, 1.0), radius });
+        layer.back.push(Quad {
+            rect: [left, top, width, height],
+            color: linear(c.panel, 1.0),
+            radius,
+        });
         self.targets.push(([left, top, width, height], Target::ContextMenu));
         let clip = [left, top, left + width, top + height];
         let mut at = top + 6.0 * s;
@@ -901,13 +1024,24 @@ impl View {
             }
             let rect = [left + 5.0 * s, at, width - 10.0 * s, row];
             if index == menu.selected {
-                layer.back.push(Quad { rect, color: linear(c.panel_active, 1.0), radius: 6.0 * s });
+                layer.back.push(Quad {
+                    rect,
+                    color: linear(c.panel_active, 1.0),
+                    radius: 6.0 * s,
+                });
             }
             self.targets.push((rect, Target::ContextRow(index)));
             self.put(layer, label, left + pad, at + row / 2.0, clip, c.text);
             if let Some(key) = key {
                 let key_width = self.layouts[&key].rows[0].width;
-                self.put(layer, key, left + width - pad - key_width, at + row / 2.0, clip, c.status);
+                self.put(
+                    layer,
+                    key,
+                    left + width - pad - key_width,
+                    at + row / 2.0,
+                    clip,
+                    c.status,
+                );
             }
             at += row;
         }
@@ -943,13 +1077,18 @@ impl View {
         let starts_section = |slot: usize| {
             sectioned
                 && (slot == 0
-                    || palette.items[palette.matches[shown[slot]]].section != palette.items[palette.matches[shown[slot - 1]]].section)
+                    || palette.items[palette.matches[shown[slot]]].section
+                        != palette.items[palette.matches[shown[slot - 1]]].section)
         };
         let headers = (0..shown.len()).filter(|&slot| starts_section(slot)).count();
         let list_height = (shown.len().max(1) as f32 * row + headers as f32 * header).round();
         let height = input_height + list_height + footer + 8.0 * s;
 
-        layer.back.push(Quad { rect: [0.0, 0.0, self.width, self.height], color: [0.0, 0.0, 0.0, 0.28], radius: 0.0 });
+        layer.back.push(Quad {
+            rect: [0.0, 0.0, self.width, self.height],
+            color: [0.0, 0.0, 0.0, 0.28],
+            radius: 0.0,
+        });
         self.targets.push(([0.0, 0.0, self.width, self.height], Target::Scrim));
         let radius = 12.0 * s;
         layer.back.push(Quad {
@@ -957,19 +1096,36 @@ impl View {
             color: linear(c.rule, 1.0),
             radius: radius + s,
         });
-        layer.back.push(Quad { rect: [left, top, width, height], color: linear(c.panel, 1.0), radius });
+        layer.back.push(Quad {
+            rect: [left, top, width, height],
+            color: linear(c.panel, 1.0),
+            radius,
+        });
         self.targets.push(([left, top, width, height], Target::Palette));
         let clip = [left + pad, top, left + width - pad, top + height];
 
         // The search field.
         let middle = top + input_height / 2.0;
-        let (text, rgb) = if palette.query.is_empty() { (palette.placeholder.as_str(), c.status) } else { (palette.query.as_str(), c.text) };
+        let (text, rgb) = if palette.query.is_empty() {
+            (palette.placeholder.as_str(), c.status)
+        } else {
+            (palette.query.as_str(), c.text)
+        };
         let key = self.label(ed, text, rgb, m.ui * 1.2, Face::Ui, false);
         let bar = (2.0 * s).round().max(1.0);
         let typed = self.put(layer, key, left + pad + bar * 2.0, middle, clip, rgb);
-        let caret = if palette.query.is_empty() { 0.0 } else { typed + bar * 3.0 };
+        let caret = if palette.query.is_empty() {
+            0.0
+        } else {
+            typed + bar * 3.0
+        };
         layer.front.push(Quad {
-            rect: [left + pad + caret, (middle - m.ui * 0.8).round(), bar, (m.ui * 1.6).round()],
+            rect: [
+                left + pad + caret,
+                (middle - m.ui * 0.8).round(),
+                bar,
+                (m.ui * 1.6).round(),
+            ],
             color: linear(c.cursor, 1.0),
             radius: bar / 2.0,
         });
@@ -989,17 +1145,39 @@ impl View {
             }
             let rect = [left + 6.0 * s, y, width - 12.0 * s, row];
             if at == palette.selected {
-                layer.back.push(Quad { rect, color: linear(c.panel_active, 1.0), radius: 7.0 * s });
+                layer.back.push(Quad {
+                    rect,
+                    color: linear(c.panel_active, 1.0),
+                    radius: 7.0 * s,
+                });
             }
             self.targets.push((rect, Target::PaletteRow(at)));
             let middle = y + row / 2.0;
-            let face = if sectioned && item.section != "Commands" { Face::Mono } else { Face::Ui };
+            let face = if sectioned && item.section != "Commands" {
+                Face::Mono
+            } else {
+                Face::Ui
+            };
             let detail = self.label(ed, &item.detail, c.status, m.ui * 0.92, face, false);
             let detail_width = self.layouts[&detail].rows[0].width.min(width * 0.62);
             let detail_left = left + width - pad - detail_width;
-            self.put(layer, detail, detail_left, middle, [detail_left, top, left + width - pad, top + height], c.status);
+            self.put(
+                layer,
+                detail,
+                detail_left,
+                middle,
+                [detail_left, top, left + width - pad, top + height],
+                c.status,
+            );
             let key = self.label(ed, &item.label, c.text, m.ui * 1.05, Face::Ui, false);
-            self.put(layer, key, left + pad, middle, [left + pad, top, detail_left - pad * 0.5, top + height], c.text);
+            self.put(
+                layer,
+                key,
+                left + pad,
+                middle,
+                [left + pad, top, detail_left - pad * 0.5, top + height],
+                c.text,
+            );
             y += row;
         }
         if shown.is_empty() {
@@ -1007,10 +1185,21 @@ impl View {
             self.put(layer, key, left + pad, y + row / 2.0, clip, c.status);
             y += row;
         }
-        let position = if count > ROWS { format!("{} of {count}    ", palette.selected + 1) } else { String::new() };
+        let position = if count > ROWS {
+            format!("{} of {count}    ", palette.selected + 1)
+        } else {
+            String::new()
+        };
         let hint = format!("{position}↑↓ move    ↵ choose    esc close");
         let key = self.label(ed, &hint, c.status, m.ui * 0.85, Face::Ui, false);
         let hint_width = self.layouts[&key].rows[0].width;
-        self.put(layer, key, left + width - pad - hint_width, y + 4.0 * s + footer / 2.0, clip, c.status);
+        self.put(
+            layer,
+            key,
+            left + width - pad - hint_width,
+            y + 4.0 * s + footer / 2.0,
+            clip,
+            c.status,
+        );
     }
 }

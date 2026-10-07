@@ -137,9 +137,14 @@ impl Doc {
     /// The code block covering `line`, and the line's index within it.
     pub fn code_at(&self, line: usize) -> Option<(usize, usize)> {
         let line = line as u32;
-        let after = self.code_blocks.partition_point(|block| block.lines.first().is_some_and(|first| first.0 <= line));
+        let after = self
+            .code_blocks
+            .partition_point(|block| block.lines.first().is_some_and(|first| first.0 <= line));
         let block = after.checked_sub(1)?;
-        let at = self.code_blocks[block].lines.binary_search_by_key(&line, |entry| entry.0).ok()?;
+        let at = self.code_blocks[block]
+            .lines
+            .binary_search_by_key(&line, |entry| entry.0)
+            .ok()?;
         Some((block, at))
     }
     pub fn in_fence(&self, line: usize) -> bool {
@@ -178,7 +183,9 @@ impl Painter<'_> {
     }
 
     fn line_of(&self, byte: usize) -> usize {
-        self.line_starts.partition_point(|&start| start <= byte).saturating_sub(1)
+        self.line_starts
+            .partition_point(|&start| start <= byte)
+            .saturating_sub(1)
     }
 
     /// Lines touched by `range`, ignoring a trailing newline.
@@ -203,7 +210,10 @@ impl Painter<'_> {
     }
 
     fn run(&self, at: usize, pred: impl Fn(u8) -> bool) -> usize {
-        self.bytes[at.min(self.bytes.len())..].iter().take_while(|&&b| pred(b)).count()
+        self.bytes[at.min(self.bytes.len())..]
+            .iter()
+            .take_while(|&&b| pred(b))
+            .count()
     }
 
     fn delimited(&mut self, range: Range<usize>, style: u16, width: usize) {
@@ -259,11 +269,16 @@ impl Pass {
         self.images.retain(|image| image.line >= lines);
         self.images.iter_mut().for_each(|image| image.line -= lines);
         self.code_blocks.retain(|block| block.lines[0].0 >= line);
-        self.code_blocks.iter_mut().flat_map(|block| &mut block.lines).for_each(|entry| entry.0 -= line);
+        self.code_blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.lines)
+            .for_each(|entry| entry.0 -= line);
         self.tops.retain(|&top| top >= line);
         self.tops.iter_mut().for_each(|top| *top -= line);
         self.defs.retain(|def| def.start >= line);
-        self.defs.iter_mut().for_each(|def| *def = def.start - line..def.end - line);
+        self.defs
+            .iter_mut()
+            .for_each(|def| *def = def.start - line..def.end - line);
     }
 }
 
@@ -312,9 +327,10 @@ fn pass(text: &str) -> Pass {
             _ => {}
         }
         if let Some(open) = links.last_mut()
-            && !matches!(event, Event::End(TagEnd::Link | TagEnd::Image)) {
-                open.1 = open.1.max(range.end);
-            }
+            && !matches!(event, Event::End(TagEnd::Link | TagEnd::Image))
+        {
+            open.1 = open.1.max(range.end);
+        }
         match event {
             Event::Start(tag) => match tag {
                 Tag::Heading { level, .. } => {
@@ -339,9 +355,16 @@ fn pass(text: &str) -> Pass {
                 }
                 Tag::CodeBlock(kind) => {
                     if let CodeBlockKind::Fenced(info) = &kind {
-                        let lang = info.split([' ', ',', '\t', '{']).next().unwrap_or("").trim_start_matches('.');
+                        let lang = info
+                            .split([' ', ',', '\t', '{'])
+                            .next()
+                            .unwrap_or("")
+                            .trim_start_matches('.');
                         if !lang.is_empty() {
-                            code_blocks.push(CodeBlock { lang: lang.to_ascii_lowercase(), lines: Vec::new() });
+                            code_blocks.push(CodeBlock {
+                                lang: lang.to_ascii_lowercase(),
+                                lines: Vec::new(),
+                            });
                             in_code = true;
                         }
                     }
@@ -352,9 +375,7 @@ fn pass(text: &str) -> Pass {
                         p.paint(range.start.max(first.start)..first.end, style::MARKER);
                         if lines.len() > 1 {
                             let last = p.line_range(lines.end - 1);
-                            let fence = p.text[last.clone()]
-                                .trim_start_matches([' ', '\t', '>'])
-                                .trim_end();
+                            let fence = p.text[last.clone()].trim_start_matches([' ', '\t', '>']).trim_end();
                             let closes = fence.len() >= 3
                                 && (fence.bytes().all(|b| b == b'`') || fence.bytes().all(|b| b == b'~'));
                             if closes {
@@ -408,8 +429,15 @@ fn pass(text: &str) -> Pass {
                 }
                 Tag::HtmlBlock => p.paint(range, style::MUTED),
                 Tag::MetadataBlock(kind) => {
-                    let lang = if kind == MetadataBlockKind::YamlStyle { "yaml" } else { "toml" };
-                    code_blocks.push(CodeBlock { lang: lang.to_string(), lines: Vec::new() });
+                    let lang = if kind == MetadataBlockKind::YamlStyle {
+                        "yaml"
+                    } else {
+                        "toml"
+                    };
+                    code_blocks.push(CodeBlock {
+                        lang: lang.to_string(),
+                        lines: Vec::new(),
+                    });
                     in_code = true;
                     p.set_block(&range, Block::Frontmatter);
                     p.paint(range, style::MUTED);
@@ -421,7 +449,9 @@ fn pass(text: &str) -> Pass {
                 let block = code_blocks.last_mut().unwrap();
                 for line in p.lines(&range) {
                     let start = p.line_starts[line];
-                    block.lines.push((line as u32, range.start.max(start).saturating_sub(start) as u32));
+                    block
+                        .lines
+                        .push((line as u32, range.start.max(start).saturating_sub(start) as u32));
                 }
             }
             Event::End(TagEnd::Link) | Event::End(TagEnd::Image) => {
@@ -461,7 +491,11 @@ fn pass(text: &str) -> Pass {
     code_blocks.retain(|block| !block.lines.is_empty());
     images.sort_by_key(|image: &Image| image.line);
     tops.dedup();
-    let mut defs: Vec<Range<u32>> = defs.iter().map(|def| p.lines(def)).map(|lines| lines.start as u32..lines.end as u32).collect();
+    let mut defs: Vec<Range<u32>> = defs
+        .iter()
+        .map(|def| p.lines(def))
+        .map(|lines| lines.start as u32..lines.end as u32)
+        .collect();
     defs.sort_by_key(|def| (def.start, def.end));
     defs.dedup();
     labels.sort();
@@ -470,7 +504,9 @@ fn pass(text: &str) -> Pass {
         !label.trim().is_empty()
             && !label.starts_with('^')
             && !label.contains(['[', ']', '\\', '\n', '\r'])
-            && !dest.as_ref().is_some_and(|dest| dest.contains(['<', '>', '\\', '\n', '\r']))
+            && !dest
+                .as_ref()
+                .is_some_and(|dest| dest.contains(['<', '>', '\\', '\n', '\r']))
     };
     let restate = |(label, dest): &(String, Option<String>)| match dest {
         Some(dest) => format!("[{label}]: <{dest}>\n\n"),
@@ -495,7 +531,10 @@ fn paint_critic(styles: &mut [u16], window: Range<usize>, suggestions: &[Suggest
     let base = window.start;
     let inside = |range: &Range<usize>| range.start >= window.start && range.end <= window.end;
     let first = suggestions.partition_point(|suggestion| suggestion.bytes.start < window.start);
-    for suggestion in suggestions[first..].iter().take_while(|suggestion| inside(&suggestion.bytes)) {
+    for suggestion in suggestions[first..]
+        .iter()
+        .take_while(|suggestion| inside(&suggestion.bytes))
+    {
         let span = suggestion.bytes.clone();
         let edit_end = suggestion.meta_bytes.start;
         // Markdown's own reading of these bytes (`~~` as strikethrough) does not apply.
@@ -580,7 +619,10 @@ fn loose_openers(text: &str, pass: &Pass, count: usize) -> Vec<u32> {
             // A metadata block that ends at its own closing line is settled;
             // one cut short by its container still hangs on a line elsewhere.
             Block::Frontmatter if index == 0 || pass.blocks[index - 1] != Block::Frontmatter => {
-                let last = (index..pass.blocks.len()).take_while(|&at| pass.blocks[at] == Block::Frontmatter).last().unwrap_or(index);
+                let last = (index..pass.blocks.len())
+                    .take_while(|&at| pass.blocks[at] == Block::Frontmatter)
+                    .last()
+                    .unwrap_or(index);
                 candidate(index) && !(last > index && delimiter_line(line(last), &["---", "+++", "..."]))
             }
             _ => false,
@@ -606,7 +648,11 @@ pub fn parse(text: &str) -> Doc {
     paint_critic(&mut pass.styles, 0..text.len(), &critic.suggestions, &critic.comments);
     let mut doc = Doc {
         lines: Vec::with_capacity(pass.blocks.len()),
-        fences: critic.fences.iter().map(|fence| fence_lines(&pass.line_starts, text, fence)).collect(),
+        fences: critic
+            .fences
+            .iter()
+            .map(|fence| fence_lines(&pass.line_starts, text, fence))
+            .collect(),
         suggestions: critic.suggestions,
         comments: critic.comments,
         words: text.split_whitespace().count(),
@@ -698,8 +744,14 @@ impl Change {
         let line_shift = (window_line + kept) as isize - resume_line as isize;
         let delta = self.edit.2 as isize - self.edit.1 as isize;
 
-        let spans_before = doc.lines.get(window_line).map_or(doc.spans.len(), |line| line.spans.0 as usize);
-        let spans_after = doc.lines.get(resume_line).map_or(doc.spans.len(), |line| line.spans.0 as usize);
+        let spans_before = doc
+            .lines
+            .get(window_line)
+            .map_or(doc.spans.len(), |line| line.spans.0 as usize);
+        let spans_after = doc
+            .lines
+            .get(resume_line)
+            .map_or(doc.spans.len(), |line| line.spans.0 as usize);
         for line in &mut self.lines {
             line.spans = (line.spans.0 + spans_before as u32, line.spans.1 + spans_before as u32);
         }
@@ -708,7 +760,10 @@ impl Change {
         doc.lines.splice(window_line..resume_line, self.lines);
         if span_shift != 0 {
             for line in &mut doc.lines[window_line + kept..] {
-                line.spans = ((line.spans.0 as isize + span_shift) as u32, (line.spans.1 as isize + span_shift) as u32);
+                line.spans = (
+                    (line.spans.0 as isize + span_shift) as u32,
+                    (line.spans.1 as isize + span_shift) as u32,
+                );
             }
         }
         doc.line_starts.splice(window_line..resume_line, self.line_starts);
@@ -720,7 +775,8 @@ impl Change {
 
         let moved = |line: u32| (line as isize + line_shift) as u32;
         let (window, resume) = (window_line as u32, resume_line as u32);
-        let range = |list: &[u32]| list.partition_point(|&line| line < window)..list.partition_point(|&line| line < resume);
+        let range =
+            |list: &[u32]| list.partition_point(|&line| line < window)..list.partition_point(|&line| line < resume);
         let at = range(&doc.tops);
         let tail = at.start + self.tops.len();
         doc.tops.splice(at, self.tops);
@@ -728,23 +784,38 @@ impl Change {
         let loose_tail = at.start;
         doc.loose.drain(at);
         let defs_tail = doc.defs.partition_point(|def| def.start < window);
-        let at = doc.images.partition_point(|image| image.line < window_line)..doc.images.partition_point(|image| image.line < resume_line);
+        let at = doc.images.partition_point(|image| image.line < window_line)
+            ..doc.images.partition_point(|image| image.line < resume_line);
         let images_tail = at.start + self.images.len();
         doc.images.splice(at, self.images);
         let first = |block: &CodeBlock| block.lines[0].0;
-        let at = doc.code_blocks.partition_point(|block| first(block) < window)..doc.code_blocks.partition_point(|block| first(block) < resume);
+        let at = doc.code_blocks.partition_point(|block| first(block) < window)
+            ..doc.code_blocks.partition_point(|block| first(block) < resume);
         let code_tail = at.start + self.code_blocks.len();
         doc.code_blocks.splice(at, self.code_blocks);
         if line_shift != 0 {
             doc.tops[tail..].iter_mut().for_each(|top| *top = moved(*top));
             doc.loose[loose_tail..].iter_mut().for_each(|line| *line = moved(*line));
-            doc.defs[defs_tail..].iter_mut().for_each(|def| *def = moved(def.start)..moved(def.end));
-            doc.images[images_tail..].iter_mut().for_each(|image| image.line = moved(image.line as u32) as usize);
-            doc.code_blocks[code_tail..].iter_mut().flat_map(|block| &mut block.lines).for_each(|entry| entry.0 = moved(entry.0));
+            doc.defs[defs_tail..]
+                .iter_mut()
+                .for_each(|def| *def = moved(def.start)..moved(def.end));
+            doc.images[images_tail..]
+                .iter_mut()
+                .for_each(|image| image.line = moved(image.line as u32) as usize);
+            doc.code_blocks[code_tail..]
+                .iter_mut()
+                .flat_map(|block| &mut block.lines)
+                .for_each(|entry| entry.0 = moved(entry.0));
         }
 
-        doc.source.replace_range(self.edit.0..self.edit.1, &text[self.edit.0..self.edit.2]);
-        doc.fences = self.critic.fences.iter().map(|fence| fence_lines(&doc.line_starts, text, fence)).collect();
+        doc.source
+            .replace_range(self.edit.0..self.edit.1, &text[self.edit.0..self.edit.2]);
+        doc.fences = self
+            .critic
+            .fences
+            .iter()
+            .map(|fence| fence_lines(&doc.line_starts, text, fence))
+            .collect();
         doc.suggestions = self.critic.suggestions;
         doc.comments = self.critic.comments;
         doc.words = self.words;
@@ -784,7 +855,11 @@ fn plan(old: &Doc, text: &str) -> Option<Change> {
     let edited = old.tops.partition_point(|&top| start_of(top) <= prefix);
     // Then on to a block that follows a blank line, where nothing before it
     // (a definition, a paragraph) can still be open.
-    let blank = |line: usize| before[old.line_starts[line]..old.line_starts[line + 1]].iter().all(u8::is_ascii_whitespace);
+    let blank = |line: usize| {
+        before[old.line_starts[line]..old.line_starts[line + 1]]
+            .iter()
+            .all(u8::is_ascii_whitespace)
+    };
     let mut back = edited.saturating_sub(3);
     while back > 0 && !blank(old.tops[back] as usize - 1) {
         back -= 1;
@@ -793,7 +868,10 @@ fn plan(old: &Doc, text: &str) -> Option<Change> {
     let window_start = old.line_starts[window_line];
     // Resume at the first block that starts after the edit; parse one block
     // further so that block is seen whole.
-    let resume = old.tops[edited.min(old.tops.len())..].iter().position(|&top| start_of(top) >= old_end).map(|at| at + edited);
+    let resume = old.tops[edited.min(old.tops.len())..]
+        .iter()
+        .position(|&top| start_of(top) >= old_end)
+        .map(|at| at + edited);
     let resume_line = resume.map(|at| old.tops[at] as usize);
     let window_end_old = match resume.and_then(|at| old.tops.get(at + 2)) {
         Some(&top) => start_of(top),
@@ -805,7 +883,11 @@ fn plan(old: &Doc, text: &str) -> Option<Change> {
     // window is parsed with them in front, closed off by a rule. Editing the
     // definitions themselves restyles the whole document.
     let resume_at = resume_line.unwrap_or(old.lines.len());
-    if old.defs.iter().any(|def| (def.start as usize) < resume_at && def.end as usize > window_line) {
+    if old
+        .defs
+        .iter()
+        .any(|def| (def.start as usize) < resume_at && def.end as usize > window_line)
+    {
         return why(2);
     }
     let mut pass = if old.defs.is_empty() {
@@ -823,10 +905,18 @@ fn plan(old: &Doc, text: &str) -> Option<Change> {
     // arrives there, and at the block after it, at a clean block boundary.
     let kept_lines = match resume {
         Some(at) => {
-            let line = pass.line_starts.binary_search(&(shift(start_of(old.tops[at])) - window_start)).ok().or_else(|| why(101))?;
+            let line = pass
+                .line_starts
+                .binary_search(&(shift(start_of(old.tops[at])) - window_start))
+                .ok()
+                .or_else(|| why(101))?;
             pass.tops.binary_search(&(line as u32)).ok().or_else(|| why(102))?;
             if let Some(&next) = old.tops.get(at + 1) {
-                let next_line = pass.line_starts.binary_search(&(shift(start_of(next)) - window_start)).ok().or_else(|| why(103))?;
+                let next_line = pass
+                    .line_starts
+                    .binary_search(&(shift(start_of(next)) - window_start))
+                    .ok()
+                    .or_else(|| why(103))?;
                 pass.tops.binary_search(&(next_line as u32)).ok().or_else(|| why(104))?;
             }
             line
@@ -846,7 +936,10 @@ fn plan(old: &Doc, text: &str) -> Option<Change> {
     if old.loose.first().is_some_and(|&line| (line as usize) < window_line) {
         let closes = |line: usize| {
             let start = pass.line_starts[line];
-            let end = pass.line_starts.get(line + 1).map_or(window_text.len(), |next| next - 1);
+            let end = pass
+                .line_starts
+                .get(line + 1)
+                .map_or(window_text.len(), |next| next - 1);
             delimiter_line(&window_text[start..end.max(start)], &["---", "+++", "..."])
         };
         let closed = |line: usize| {
@@ -885,13 +978,23 @@ fn plan(old: &Doc, text: &str) -> Option<Change> {
         }
         Some(out)
     };
-    let ranges = |suggestions: &[Suggestion]| suggestions.iter().map(|suggestion| suggestion.bytes.clone()).collect::<Vec<_>>();
+    let ranges = |suggestions: &[Suggestion]| {
+        suggestions
+            .iter()
+            .map(|suggestion| suggestion.bytes.clone())
+            .collect::<Vec<_>>()
+    };
     if outside(&ranges(&old.suggestions), &window_old, delta)? != outside(&ranges(&critic.suggestions), &window_new, 0)?
         || outside(&old.comments, &window_old, delta)? != outside(&critic.comments, &window_new, 0)?
     {
         return why(8);
     }
-    paint_critic(&mut pass.styles, window_start..window_start + window_text.len(), &critic.suggestions, &critic.comments);
+    paint_critic(
+        &mut pass.styles,
+        window_start..window_start + window_text.len(),
+        &critic.suggestions,
+        &critic.comments,
+    );
 
     let resume_line = resume_line.unwrap_or(old.lines.len());
     let (mut lines, mut spans) = (Vec::with_capacity(kept_lines), Vec::new());
@@ -902,7 +1005,8 @@ fn plan(old: &Doc, text: &str) -> Option<Change> {
     pass.tops.iter_mut().for_each(|top| *top += window_line as u32);
     pass.images.retain(|image| image.line < kept_lines);
     pass.images.iter_mut().for_each(|image| image.line += window_line);
-    pass.code_blocks.retain(|block| (block.lines[0].0 as usize) < kept_lines);
+    pass.code_blocks
+        .retain(|block| (block.lines[0].0 as usize) < kept_lines);
     for block in &mut pass.code_blocks {
         block.lines.retain(|entry| (entry.0 as usize) < kept_lines);
         block.lines.iter_mut().for_each(|entry| entry.0 += window_line as u32);
@@ -947,10 +1051,18 @@ mod tests {
         assert_eq!(
             styled("a **b** *c* ~~d~~ `e`", 0),
             vec![
-                s("**", BOLD | MARKER), s("b", BOLD), s("**", BOLD | MARKER),
-                s("*", ITALIC | MARKER), s("c", ITALIC), s("*", ITALIC | MARKER),
-                s("~~", STRIKE | MARKER), s("d", STRIKE), s("~~", STRIKE | MARKER),
-                s("`", CODE | MARKER), s("e", CODE), s("`", CODE | MARKER),
+                s("**", BOLD | MARKER),
+                s("b", BOLD),
+                s("**", BOLD | MARKER),
+                s("*", ITALIC | MARKER),
+                s("c", ITALIC),
+                s("*", ITALIC | MARKER),
+                s("~~", STRIKE | MARKER),
+                s("d", STRIKE),
+                s("~~", STRIKE | MARKER),
+                s("`", CODE | MARKER),
+                s("e", CODE),
+                s("`", CODE | MARKER),
             ]
         );
     }
@@ -960,8 +1072,11 @@ mod tests {
         assert_eq!(
             styled("***x***", 0),
             vec![
-                s("*", ITALIC | MARKER), s("**", ITALIC | BOLD | MARKER), s("x", ITALIC | BOLD),
-                s("**", ITALIC | BOLD | MARKER), s("*", ITALIC | MARKER),
+                s("*", ITALIC | MARKER),
+                s("**", ITALIC | BOLD | MARKER),
+                s("x", ITALIC | BOLD),
+                s("**", ITALIC | BOLD | MARKER),
+                s("*", ITALIC | MARKER),
             ]
         );
     }
@@ -982,20 +1097,33 @@ mod tests {
         assert_eq!(
             styled("[text](http://x \"t\") <http://y>", 0),
             vec![
-                s("[", MARKER), s("text", LINK), s("](http://x \"t\")", MUTED),
-                s("<", LINK | MARKER), s("http://y", LINK), s(">", LINK | MARKER),
+                s("[", MARKER),
+                s("text", LINK),
+                s("](http://x \"t\")", MUTED),
+                s("<", LINK | MARKER),
+                s("http://y", LINK),
+                s(">", LINK | MARKER),
             ]
         );
         let doc = parse("para\n\n![alt](img.png)\nmore ![b](two.jpg)\n");
         assert_eq!(
             doc.images,
             vec![
-                Image { line: 2, url: "img.png".into() },
-                Image { line: 3, url: "two.jpg".into() },
+                Image {
+                    line: 2,
+                    url: "img.png".into()
+                },
+                Image {
+                    line: 3,
+                    url: "two.jpg".into()
+                },
             ]
         );
         assert_eq!(doc.images_on(3).count(), 1);
-        assert_eq!(styled("![alt](i.png)", 0), vec![s("![", MARKER), s("alt", LINK), s("](i.png)", MUTED)]);
+        assert_eq!(
+            styled("![alt](i.png)", 0),
+            vec![s("![", MARKER), s("alt", LINK), s("](i.png)", MUTED)]
+        );
     }
 
     #[test]
@@ -1004,10 +1132,7 @@ mod tests {
         assert_eq!(styled("12. item", 0), vec![s("12.", LIST)]);
         assert_eq!(styled("- a\n    1. nested", 1), vec![s("1.", LIST)]);
         assert_eq!(styled("> quoted", 0), vec![s("> ", QUOTE | MARKER), s("quoted", QUOTE)]);
-        assert_eq!(
-            styled("> a\n> > b", 1),
-            vec![s("> > ", QUOTE | MARKER), s("b", QUOTE)]
-        );
+        assert_eq!(styled("> a\n> > b", 1), vec![s("> > ", QUOTE | MARKER), s("b", QUOTE)]);
     }
 
     #[test]
@@ -1016,7 +1141,10 @@ mod tests {
         let doc = parse(source);
         assert_eq!(doc.block(0), Block::Frontmatter);
         assert_eq!(doc.block(2), Block::Frontmatter);
-        assert_eq!((doc.block(4), doc.block(5), doc.block(6)), (Block::Code, Block::Code, Block::Code));
+        assert_eq!(
+            (doc.block(4), doc.block(5), doc.block(6)),
+            (Block::Code, Block::Code, Block::Code)
+        );
         assert_eq!(styled(source, 4), vec![s("```rust", MARKER)]);
         assert_eq!(styled(source, 5), vec![]);
         assert_eq!(styled(source, 6), vec![s("```", MARKER)]);
@@ -1030,7 +1158,15 @@ mod tests {
 
     #[test]
     fn math_and_footnotes() {
-        assert_eq!(styled("$x^2$ and[^n]\n\n[^n]: note", 0), vec![s("$", MATH | MARKER), s("x^2", MATH), s("$", MATH | MARKER), s("[^n]", LINK)]);
+        assert_eq!(
+            styled("$x^2$ and[^n]\n\n[^n]: note", 0),
+            vec![
+                s("$", MATH | MARKER),
+                s("x^2", MATH),
+                s("$", MATH | MARKER),
+                s("[^n]", LINK)
+            ]
+        );
     }
 
     #[test]
@@ -1039,9 +1175,15 @@ mod tests {
         assert_eq!(
             styled(source, 0),
             vec![
-                s("{~~", MARKER), s("old", DEL), s("~>", MARKER), s("new", INS), s("~~}", MARKER),
+                s("{~~", MARKER),
+                s("old", DEL),
+                s("~>", MARKER),
+                s("new", INS),
+                s("~~}", MARKER),
                 s("{>>id:s_0123abcd by:C<<}", COMMENT),
-                s("{++", MARKER), s("in", INS), s("++}", MARKER),
+                s("{++", MARKER),
+                s("in", INS),
+                s("++}", MARKER),
                 s("{>>id:s_0123abce by:C<<}", COMMENT),
             ]
         );
@@ -1095,29 +1237,106 @@ mod tests {
         let referring = linked.replace("# One", "# One [ref] and[^n]");
         let next = reanalyse(next, &referring);
         assert!(next.incremental);
-        assert_eq!(next.spans(0).iter().filter(|span| span.style & style::LINK != 0).count(), 2);
+        assert_eq!(
+            next.spans(0)
+                .iter()
+                .filter(|span| span.style & style::LINK != 0)
+                .count(),
+            2
+        );
         same(&next, &parse(&referring), "reference far from its definition");
     }
 
     #[test]
     fn incremental_analysis_always_matches_a_full_one() {
         const BLOCKS: &[&str] = &[
-            "# Heading", "## Sub *heading*", "Setext\n===", "plain paragraph with **bold** and `code`",
-            "two line\nparagraph [link](http://x) end", "- item\n- item two\n    1. nested\n    2. more",
-            "- [ ] task\n- [x] done", "> quote\n> more quote", "> - quoted list\n> ```py\n> x = 1\n> ```",
-            "```rust\nfn main() {}\n```", "~~~\nplain fence\n~~~", "    indented code", "| a | b |\n|---|---|\n| 1 | 2 |",
-            "---", "***", "<div>\nhtml block\n</div>", "![img](pic.png)", "text ![inline](a.png) more ![two](b.jpg)",
-            "$$\nx^2\n$$", "inline $math$ here", "{++added++}{>>id:s_0123abcd by:A<<} text", "a {--gone--}{>>id:s_0123abce by:A<<} b",
-            "{~~old~>new~~}{>>id:s_0123abcf by:B<<}", "{>>a comment<<} and text", "term\n: definition", "1. one\n2. two\n\n   continued",
-            "héllo wörld 😀 ünïcode", "[[wiki link]] and <http://auto.link>", "~~struck~~ text", "",
-            "[ref]: http://example.com \"title\"", "see [ref] and [other][ref] and[^n]", "[^n]: a footnote\n    continued",
+            "# Heading",
+            "## Sub *heading*",
+            "Setext\n===",
+            "plain paragraph with **bold** and `code`",
+            "two line\nparagraph [link](http://x) end",
+            "- item\n- item two\n    1. nested\n    2. more",
+            "- [ ] task\n- [x] done",
+            "> quote\n> more quote",
+            "> - quoted list\n> ```py\n> x = 1\n> ```",
+            "```rust\nfn main() {}\n```",
+            "~~~\nplain fence\n~~~",
+            "    indented code",
+            "| a | b |\n|---|---|\n| 1 | 2 |",
+            "---",
+            "***",
+            "<div>\nhtml block\n</div>",
+            "![img](pic.png)",
+            "text ![inline](a.png) more ![two](b.jpg)",
+            "$$\nx^2\n$$",
+            "inline $math$ here",
+            "{++added++}{>>id:s_0123abcd by:A<<} text",
+            "a {--gone--}{>>id:s_0123abce by:A<<} b",
+            "{~~old~>new~~}{>>id:s_0123abcf by:B<<}",
+            "{>>a comment<<} and text",
+            "term\n: definition",
+            "1. one\n2. two\n\n   continued",
+            "héllo wörld 😀 ünïcode",
+            "[[wiki link]] and <http://auto.link>",
+            "~~struck~~ text",
+            "",
+            "[ref]: http://example.com \"title\"",
+            "see [ref] and [other][ref] and[^n]",
+            "[^n]: a footnote\n    continued",
         ];
         const SCRAPS: &[&str] = &[
-            "x", " ", "\n", "\n\n", "#", "# ", ">", "> ", "- ", "```", "```\n", "~~~\n", "*", "**", "`", "|", "=", "===\n", "---\n",
-            "{++", "++}", "{--", "--}", "{>>", "<<}", "{>>id:s_0123abcd by:Z<<}", "~>", "<div>", "[", "](", "![a](b.png)", "    ", "\t",
-            "é", "😀", "$", "$$\n", "1. ", "word word", "\n# New heading\n", "\n- new item\n", "[ref]", "[^n]", "\n[ref]: http://y\n", "\n[^n]: note\n", "]:", "\n```js\nlet a = 1;\n```\n",
+            "x",
+            " ",
+            "\n",
+            "\n\n",
+            "#",
+            "# ",
+            ">",
+            "> ",
+            "- ",
+            "```",
+            "```\n",
+            "~~~\n",
+            "*",
+            "**",
+            "`",
+            "|",
+            "=",
+            "===\n",
+            "---\n",
+            "{++",
+            "++}",
+            "{--",
+            "--}",
+            "{>>",
+            "<<}",
+            "{>>id:s_0123abcd by:Z<<}",
+            "~>",
+            "<div>",
+            "[",
+            "](",
+            "![a](b.png)",
+            "    ",
+            "\t",
+            "é",
+            "😀",
+            "$",
+            "$$\n",
+            "1. ",
+            "word word",
+            "\n# New heading\n",
+            "\n- new item\n",
+            "[ref]",
+            "[^n]",
+            "\n[ref]: http://y\n",
+            "\n[^n]: note\n",
+            "]:",
+            "\n```js\nlet a = 1;\n```\n",
         ];
-        let mut seed = std::env::var("MD_FUZZ_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(0x2545_f491_4f6c_dd1du64);
+        let mut seed = std::env::var("MD_FUZZ_SEED")
+            .ok()
+            .and_then(|seed| seed.parse().ok())
+            .unwrap_or(0x2545_f491_4f6c_dd1du64);
         let mut random = |bound: usize| {
             seed ^= seed << 13;
             seed ^= seed >> 7;
@@ -1127,7 +1346,10 @@ mod tests {
         let mut taken = 0;
         let mut rounds = 0;
         // MD_FUZZ=5000 runs a long soak.
-        let documents = std::env::var("MD_FUZZ").ok().and_then(|count| count.parse().ok()).unwrap_or(60);
+        let documents = std::env::var("MD_FUZZ")
+            .ok()
+            .and_then(|count| count.parse().ok())
+            .unwrap_or(60);
         for document in 0..documents {
             let mut text = String::new();
             for _ in 0..3 + random(30) {
@@ -1141,7 +1363,8 @@ mod tests {
             for _ in 0..60 {
                 let boundaries: Vec<usize> = text.char_indices().map(|(at, _)| at).chain([text.len()]).collect();
                 let at = boundaries[random(boundaries.len())];
-                let end = boundaries[(boundaries.partition_point(|&b| b < at) + random(6) * random(2) * random(8)).min(boundaries.len() - 1)];
+                let end = boundaries[(boundaries.partition_point(|&b| b < at) + random(6) * random(2) * random(8))
+                    .min(boundaries.len() - 1)];
                 let insert = match random(4) {
                     0 => "",
                     1 => BLOCKS[random(BLOCKS.len())],
@@ -1151,9 +1374,16 @@ mod tests {
                 doc = reanalyse(doc, &text);
                 taken += doc.incremental as usize;
                 rounds += 1;
-                same(&doc, &parse(&text), &format!("document {document} after editing at {at}: {text:?}"));
+                same(
+                    &doc,
+                    &parse(&text),
+                    &format!("document {document} after editing at {at}: {text:?}"),
+                );
             }
         }
-        assert!(taken * 4 > rounds, "the incremental path ran only {taken} of {rounds} times");
+        assert!(
+            taken * 4 > rounds,
+            "the incremental path ran only {taken} of {rounds} times"
+        );
     }
 }

@@ -26,15 +26,15 @@ pub use tabs::TabInfo;
 
 use crate::buffer::Buffer;
 use crate::config::Config;
-use crate::input::{Key, KeyEvent, Mods};
 use crate::highlight::{Highlighter, Lines};
+use crate::input::{Key, KeyEvent, Mods};
 use crate::markdown::{self, Doc};
+use crate::theme::{Theme, Themes};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
-use crate::theme::{Theme, Themes};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 /// `(analysis revision, block index → highlighted lines)`.
@@ -102,7 +102,10 @@ pub enum Effect {
     FontChanged,
     /// The writer's message for the connected assistant, with what was
     /// selected (char range and text) when they began typing it.
-    AgentMessage { text: String, selection: Option<(Range<usize>, String)> },
+    AgentMessage {
+        text: String,
+        selection: Option<(Range<usize>, String)>,
+    },
     OpenDialog,
     SaveAsDialog,
     ThemeChanged,
@@ -240,7 +243,11 @@ impl Editor {
             message: None,
             cmdline: None,
             suggesting: false,
-            primary: if cfg!(target_os = "macos") { Primary::Super } else { Primary::Ctrl },
+            primary: if cfg!(target_os = "macos") {
+                Primary::Super
+            } else {
+                Primary::Ctrl
+            },
             view_rows: 30,
             clipboard,
             effects: Vec::new(),
@@ -323,7 +330,10 @@ impl Editor {
                 .iter()
                 .map(|&(line, start)| (self.buf.line_text(line as usize), start as usize))
                 .collect();
-            let sources: Vec<&str> = texts.iter().map(|(text, start)| text.get(*start..).unwrap_or("")).collect();
+            let sources: Vec<&str> = texts
+                .iter()
+                .map(|(text, start)| text.get(*start..).unwrap_or(""))
+                .collect();
             let spans = self.highlighter.borrow_mut().block(&code.lang, &sources)?;
             if texts.iter().all(|(_, start)| *start == 0) {
                 return Some(spans);
@@ -331,7 +341,14 @@ impl Editor {
             // Nested blocks: shift past the quote or list prefix.
             let shifted = spans.iter().zip(&texts).map(|(spans, (_, start))| {
                 let shift = *start as u32;
-                spans.iter().map(|span| markdown::Span { start: span.start + shift, end: span.end + shift, ..*span }).collect()
+                spans
+                    .iter()
+                    .map(|span| markdown::Span {
+                        start: span.start + shift,
+                        end: span.end + shift,
+                        ..*span
+                    })
+                    .collect()
             });
             Some(Arc::new(shifted.collect()))
         });
@@ -380,7 +397,10 @@ impl Editor {
     /// The search to highlight: what is being typed at the prompt, else the
     /// last search while highlighting is on.
     pub fn search_highlight(&self) -> Option<&Matcher> {
-        let typing = self.cmdline.as_ref().is_some_and(|cmdline| matches!(cmdline.kind, CmdKind::SearchForward | CmdKind::SearchBackward));
+        let typing = self
+            .cmdline
+            .as_ref()
+            .is_some_and(|cmdline| matches!(cmdline.kind, CmdKind::SearchForward | CmdKind::SearchBackward));
         self.vim.matcher(typing)
     }
 
@@ -397,11 +417,17 @@ impl Editor {
     }
 
     fn info(&mut self, text: impl Into<String>) {
-        self.message = Some(Message { text: text.into(), error: false });
+        self.message = Some(Message {
+            text: text.into(),
+            error: false,
+        });
     }
 
     fn error(&mut self, text: impl Into<String>) {
-        self.message = Some(Message { text: text.into(), error: true });
+        self.message = Some(Message {
+            text: text.into(),
+            error: true,
+        });
     }
 
     // ----- files ---------------------------------------------------------
@@ -409,8 +435,7 @@ impl Editor {
     /// Opens `path`. A path that does not exist yet starts an empty document.
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
         let text = match std::fs::read(path) {
-            Ok(bytes) => String::from_utf8(bytes)
-                .map_err(|_| format!("{} is not UTF-8 text", path.display()))?,
+            Ok(bytes) => String::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8 text", path.display()))?,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(err) => return Err(format!("{}: {err}", path.display())),
         };
@@ -577,20 +602,34 @@ impl Editor {
         self.close_group();
         self.vim.clear_pending();
         self.agent_selection = self.selection().map(|range| (range.clone(), self.buf.slice(range)));
-        self.cmdline = Some(CmdLine { kind: CmdKind::Agent, text: String::new() });
+        self.cmdline = Some(CmdLine {
+            kind: CmdKind::Agent,
+            text: String::new(),
+        });
     }
 
     pub(super) fn agent_send(&mut self, text: &str) {
-        let selection = self.agent_selection.take().or_else(|| self.selection().map(|range| (range.clone(), self.buf.slice(range))));
+        let selection = self
+            .agent_selection
+            .take()
+            .or_else(|| self.selection().map(|range| (range.clone(), self.buf.slice(range))));
         if !text.trim().is_empty() {
-            self.effects.push(Effect::AgentMessage { text: text.trim().to_string(), selection });
+            self.effects.push(Effect::AgentMessage {
+                text: text.trim().to_string(),
+                selection,
+            });
         }
     }
 
     /// The mode a key binding must be declared for to apply now, or `None`
     /// where bindings do not apply (menus, prompts, the file browser).
     fn map_mode(&self) -> Option<MapMode> {
-        if self.mapping || self.palette.is_some() || self.context_menu.is_some() || self.cmdline.is_some() || self.sidebar.focused {
+        if self.mapping
+            || self.palette.is_some()
+            || self.context_menu.is_some()
+            || self.cmdline.is_some()
+            || self.sidebar.focused
+        {
             return None;
         }
         Some(match self.mode {
@@ -610,15 +649,27 @@ impl Editor {
         let applies = |mapping: &&Mapping| mapping.mode == mode || mapping.mode == MapMode::All;
         self.map_pending.push(event);
         let pending = self.map_pending.clone();
-        let exact = self.keymap.iter().filter(applies).find(|mapping| mapping.keys == pending).cloned();
-        let longer = self.keymap.iter().filter(applies).any(|mapping| mapping.keys.len() > pending.len() && mapping.keys.starts_with(&pending));
+        let exact = self
+            .keymap
+            .iter()
+            .filter(applies)
+            .find(|mapping| mapping.keys == pending)
+            .cloned();
+        let longer = self
+            .keymap
+            .iter()
+            .filter(applies)
+            .any(|mapping| mapping.keys.len() > pending.len() && mapping.keys.starts_with(&pending));
         // In insert mode the keys of a sequence are typed as they come, and
         // taken back if the sequence completes; nothing waits on a timer.
         let typed_through = mode == MapMode::Insert && pending.iter().all(|key| key.plain_char().is_some());
         if let (Some(mapping), false) = (&exact, longer) {
             self.map_pending.clear();
             if typed_through && pending.len() > 1 {
-                let typed: String = pending[..pending.len() - 1].iter().filter_map(KeyEvent::plain_char).collect();
+                let typed: String = pending[..pending.len() - 1]
+                    .iter()
+                    .filter_map(KeyEvent::plain_char)
+                    .collect();
                 let count = typed.chars().count();
                 if self.cursor >= count && self.buf.slice(self.cursor - count..self.cursor) == typed {
                     self.cursor = self.raw_edit(self.cursor - count..self.cursor, "").start;
@@ -636,7 +687,12 @@ impl Editor {
             if typed_through && pending.len() > 1 {
                 // The last key may itself start a sequence.
                 let last = [event];
-                if self.keymap.iter().filter(applies).any(|mapping| mapping.keys.len() > 1 && mapping.keys.starts_with(&last)) {
+                if self
+                    .keymap
+                    .iter()
+                    .filter(applies)
+                    .any(|mapping| mapping.keys.len() > 1 && mapping.keys.starts_with(&last))
+                {
                     self.map_pending.push(event);
                 }
             }
@@ -858,8 +914,12 @@ impl Editor {
                 let end = motion::word_end(buf, self.cursor.saturating_sub(1), false);
                 (end + 1).min(buf.len()).max(self.cursor)
             }
-            Key::Left => selection.clone().map_or(motion::prev_grapheme(buf, self.cursor), |range| range.start),
-            Key::Right => selection.clone().map_or(motion::next_grapheme(buf, self.cursor), |range| range.end),
+            Key::Left => selection
+                .clone()
+                .map_or(motion::prev_grapheme(buf, self.cursor), |range| range.start),
+            Key::Right => selection
+                .clone()
+                .map_or(motion::next_grapheme(buf, self.cursor), |range| range.end),
             Key::Home => buf.line_start(line),
             Key::End => buf.line_end(line),
             Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
@@ -913,7 +973,11 @@ impl Editor {
             }
             _ => {
                 let indent: String = text.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
-                let indent = if col >= indent.chars().count() { indent } else { String::new() };
+                let indent = if col >= indent.chars().count() {
+                    indent
+                } else {
+                    String::new()
+                };
                 self.type_text(&format!("\n{indent}"));
             }
         }
@@ -1071,7 +1135,11 @@ impl Editor {
         // With Ctrl as the command key, vim keeps its own Ctrl chords.
         let typing = self.palette.is_none() && !self.sidebar.focused;
         if self.primary == Primary::Ctrl && self.vim_enabled() && !mods.shift && typing {
-            let vim_owns = if self.mode == Mode::Insert { "wuh[" } else { "rdufbvcnphjleyaxio[" };
+            let vim_owns = if self.mode == Mode::Insert {
+                "wuh["
+            } else {
+                "rdufbvcnphjleyaxio["
+            };
             if vim_owns.contains(c) {
                 return None;
             }
@@ -1170,7 +1238,10 @@ impl Editor {
                 }
             }
             Shortcut::Find => {
-                self.cmdline = Some(CmdLine { kind: CmdKind::SearchForward, text: String::new() });
+                self.cmdline = Some(CmdLine {
+                    kind: CmdKind::SearchForward,
+                    text: String::new(),
+                });
             }
             Shortcut::FindNext(forward) => self.search_step(forward),
             Shortcut::Zoom(step) => self.effects.push(Effect::Zoom(step)),
@@ -1302,7 +1373,9 @@ impl Mapping {
                 let to = to.trim();
                 let run = match to.strip_prefix(':') {
                     _ if to.is_empty() || to.eq_ignore_ascii_case("<nop>") => Run::Nothing,
-                    Some(command) => Run::Command(command.trim_end_matches("<CR>").trim_end_matches("<cr>").to_string()),
+                    Some(command) => {
+                        Run::Command(command.trim_end_matches("<CR>").trim_end_matches("<cr>").to_string())
+                    }
                     None => Run::Keys(crate::input::parse_keys(to)),
                 };
                 out.push(Mapping { mode, keys, run });

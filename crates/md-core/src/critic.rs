@@ -172,9 +172,7 @@ fn fences(doc: &str) -> Vec<Range<usize>> {
                     open = Some((at, ch, run));
                 }
                 Some((start, open_ch, open_run))
-                    if ch == open_ch
-                        && run >= open_run
-                        && rest.iter().all(|b| b.is_ascii_whitespace()) =>
+                    if ch == open_ch && run >= open_run && rest.iter().all(|b| b.is_ascii_whitespace()) =>
                 {
                     out.push(start..next);
                     open = None;
@@ -367,12 +365,21 @@ mod tests {
         let doc = "a {++new++}{>>id:s_0123abcd by:Calvin<<} b {--old--}{>>id:s_aaaaaaa1 by:Agent Smith<<} c {~~x~>y~~}{>>id:s_zzzzzzzz by:Z<<}";
         let s = parse_suggestions(doc);
         assert_eq!(s.len(), 3);
-        assert_eq!((s[0].kind, s[0].new_text.as_str(), s[0].old_text.as_str()), (Kind::Insert, "new", ""));
+        assert_eq!(
+            (s[0].kind, s[0].new_text.as_str(), s[0].old_text.as_str()),
+            (Kind::Insert, "new", "")
+        );
         assert_eq!(s[0].span, 2..40);
         assert_eq!(s[0].author, "Calvin");
         assert_eq!(s[0].id, "s_0123abcd");
-        assert_eq!((s[1].kind, s[1].old_text.as_str(), s[1].author.as_str()), (Kind::Delete, "old", "Agent Smith"));
-        assert_eq!((s[2].kind, s[2].old_text.as_str(), s[2].new_text.as_str()), (Kind::Replace, "x", "y"));
+        assert_eq!(
+            (s[1].kind, s[1].old_text.as_str(), s[1].author.as_str()),
+            (Kind::Delete, "old", "Agent Smith")
+        );
+        assert_eq!(
+            (s[2].kind, s[2].old_text.as_str(), s[2].new_text.as_str()),
+            (Kind::Replace, "x", "y")
+        );
         assert_eq!(&doc[s[2].old_bytes.clone()], "x");
         assert_eq!(&doc[s[2].new_bytes.clone()], "y");
     }

@@ -31,12 +31,49 @@ pub struct Fonts {
 fn generic(name: &str) -> Option<&'static [&'static str]> {
     Some(match name.to_ascii_lowercase().as_str() {
         "system-ui" | "system" | "ui" => &[
-            ".AppleSystemUIFont", "System Font", ".SF NS", "SF Pro Text", "SF Pro", "Helvetica Neue",
-            "Segoe UI Variable", "Segoe UI", "Inter", "Cantarell", "Ubuntu", "Noto Sans", "DejaVu Sans", "Arial",
+            ".AppleSystemUIFont",
+            "System Font",
+            ".SF NS",
+            "SF Pro Text",
+            "SF Pro",
+            "Helvetica Neue",
+            "Segoe UI Variable",
+            "Segoe UI",
+            "Inter",
+            "Cantarell",
+            "Ubuntu",
+            "Noto Sans",
+            "DejaVu Sans",
+            "Arial",
         ],
-        "sans-serif" | "sans" => &["Helvetica Neue", "Segoe UI", "Inter", "Noto Sans", "DejaVu Sans", "Liberation Sans", "Arial"],
-        "serif" => &["New York", "Charter", "Georgia", "Cambria", "Noto Serif", "DejaVu Serif", "Liberation Serif", "Times New Roman"],
-        "monospace" | "mono" => &["SF Mono", "Menlo", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono", "Courier New"],
+        "sans-serif" | "sans" => &[
+            "Helvetica Neue",
+            "Segoe UI",
+            "Inter",
+            "Noto Sans",
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Arial",
+        ],
+        "serif" => &[
+            "New York",
+            "Charter",
+            "Georgia",
+            "Cambria",
+            "Noto Serif",
+            "DejaVu Serif",
+            "Liberation Serif",
+            "Times New Roman",
+        ],
+        "monospace" | "mono" => &[
+            "SF Mono",
+            "Menlo",
+            "Cascadia Mono",
+            "Consolas",
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "Courier New",
+        ],
         _ => return None,
     })
 }
@@ -219,8 +256,17 @@ pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
         _ => c.text,
     };
     let heading = matches!(spec.block, Block::Heading(_));
-    let base_weight = if heading || spec.bold { Weight::BOLD } else { Weight::NORMAL };
-    let plain = Span { start: 0, end: 0, style: 0, syntax: 0 };
+    let base_weight = if heading || spec.bold {
+        Weight::BOLD
+    } else {
+        Weight::NORMAL
+    };
+    let plain = Span {
+        start: 0,
+        end: 0,
+        style: 0,
+        syntax: 0,
+    };
 
     let mut buffer = Buffer::new(&mut fonts.system, Metrics::new(spec.font, spec.line));
     buffer.set_wrap(Wrap::WordOrGlyph);
@@ -233,7 +279,11 @@ pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
             let face = spec.face.unwrap_or(if mono { Face::Mono } else { Face::Prose });
             let mut attrs = Attrs::new()
                 .family(fonts.family(face))
-                .weight(if bits & style::BOLD != 0 { Weight::BOLD } else { base_weight })
+                .weight(if bits & style::BOLD != 0 {
+                    Weight::BOLD
+                } else {
+                    base_weight
+                })
                 .color(color(dim(span_color(span, base_color, c))));
             if span.syntax == md_core::markdown::syntax::COMMENT {
                 attrs = attrs.style(Style::Italic);
@@ -302,9 +352,11 @@ pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
 
     // Hang heading markers in the margin, the way iA Writer does.
     if let (Block::Heading(_), Some(first), 1) = (spec.block, spec.spans.first(), layout.rows.len())
-        && first.start == 0 && first.style & style::MARKER != 0 {
-            layout.hang = layout.x_of_byte(0, first.end as usize);
-        }
+        && first.start == 0
+        && first.style & style::MARKER != 0
+    {
+        layout.hang = layout.x_of_byte(0, first.end as usize);
+    }
 
     let thickness = (spec.font / 14.0).round().max(1.0);
     for span in spec.spans {
@@ -351,7 +403,10 @@ pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
 
 impl LineLayout {
     pub fn byte_of_col(&self, col: usize) -> usize {
-        self.text.char_indices().nth(col).map_or(self.text.len(), |(byte, _)| byte)
+        self.text
+            .char_indices()
+            .nth(col)
+            .map_or(self.text.len(), |(byte, _)| byte)
     }
 
     pub fn col_of_byte(&self, byte: usize) -> usize {
@@ -366,7 +421,11 @@ impl LineLayout {
     pub fn row_of_byte(&self, byte: usize) -> usize {
         (0..self.rows.len())
             .rev()
-            .find(|&row| self.row_clusters(row).first().is_some_and(|first| first.start as usize <= byte))
+            .find(|&row| {
+                self.row_clusters(row)
+                    .first()
+                    .is_some_and(|first| first.start as usize <= byte)
+            })
             .unwrap_or(0)
     }
 
@@ -413,10 +472,18 @@ impl LineLayout {
                 let past_middle = bar && x > cluster.x + cluster.w / 2.0;
                 // Stay on this row: a wrap point would draw on the next one.
                 let wraps = !is_last_row && cluster.end == last.end;
-                return if past_middle && !wraps { cluster.end } else { cluster.start } as usize;
+                return if past_middle && !wraps {
+                    cluster.end
+                } else {
+                    cluster.start
+                } as usize;
             }
         }
-        if bar && is_last_row { last.end as usize } else { last.start as usize }
+        if bar && is_last_row {
+            last.end as usize
+        } else {
+            last.start as usize
+        }
     }
 
     /// `(row, x0, x1)` extents covering a byte range.

@@ -27,6 +27,7 @@ const USAGE: &str = "md [options] [file]
   -n, --new-window        open a separate window even if md is already running
   -f, --foreground        stay attached to the terminal until the window closes (also --wait)
   --drive                 read scripted input from stdin (keys, click, drag, scroll, resize, drop, quit)
+  -V, --version           print the version
   -h, --help              this text
 
 md ctl ...                control the running md from another program (md ctl --help)";
@@ -65,6 +66,10 @@ fn parse_args() -> Result<Args, String> {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match arg.as_str() {
             "-h" | "--help" => return Err(String::new()),
+            "-V" | "--version" => {
+                println!("md {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
             "--theme" => args.theme = Some(value("--theme")?),
             "--novim" => args.novim = true,
             "--bench" => args.bench = true,
@@ -79,7 +84,9 @@ fn parse_args() -> Result<Args, String> {
             }
             "--size" => {
                 let size = value("--size")?;
-                let parsed = size.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
+                let parsed = size
+                    .split_once('x')
+                    .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
                 args.size = parsed.ok_or("--size expects WxH")?;
             }
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
@@ -96,7 +103,10 @@ pub fn build_editor(args: &Args) -> (Editor, Vec<PathBuf>) {
     let mut problems = Vec::new();
     let dir = platform::config_dir();
     let mut config = Config::default();
-    if let Some(source) = dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join("config.toml")).ok()) {
+    if let Some(source) = dir
+        .as_ref()
+        .and_then(|dir| std::fs::read_to_string(dir.join("config.toml")).ok())
+    {
         match Config::from_toml(&source) {
             Ok(parsed) => config = parsed,
             Err(err) => problems.push(format!("config.toml: {err}")),
@@ -109,7 +119,10 @@ pub fn build_editor(args: &Args) -> (Editor, Vec<PathBuf>) {
             config.theme = theme.clone();
         }
         // The remembered family goes first; the configured ones stay as fallbacks.
-        for (family, list) in [(&state.prose_font, &mut config.prose_font), (&state.mono_font, &mut config.mono_font)] {
+        for (family, list) in [
+            (&state.prose_font, &mut config.prose_font),
+            (&state.mono_font, &mut config.mono_font),
+        ] {
             if let Some(family) = family {
                 list.retain(|name| name != family);
                 list.insert(0, family.clone());
@@ -156,7 +169,10 @@ pub fn build_editor(args: &Args) -> (Editor, Vec<PathBuf>) {
     }
     // Fonts dropped next to the config, or shipped next to the binary.
     let mut font_dirs: Vec<PathBuf> = dir.iter().map(|dir| dir.join("fonts")).collect();
-    if let Some(exe) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("fonts"))) {
+    if let Some(exe) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("fonts")))
+    {
         font_dirs.push(exe);
     }
     (editor, font_dirs)
@@ -215,7 +231,12 @@ fn main() {
     let files: Vec<String> = args
         .file
         .iter()
-        .map(|file| std::path::absolute(file).unwrap_or(file.clone()).to_string_lossy().into_owned())
+        .map(|file| {
+            std::path::absolute(file)
+                .unwrap_or(file.clone())
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect();
     let open = serde_json::json!({ "cmd": "open", "files": files }).to_string();
     if !own_process && platform::request(&open, false).is_some() {

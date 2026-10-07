@@ -84,9 +84,18 @@ impl Editor {
         let pos = self.cursor;
         let mut menu = Builder::default();
 
-        let suggestion = self.doc.suggestions.iter().find(|suggestion| suggestion.span.contains(&pos)).cloned();
+        let suggestion = self
+            .doc
+            .suggestions
+            .iter()
+            .find(|suggestion| suggestion.span.contains(&pos))
+            .cloned();
         if let Some(suggestion) = &suggestion {
-            menu.add(&format!("Accept {}'s suggestion", suggestion.author), "a", Do::Resolve(true));
+            menu.add(
+                &format!("Accept {}'s suggestion", suggestion.author),
+                "a",
+                Do::Resolve(true),
+            );
             menu.add("Reject it", "r", Do::Resolve(false));
         }
         menu.group();
@@ -127,13 +136,25 @@ impl Editor {
             menu.add("Accept all suggestions", "A", Do::Command("acceptall"));
             menu.add("Reject all suggestions", "R", Do::Command("rejectall"));
         }
-        menu.add(if self.suggesting { "Stop suggesting" } else { "Suggest edits" }, "s", Do::Command("suggest"));
+        menu.add(
+            if self.suggesting {
+                "Stop suggesting"
+            } else {
+                "Suggest edits"
+            },
+            "s",
+            Do::Command("suggest"),
+        );
         menu.group();
         if self.path.is_some() {
             menu.add("Notes linking here…", "b", Do::Palette(PaletteKind::Backlinks));
         }
         menu.add("All commands…", "m", Do::Palette(PaletteKind::Help));
-        self.context_menu = Some(ContextMenu { items: menu.items, selected: 0, at });
+        self.context_menu = Some(ContextMenu {
+            items: menu.items,
+            selected: 0,
+            at,
+        });
     }
 
     /// A right-click in the text at `pos`. A click inside the selection
@@ -155,12 +176,18 @@ impl Editor {
 
     /// A right-click on a file browser row.
     pub fn sidebar_menu(&mut self, index: usize, x: f32, y: f32) {
-        let Some(entry) = self.sidebar.entries.get(index).cloned() else { return };
+        let Some(entry) = self.sidebar.entries.get(index).cloned() else {
+            return;
+        };
         self.sidebar.selected = index;
         self.sidebar.focused = true;
         let mut menu = Builder::default();
         match entry.kind {
-            EntryKind::Folder { open } => menu.add(if open { "Close folder" } else { "Open folder" }, "o", Do::Open(entry.path.clone())),
+            EntryKind::Folder { open } => menu.add(
+                if open { "Close folder" } else { "Open folder" },
+                "o",
+                Do::Open(entry.path.clone()),
+            ),
             _ => {
                 menu.add("Open", "o", Do::Open(entry.path.clone()));
                 menu.add("Open in new tab", "t", Do::OpenTab(entry.path.clone()));
@@ -168,14 +195,22 @@ impl Editor {
         }
         menu.group();
         menu.add("Copy path", "yc", Do::Copy(entry.path.to_string_lossy().into_owned()));
-        self.context_menu = Some(ContextMenu { items: menu.items, selected: 0, at: MenuAt::Point(x, y) });
+        self.context_menu = Some(ContextMenu {
+            items: menu.items,
+            selected: 0,
+            at: MenuAt::Point(x, y),
+        });
     }
 
     /// A right-click on a tab.
     pub fn tab_menu(&mut self, index: usize, x: f32, y: f32) {
         let mut menu = Builder::default();
         menu.add("Close tab", "cw", Do::CloseTab(index));
-        self.context_menu = Some(ContextMenu { items: menu.items, selected: 0, at: MenuAt::Point(x, y) });
+        self.context_menu = Some(ContextMenu {
+            items: menu.items,
+            selected: 0,
+            at: MenuAt::Point(x, y),
+        });
     }
 
     pub fn close_context_menu(&mut self) {
@@ -216,15 +251,18 @@ impl Editor {
     /// Runs item `index` (a click).
     pub fn menu_click(&mut self, index: usize) {
         if let Some(menu) = &mut self.context_menu
-            && index < menu.items.len() {
-                menu.selected = index;
-                self.menu_run();
-            }
+            && index < menu.items.len()
+        {
+            menu.selected = index;
+            self.menu_run();
+        }
     }
 
     fn menu_run(&mut self) {
         let Some(menu) = self.context_menu.take() else { return };
-        let Some(item) = menu.items.get(menu.selected) else { return };
+        let Some(item) = menu.items.get(menu.selected) else {
+            return;
+        };
         match item.action.clone() {
             Do::Resolve(accept) => self.resolve_at_cursor(accept),
             Do::Follow => self.follow_link(),

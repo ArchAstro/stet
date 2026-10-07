@@ -39,7 +39,11 @@ pub struct Sidebar {
 }
 
 fn kind_of(path: &Path) -> EntryKind {
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     match extension.as_str() {
         "md" | "markdown" | "mdown" | "mdx" | "txt" => EntryKind::Note,
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => EntryKind::Image,
@@ -63,7 +67,11 @@ impl Sidebar {
         children.sort();
         for (is_file, _, path) in children {
             let open = !is_file && self.expanded.contains(&path);
-            let kind = if is_file { kind_of(&path) } else { EntryKind::Folder { open } };
+            let kind = if is_file {
+                kind_of(&path)
+            } else {
+                EntryKind::Folder { open }
+            };
             let name = match kind {
                 EntryKind::Note => path.file_stem(),
                 _ => path.file_name(),
@@ -148,7 +156,9 @@ impl Editor {
     }
 
     fn sidebar_activate(&mut self, new_tab: bool) {
-        let Some(entry) = self.sidebar.entries.get(self.sidebar.selected).cloned() else { return };
+        let Some(entry) = self.sidebar.entries.get(self.sidebar.selected).cloned() else {
+            return;
+        };
         match entry.kind {
             EntryKind::Folder { open } => {
                 if open {
@@ -160,13 +170,19 @@ impl Editor {
             }
             EntryKind::Note | EntryKind::Other => {
                 self.push_jump();
-                let opened = if new_tab { self.open_in_tab(&entry.path) } else { self.open_path(&entry.path) };
+                let opened = if new_tab {
+                    self.open_in_tab(&entry.path)
+                } else {
+                    self.open_path(&entry.path)
+                };
                 match opened {
                     Ok(()) => self.sidebar.focused = false,
                     Err(err) => self.error(err),
                 }
             }
-            EntryKind::Image => self.effects.push(super::Effect::OpenUrl(entry.path.to_string_lossy().into_owned())),
+            EntryKind::Image => self
+                .effects
+                .push(super::Effect::OpenUrl(entry.path.to_string_lossy().into_owned())),
         }
     }
 
@@ -182,7 +198,9 @@ impl Editor {
     }
 
     fn sidebar_parent(&mut self) {
-        let Some(entry) = self.sidebar.entries.get(self.sidebar.selected).cloned() else { return };
+        let Some(entry) = self.sidebar.entries.get(self.sidebar.selected).cloned() else {
+            return;
+        };
         if matches!(entry.kind, EntryKind::Folder { open: true }) {
             self.sidebar.expanded.remove(&entry.path);
             self.sidebar.reload();
@@ -205,7 +223,10 @@ impl Editor {
             Key::Char('q') => self.toggle_sidebar(),
             Key::Char(':') => {
                 self.sidebar.focused = false;
-                self.cmdline = Some(super::CmdLine { kind: super::CmdKind::Command, text: String::new() });
+                self.cmdline = Some(super::CmdLine {
+                    kind: super::CmdKind::Command,
+                    text: String::new(),
+                });
             }
             Key::Down => step(&mut self.sidebar, 1),
             Key::Up => step(&mut self.sidebar, -1),

@@ -110,7 +110,11 @@ impl State {
     /// True if `config.toml` was edited after the state was written: the
     /// file is then the newer word on anything both set.
     pub fn older_than_config() -> bool {
-        let modified = |name: &str| std::fs::metadata(config_dir()?.join(name)).and_then(|meta| meta.modified()).ok();
+        let modified = |name: &str| {
+            std::fs::metadata(config_dir()?.join(name))
+                .and_then(|meta| meta.modified())
+                .ok()
+        };
         match (modified("state.toml"), modified("config.toml")) {
             (Some(state), Some(config)) => state < config,
             _ => false,
@@ -134,7 +138,12 @@ pub fn socket_path() -> Option<PathBuf> {
     if socket.as_os_str().len() < 96 {
         return Some(socket);
     }
-    let hash = socket.to_string_lossy().bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3));
+    let hash = socket
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+            (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
+        });
     Some(std::env::temp_dir().join(format!("md-{hash:016x}.sock")))
 }
 
@@ -174,7 +183,9 @@ pub fn listen(answer: impl Fn(String, &dyn Fn() -> bool) -> String + Send + Sync
     if let Some(dir) = socket.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let Ok(listener) = UnixListener::bind(&socket) else { return false };
+    let Ok(listener) = UnixListener::bind(&socket) else {
+        return false;
+    };
     // Only this user may connect.
     {
         use std::os::unix::fs::PermissionsExt;
@@ -188,7 +199,9 @@ pub fn listen(answer: impl Fn(String, &dyn Fn() -> bool) -> String + Send + Sync
             std::thread::spawn(move || {
                 use std::io::Read;
                 let mut line = String::new();
-                let (Ok(mut reply_to), Ok(probe)) = (stream.try_clone(), stream.try_clone()) else { return };
+                let (Ok(mut reply_to), Ok(probe)) = (stream.try_clone(), stream.try_clone()) else {
+                    return;
+                };
                 if BufReader::new(stream).read_line(&mut line).is_ok() && !line.trim().is_empty() {
                     // The caller sends nothing more, so a read that ends means it hung up.
                     let _ = probe.set_nonblocking(true);

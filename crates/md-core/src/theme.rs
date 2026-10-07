@@ -27,7 +27,11 @@ impl Rgb {
     pub fn luminance(self) -> f32 {
         let linear = |c: u8| {
             let c = c as f32 / 255.0;
-            if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
         };
         0.2126 * linear(self.0) + 0.7152 * linear(self.1) + 0.0722 * linear(self.2)
     }
@@ -68,9 +72,8 @@ macro_rules! palette {
 }
 
 palette!(
-    rosewater, flamingo, pink, mauve, red, maroon, peach, yellow, green, teal, sky, sapphire, blue,
-    lavender, text, subtext1, subtext0, overlay2, overlay1, overlay0, surface2, surface1, surface0,
-    base, mantle, crust,
+    rosewater, flamingo, pink, mauve, red, maroon, peach, yellow, green, teal, sky, sapphire, blue, lavender, text,
+    subtext1, subtext0, overlay2, overlay1, overlay0, surface2, surface1, surface0, base, mantle, crust,
 );
 
 /// `(name, label, palette)` in ArchDev catalog order.
@@ -371,9 +374,19 @@ mod tests {
         assert_eq!(
             themes.names().collect::<Vec<_>>(),
             [
-                "latte", "frappe", "macchiato", "mocha", "gruvbox-light", "everforest",
-                "everforest-light", "dracula", "solaris-light", "solaris-dark", "paper",
-                "ristretto", "nord",
+                "latte",
+                "frappe",
+                "macchiato",
+                "mocha",
+                "gruvbox-light",
+                "everforest",
+                "everforest-light",
+                "dracula",
+                "solaris-light",
+                "solaris-dark",
+                "paper",
+                "ristretto",
+                "nord",
             ]
         );
         let mocha = themes.get("mocha").unwrap();
@@ -391,8 +404,13 @@ mod tests {
             let c = &theme.colors;
             assert!(c.text.contrast(c.background) >= 4.5, "{} text", theme.name);
             for (role, color) in [
-                ("link", c.link), ("code", c.code), ("insert", c.insert), ("delete", c.delete),
-                ("cursor", c.cursor), ("muted", c.muted), ("list_marker", c.list_marker),
+                ("link", c.link),
+                ("code", c.code),
+                ("insert", c.insert),
+                ("delete", c.delete),
+                ("cursor", c.cursor),
+                ("muted", c.muted),
+                ("list_marker", c.list_marker),
             ] {
                 assert!(color.contrast(c.background) >= 3.0, "{} {role}", theme.name);
             }
@@ -404,7 +422,10 @@ mod tests {
     fn user_themes_inherit_and_override() {
         let mut themes = Themes::default();
         themes
-            .load_toml("mine", "label = \"Mine\"\nbase = \"nord\"\n[palette]\nblue = \"#010203\"\n[editor]\ncursor = \"#ff0000\"\n")
+            .load_toml(
+                "mine",
+                "label = \"Mine\"\nbase = \"nord\"\n[palette]\nblue = \"#010203\"\n[editor]\ncursor = \"#ff0000\"\n",
+            )
             .unwrap();
         let mine = themes.get("mine").unwrap();
         assert_eq!(mine.label, "Mine");

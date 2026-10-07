@@ -139,7 +139,9 @@ fn load(source: &Source, cache: Option<&Path>) -> Option<Vec<u8>> {
         }
         Source::Url(url) => {
             let cached = cache.map(|dir| {
-                let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3));
+                let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+                    (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
+                });
                 dir.join("images").join(format!("{hash:016x}"))
             });
             if let Some(bytes) = cached.as_ref().and_then(|file| std::fs::read(file).ok()) {
@@ -195,7 +197,12 @@ impl Images {
         let id = self.next_id;
         self.next_id += 1;
         self.states.insert(source.clone(), State::Loading);
-        let (sender, wake, owned, cache) = (self.sender.clone(), self.wake.clone(), source.clone(), self.cache.clone());
+        let (sender, wake, owned, cache) = (
+            self.sender.clone(),
+            self.wake.clone(),
+            source.clone(),
+            self.cache.clone(),
+        );
         let work = move || {
             let decoded = load(&owned, cache.as_deref()).and_then(|bytes| decode(&bytes, id));
             let _ = sender.send((owned, decoded));
@@ -244,7 +251,10 @@ mod tests {
         assert_eq!(resolve("img/x%20y.png", Some(doc), true), file("/notes/img/x y.png"));
         assert_eq!(resolve("/abs.png", None, true), file("/abs.png"));
         assert_eq!(resolve("file:///abs.png", Some(doc), true), file("/abs.png"));
-        assert_eq!(resolve("https://example.com/x.png", Some(doc), true), Some(Source::Url("https://example.com/x.png".into())));
+        assert_eq!(
+            resolve("https://example.com/x.png", Some(doc), true),
+            Some(Source::Url("https://example.com/x.png".into()))
+        );
         assert_eq!(resolve("https://example.com/x.png", Some(doc), false), None);
         assert_eq!(resolve("rel.png", None, true), None);
     }

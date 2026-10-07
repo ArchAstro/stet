@@ -70,8 +70,27 @@ impl Default for Config {
             font_size: 17.0,
             line_height: 1.55,
             line_width: 72,
-            prose_font: fonts(&["iA Writer Quattro S", "iA Writer Quattro V", "iA Writer Duo S", "SF Mono", "Menlo", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono"]),
-            mono_font: fonts(&["iA Writer Mono S", "iA Writer Mono V", "SF Mono", "Menlo", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono"]),
+            prose_font: fonts(&[
+                "iA Writer Quattro S",
+                "iA Writer Quattro V",
+                "iA Writer Duo S",
+                "SF Mono",
+                "Menlo",
+                "Cascadia Mono",
+                "Consolas",
+                "DejaVu Sans Mono",
+                "Liberation Mono",
+            ]),
+            mono_font: fonts(&[
+                "iA Writer Mono S",
+                "iA Writer Mono V",
+                "SF Mono",
+                "Menlo",
+                "Cascadia Mono",
+                "Consolas",
+                "DejaVu Sans Mono",
+                "Liberation Mono",
+            ]),
             visual_line_motion: true,
             focus: false,
             typewriter: false,
@@ -97,7 +116,10 @@ impl Config {
         config.line_width = config.line_width.clamp(20, 400);
         config.indent = config.indent.clamp(1, 16);
         if !crate::critic::is_valid_author(&config.author) {
-            return Err(format!("author `{}` cannot be written into suggestion markup", config.author));
+            return Err(format!(
+                "author `{}` cannot be written into suggestion markup",
+                config.author
+            ));
         }
         Ok(config)
     }

@@ -20,15 +20,24 @@ const MAX_FILES: usize = 20_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Link {
     /// `[[Note]]`, `[[Note#Heading]]`, `[[Note|shown text]]`.
-    Wiki { note: String, anchor: Option<String> },
+    Wiki {
+        note: String,
+        anchor: Option<String>,
+    },
     /// A relative or absolute file destination, with an optional `#anchor`.
-    File { path: String, anchor: Option<String> },
+    File {
+        path: String,
+        anchor: Option<String>,
+    },
     Url(String),
 }
 
 fn split_anchor(target: &str) -> (String, Option<String>) {
     match target.split_once('#') {
-        Some((path, anchor)) => (path.to_string(), Some(anchor.to_string()).filter(|anchor| !anchor.is_empty())),
+        Some((path, anchor)) => (
+            path.to_string(),
+            Some(anchor.to_string()).filter(|anchor| !anchor.is_empty()),
+        ),
         None => (target.to_string(), None),
     }
 }
@@ -56,21 +65,34 @@ fn percent_decode(text: &str) -> String {
 /// The link whose source text covers byte `at` of `line`.
 pub fn link_in(line: &str, at: usize) -> Option<Link> {
     let covers = |found: regex::Match| found.start() <= at && at < found.end();
-    if let Some(captures) = WIKI.captures_iter(line).find(|captures| covers(captures.get(0).unwrap())) {
+    if let Some(captures) = WIKI
+        .captures_iter(line)
+        .find(|captures| covers(captures.get(0).unwrap()))
+    {
         let target = captures[1].split('|').next().unwrap_or("").trim();
         let (note, anchor) = split_anchor(target);
         return Some(Link::Wiki { note, anchor });
     }
-    if let Some(captures) = INLINE.captures_iter(line).find(|captures| covers(captures.get(0).unwrap())) {
+    if let Some(captures) = INLINE
+        .captures_iter(line)
+        .find(|captures| covers(captures.get(0).unwrap()))
+    {
         let dest = &captures[1];
         if URL.find(dest).is_some_and(|found| found.start() == 0) {
             return Some(Link::Url(dest.to_string()));
         }
         let (path, anchor) = split_anchor(dest);
-        return Some(Link::File { path: percent_decode(&path), anchor });
+        return Some(Link::File {
+            path: percent_decode(&path),
+            anchor,
+        });
     }
     let bare = URL.find_iter(line).find(|found| covers(*found))?;
-    Some(Link::Url(bare.as_str().trim_end_matches(['.', ',', ';', ':', '!', '?', '\'']).to_string()))
+    Some(Link::Url(
+        bare.as_str()
+            .trim_end_matches(['.', ',', ';', ':', '!', '?', '\''])
+            .to_string(),
+    ))
 }
 
 /// GitHub-style heading anchor.
@@ -97,7 +119,12 @@ pub fn notes_under(root: &Path) -> Vec<PathBuf> {
     let mut queue = std::collections::VecDeque::from([(root.to_path_buf(), 0)]);
     let mut seen = 0;
     while let Some((dir, depth)) = queue.pop_front() {
-        let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|entry| entry.path()).collect();
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
         entries.sort();
         for path in entries {
             seen += 1;
@@ -144,7 +171,11 @@ impl Editor {
         let dir = self.doc_dir();
         dir.ancestors()
             .take(8)
-            .find(|dir| [".git", ".obsidian", ".md-root"].iter().any(|marker| dir.join(marker).exists()))
+            .find(|dir| {
+                [".git", ".obsidian", ".md-root"]
+                    .iter()
+                    .any(|marker| dir.join(marker).exists())
+            })
             .map_or(dir.clone(), Path::to_path_buf)
     }
 
@@ -165,7 +196,11 @@ impl Editor {
     pub fn resolve_note(&self, note: &str) -> PathBuf {
         let dir = self.doc_dir();
         let wanted = Path::new(note);
-        let direct = if is_note(wanted) { dir.join(wanted) } else { dir.join(format!("{note}.md")) };
+        let direct = if is_note(wanted) {
+            dir.join(wanted)
+        } else {
+            dir.join(format!("{note}.md"))
+        };
         if direct.exists() {
             return direct;
         }
@@ -173,7 +208,10 @@ impl Editor {
         let suffix = wanted.with_extension("");
         self.workspace_notes()
             .into_iter()
-            .filter(|path| path.file_stem().is_some_and(|found| found.to_string_lossy().to_lowercase() == stem))
+            .filter(|path| {
+                path.file_stem()
+                    .is_some_and(|found| found.to_string_lossy().to_lowercase() == stem)
+            })
             .find(|path| suffix.components().count() == 1 || path.with_extension("").ends_with(&suffix))
             .unwrap_or(direct)
     }
@@ -244,7 +282,9 @@ impl Editor {
 
     /// Notes in the workspace that link to the active document.
     pub fn backlinks(&self) -> Vec<Backlink> {
-        let Some(own) = self.path.clone() else { return Vec::new() };
+        let Some(own) = self.path.clone() else {
+            return Vec::new();
+        };
         let stem = own.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
         let name = own.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
         let mut out = Vec::new();
@@ -252,21 +292,32 @@ impl Editor {
             if path == own || std::fs::metadata(&path).map_or(true, |meta| meta.len() > 4 << 20) {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             if !text.to_lowercase().contains(&stem) {
                 continue;
             }
             for (line, source) in text.lines().enumerate() {
                 let wiki = WIKI.captures_iter(source).any(|captures| {
                     let target = captures[1].split(['|', '#']).next().unwrap_or("").trim().to_lowercase();
-                    Path::new(&target).with_extension("").file_name().is_some_and(|found| found.to_string_lossy() == stem)
+                    Path::new(&target)
+                        .with_extension("")
+                        .file_name()
+                        .is_some_and(|found| found.to_string_lossy() == stem)
                 });
                 let inline = INLINE.captures_iter(source).any(|captures| {
                     let dest = percent_decode(captures[1].split('#').next().unwrap_or("")).to_lowercase();
-                    Path::new(&dest).file_name().is_some_and(|found| found.to_string_lossy() == name)
+                    Path::new(&dest)
+                        .file_name()
+                        .is_some_and(|found| found.to_string_lossy() == name)
                 });
                 if wiki || inline {
-                    out.push(Backlink { path: path.clone(), line, text: source.trim().to_string() });
+                    out.push(Backlink {
+                        path: path.clone(),
+                        line,
+                        text: source.trim().to_string(),
+                    });
                 }
             }
         }

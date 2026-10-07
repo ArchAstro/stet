@@ -229,7 +229,15 @@ impl Gpu {
     }
 
     pub fn upload_image(&mut self, id: u64, width: u32, height: u32, rgba: &[u8]) {
-        let bind = texture_bind(&self.device, &self.queue, &self.texture_layout, &self.sampler, width, height, rgba);
+        let bind = texture_bind(
+            &self.device,
+            &self.queue,
+            &self.texture_layout,
+            &self.sampler,
+            width,
+            height,
+            rgba,
+        );
         self.textures.insert(id, bind);
     }
 
@@ -242,8 +250,11 @@ impl Gpu {
         fonts: &mut Fonts,
     ) {
         let (width, height) = size;
-        self.queue
-            .write_buffer(&self.globals, 0, bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]));
+        self.queue.write_buffer(
+            &self.globals,
+            0,
+            bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]),
+        );
 
         // One vertex buffer; per layer: back quads, one quad per image, front quads.
         let layers = [&frame.base, &frame.over];
@@ -257,7 +268,14 @@ impl Gpu {
             for (id, rect) in &layer.images {
                 if self.textures.contains_key(id) {
                     let start = vertices.len() as u32;
-                    push_quad(&mut vertices, &Quad { rect: *rect, color: [1.0; 4], radius: 4.0 });
+                    push_quad(
+                        &mut vertices,
+                        &Quad {
+                            rect: *rect,
+                            color: [1.0; 4],
+                            radius: 4.0,
+                        },
+                    );
                     images.push((*id, start..vertices.len() as u32));
                 }
             }
@@ -298,11 +316,21 @@ impl Gpu {
                 })
             });
             prepared[index] = self.text[index]
-                .prepare(&self.device, &self.queue, &mut fonts.system, &mut self.atlas, &self.viewport, areas, &mut fonts.swash)
+                .prepare(
+                    &self.device,
+                    &self.queue,
+                    &mut fonts.system,
+                    &mut self.atlas,
+                    &self.viewport,
+                    areas,
+                    &mut fonts.swash,
+                )
                 .is_ok();
         }
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -332,7 +360,12 @@ impl Gpu {
                 if !images.is_empty() {
                     let [x, y, w, h] = layers[index].image_clip;
                     let (x, y) = ((x.max(0.0) as u32).min(width), (y.max(0.0) as u32).min(height));
-                    pass.set_scissor_rect(x, y, (w.max(0.0) as u32).min(width - x), (h.max(0.0) as u32).min(height - y));
+                    pass.set_scissor_rect(
+                        x,
+                        y,
+                        (w.max(0.0) as u32).min(width - x),
+                        (h.max(0.0) as u32).min(height - y),
+                    );
                     for (id, range) in images {
                         pass.set_bind_group(1, &self.textures[&id], &[]);
                         pass.draw(range, 0..1);
@@ -355,7 +388,11 @@ impl Gpu {
 pub fn linear(rgb: md_core::theme::Rgb, alpha: f32) -> [f32; 4] {
     let channel = |c: u8| {
         let c = c as f32 / 255.0;
-        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
     };
     [channel(rgb.0), channel(rgb.1), channel(rgb.2), alpha]
 }

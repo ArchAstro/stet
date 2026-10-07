@@ -22,8 +22,14 @@ pub enum Act {
     /// Run an editor command.
     Command(String),
     /// Insert markdown at the cursor. Block snippets start on their own line.
-    Insert { text: String, block: bool },
-    Open { path: PathBuf, line: Option<usize> },
+    Insert {
+        text: String,
+        block: bool,
+    },
+    Open {
+        path: PathBuf,
+        line: Option<usize>,
+    },
     /// Reference rows do nothing.
     None,
 }
@@ -120,7 +126,12 @@ const MARKDOWN: &[(&str, &str, &str, bool)] = &[
     ("Numbered list", "1. item", "1. ", true),
     ("Task", "- [ ] to do", "- [ ] ", true),
     ("Quote", "> quoted", "> ", true),
-    ("Table", "| a | b |", "| Column | Column |\n|--------|--------|\n|        |        |", true),
+    (
+        "Table",
+        "| a | b |",
+        "| Column | Column |\n|--------|--------|\n|        |        |",
+        true,
+    ),
     ("Footnote", "text[^1]  …  [^1]: note", "[^1]", false),
     ("Math", "$e^{i\\pi}$  or  $$ … $$", "$x$", false),
     ("Horizontal rule", "---", "---", true),
@@ -147,7 +158,10 @@ const VIM: &[(&str, &str)] = &[
     ("Links", "gf or Enter follows   Ctrl-o back   Ctrl-i forward"),
     ("Tabs", "]t  [t   :tabnew  :q"),
     ("Tasks and suggestions", "gt toggles a task   ]s [s   gsa gsr"),
-    ("Menus and the assistant", "K or gm: actions here   ga: message the assistant"),
+    (
+        "Menus and the assistant",
+        "K or gm: actions here   ga: message the assistant",
+    ),
     ("Replace", ":s/old/new/g   :%s/old/new/g   (regex, \\1, &)"),
 ];
 
@@ -163,7 +177,8 @@ impl Editor {
     }
 
     fn help_items(&self) -> Vec<Item> {
-        let command = |label: &str, detail: String, line: &str| item("Commands", label, detail, Act::Command(line.to_string()));
+        let command =
+            |label: &str, detail: String, line: &str| item("Commands", label, detail, Act::Command(line.to_string()));
         let chord = |shift: bool, key: &str| self.chord(shift, key);
         let mut items = vec![
             command("Go to file…", chord(false, "P"), "files"),
@@ -175,12 +190,24 @@ impl Editor {
             command("Close tab", chord(false, "W"), "close"),
             command("Next tab", format!("{}  ]t", chord(true, "]")), "tabnext"),
             command("Previous tab", format!("{}  [t", chord(true, "[")), "tabprevious"),
-            command("Follow the link under the cursor", format!("{}  gf", chord(false, "↵")), "follow"),
+            command(
+                "Follow the link under the cursor",
+                format!("{}  gf", chord(false, "↵")),
+                "follow",
+            ),
             command("Back", format!("{}  Ctrl-o", chord(false, "[")), "back"),
             command("Forward", format!("{}  Ctrl-i", chord(false, "]")), "forward"),
             command("Notes linking here…", chord(true, "L"), "backlinks"),
-            command("Message the connected assistant…", format!("{}  ga", chord(true, "A")), "agent"),
-            command("Actions for what is under the cursor…", format!("{}  K", chord(false, ".")), "actions"),
+            command(
+                "Message the connected assistant…",
+                format!("{}  ga", chord(true, "A")),
+                "agent",
+            ),
+            command(
+                "Actions for what is under the cursor…",
+                format!("{}  K", chord(false, ".")),
+                "actions",
+            ),
             command("Find", format!("{}  /", chord(false, "F")), "find"),
             command("Choose a theme…", chord(true, "T"), "theme"),
             command("Choose the writing font…", ":font".to_string(), "font"),
@@ -201,7 +228,11 @@ impl Editor {
             command("Actual size", chord(false, "0"), "zoom reset"),
             command("Full screen", format!("{}  F11", chord(true, "F")), "fullscreen"),
             command(
-                if self.config.vim { "Turn vim keys off" } else { "Turn vim keys on" },
+                if self.config.vim {
+                    "Turn vim keys off"
+                } else {
+                    "Turn vim keys on"
+                },
                 if self.config.vim { ":novim" } else { ":vim" }.to_string(),
                 if self.config.vim { "novim" } else { "vim" },
             ),
@@ -211,12 +242,18 @@ impl Editor {
             let act = if text.is_empty() {
                 Act::None
             } else {
-                Act::Insert { text: text.to_string(), block: *block }
+                Act::Insert {
+                    text: text.to_string(),
+                    block: *block,
+                }
             };
             item("Markdown", label, *syntax, act)
         }));
         if self.config.vim {
-            items.extend(VIM.iter().map(|(label, keys)| item("Vim keys", label, *keys, Act::None)));
+            items.extend(
+                VIM.iter()
+                    .map(|(label, keys)| item("Vim keys", label, *keys, Act::None)),
+            );
         }
         items
     }
@@ -227,7 +264,10 @@ impl Editor {
             .into_iter()
             .map(|path| {
                 let relative = path.strip_prefix(&root).unwrap_or(&path);
-                let folder = relative.parent().map(|dir| dir.to_string_lossy().into_owned()).unwrap_or_default();
+                let folder = relative
+                    .parent()
+                    .map(|dir| dir.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
                 item("", &name, folder, Act::Open { path, line: None })
             })
@@ -246,7 +286,10 @@ impl Editor {
             PaletteKind::Notes => {
                 let mut items = self.file_items();
                 for item in &mut items {
-                    item.act = Act::Insert { text: format!("{}]]", item.label), block: false };
+                    item.act = Act::Insert {
+                        text: format!("{}]]", item.label),
+                        block: false,
+                    };
                 }
                 ("Link to note", items)
             }
@@ -256,8 +299,21 @@ impl Editor {
                     .backlinks()
                     .into_iter()
                     .map(|link| {
-                        let shown = link.path.strip_prefix(&root).unwrap_or(&link.path).to_string_lossy().into_owned();
-                        item("", &link.text, shown, Act::Open { path: link.path, line: Some(link.line) })
+                        let shown = link
+                            .path
+                            .strip_prefix(&root)
+                            .unwrap_or(&link.path)
+                            .to_string_lossy()
+                            .into_owned();
+                        item(
+                            "",
+                            &link.text,
+                            shown,
+                            Act::Open {
+                                path: link.path,
+                                line: Some(link.line),
+                            },
+                        )
                     })
                     .collect::<Vec<_>>();
                 if items.is_empty() {
@@ -298,7 +354,10 @@ impl Editor {
             _ => None,
         };
         if let Some(current) = current {
-            let at = palette.matches.iter().position(|&index| palette.items[index].act == Act::Command(current.clone()));
+            let at = palette
+                .matches
+                .iter()
+                .position(|&index| palette.items[index].act == Act::Command(current.clone()));
             palette.selected = at.unwrap_or(0);
         }
         self.palette = Some(palette);
@@ -388,10 +447,11 @@ impl Editor {
     /// Selects and runs the `index`th visible row (a click).
     pub fn palette_click(&mut self, index: usize) {
         if let Some(palette) = &mut self.palette
-            && index < palette.matches.len() {
-                palette.selected = index;
-                self.palette_run();
-            }
+            && index < palette.matches.len()
+        {
+            palette.selected = index;
+            self.palette_run();
+        }
     }
 
     fn palette_run(&mut self) {

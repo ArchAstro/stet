@@ -9,7 +9,10 @@ const UNREPRESENTABLE: &str = "that text cannot be written inside a suggestion";
 
 impl Editor {
     pub(super) fn suggest_edit(&mut self, range: Range<usize>, text: &str) -> EditPos {
-        let unchanged = EditPos { start: range.start, end: range.end };
+        let unchanged = EditPos {
+            start: range.start,
+            end: range.end,
+        };
         match self.try_suggest(range, text) {
             Ok(pos) => pos,
             Err(why) => {
@@ -46,7 +49,10 @@ impl Editor {
             let new_text: String = new_text.into_iter().collect();
             if s.kind == Kind::Insert && new_text.is_empty() {
                 let pos = self.raw_edit(s.span.clone(), "");
-                return Ok(EditPos { start: pos.start, end: pos.start });
+                return Ok(EditPos {
+                    start: pos.start,
+                    end: pos.start,
+                });
             }
             compose_checked(s.kind, &s.old_text, &new_text, &s.id, &s.author).ok_or(UNREPRESENTABLE)?;
             return Ok(self.raw_edit(range, text));
@@ -70,12 +76,18 @@ impl Editor {
             if let Some(s) = own(Kind::Delete).find(|s| s.span.end == range.start) {
                 let markup = compose_checked(Kind::Replace, &s.old_text, text, &s.id, author).ok_or(UNREPRESENTABLE)?;
                 let start = self.raw_edit(s.span.clone(), &markup).start + 3 + s.old_text.chars().count() + 2;
-                return Ok(EditPos { start, end: start + typed });
+                return Ok(EditPos {
+                    start,
+                    end: start + typed,
+                });
             }
             let id = self.next_id();
             let markup = compose_checked(Kind::Insert, "", text, &id, author).ok_or(UNREPRESENTABLE)?;
             let start = self.raw_edit(range, &markup).start + 3;
-            return Ok(EditPos { start, end: start + typed });
+            return Ok(EditPos {
+                start,
+                end: start + typed,
+            });
         }
         if text.is_empty() {
             // Repeated backspace or forward-delete grows one deletion.
@@ -92,7 +104,10 @@ impl Editor {
         let id = self.next_id();
         let markup = compose_checked(Kind::Replace, &old, text, &id, author).ok_or(UNREPRESENTABLE)?;
         let start = self.raw_edit(range, &markup).start + 3 + old_len + 2;
-        Ok(EditPos { start, end: start + typed })
+        Ok(EditPos {
+            start,
+            end: start + typed,
+        })
     }
 
     /// Accepts or rejects the suggestion under the cursor, or the next one on
@@ -113,7 +128,11 @@ impl Editor {
         let Some(suggestion) = found else {
             return self.error("no suggestion here");
         };
-        let (span, text) = if accept { suggestion.accept() } else { suggestion.reject() };
+        let (span, text) = if accept {
+            suggestion.accept()
+        } else {
+            suggestion.reject()
+        };
         self.cursor = self.raw_edit(span, text).start;
         self.close_group();
         self.info(format!(
@@ -127,7 +146,11 @@ impl Editor {
         self.refresh();
         let suggestions = self.doc.suggestions.clone();
         for suggestion in suggestions.iter().rev() {
-            let (span, text) = if accept { suggestion.accept() } else { suggestion.reject() };
+            let (span, text) = if accept {
+                suggestion.accept()
+            } else {
+                suggestion.reject()
+            };
             self.raw_edit(span, text);
         }
         self.cursor = self.cursor.min(self.buf.len());

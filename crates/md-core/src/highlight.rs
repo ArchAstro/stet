@@ -142,10 +142,12 @@ impl Highlighter {
             .max_by_key(|(_, cached)| common(cached))
             .map(|(index, cached)| (index, common(cached)));
         if let Some((index, shared)) = previous
-            && shared == hashes.len() && self.recent[index].hashes.len() == hashes.len() {
-                self.recent[index].used = self.clock;
-                return Some(self.recent[index].spans.clone());
-            }
+            && shared == hashes.len()
+            && self.recent[index].hashes.len() == hashes.len()
+        {
+            self.recent[index].used = self.clock;
+            return Some(self.recent[index].spans.clone());
+        }
 
         let mut states: Vec<(ParseState, ScopeStack)> = Vec::with_capacity(lines.len());
         let mut spans: Vec<Vec<Span>> = Vec::with_capacity(lines.len());
@@ -163,7 +165,10 @@ impl Highlighter {
                 .count();
             tail = Some((index, suffix));
         }
-        let (mut parser, mut stack) = states.last().cloned().unwrap_or((ParseState::new(syntax), ScopeStack::new()));
+        let (mut parser, mut stack) = states
+            .last()
+            .cloned()
+            .unwrap_or((ParseState::new(syntax), ScopeStack::new()));
         let mut line = states.len();
         while line < lines.len() {
             let text = lines[line];
@@ -178,7 +183,12 @@ impl Highlighter {
                     if kind != 0 && from < to {
                         match out.last_mut() {
                             Some(last) if last.syntax == kind && last.end as usize == from => last.end = to as u32,
-                            _ => out.push(Span { start: from as u32, end: to as u32, style: 0, syntax: kind }),
+                            _ => out.push(Span {
+                                start: from as u32,
+                                end: to as u32,
+                                style: 0,
+                                syntax: kind,
+                            }),
                         }
                     }
                 };
@@ -209,9 +219,10 @@ impl Highlighter {
 
         let spans: Lines = Arc::new(spans);
         if self.recent.len() >= CACHED_BLOCKS
-            && let Some(oldest) = (0..self.recent.len()).min_by_key(|&index| self.recent[index].used) {
-                self.recent.swap_remove(oldest);
-            }
+            && let Some(oldest) = (0..self.recent.len()).min_by_key(|&index| self.recent[index].used)
+        {
+            self.recent.swap_remove(oldest);
+        }
         self.recent.push(Cached {
             lang: lang.to_string(),
             hashes,
@@ -234,7 +245,10 @@ mod tests {
             .iter()
             .zip(spans.iter())
             .map(|(line, spans)| {
-                spans.iter().map(|span| (line[span.start as usize..span.end as usize].to_string(), span.syntax)).collect()
+                spans
+                    .iter()
+                    .map(|span| (line[span.start as usize..span.end as usize].to_string(), span.syntax))
+                    .collect()
             })
             .collect()
     }
@@ -246,7 +260,33 @@ mod tests {
         assert!(rust[0].contains(&("main".to_string(), syntax::FUNCTION)));
         assert!(rust[1].contains(&("\"hi\"".to_string(), syntax::STRING)));
         assert!(rust[1].contains(&("// note".to_string(), syntax::COMMENT)));
-        for lang in ["python", "ts", "typescript", "go", "json", "yaml", "toml", "sh", "bash", "sql", "html", "css", "c", "cpp", "java", "kotlin", "swift", "ruby", "dockerfile", "diff", "lua", "zig", "nix", "elixir", "haskell"] {
+        for lang in [
+            "python",
+            "ts",
+            "typescript",
+            "go",
+            "json",
+            "yaml",
+            "toml",
+            "sh",
+            "bash",
+            "sql",
+            "html",
+            "css",
+            "c",
+            "cpp",
+            "java",
+            "kotlin",
+            "swift",
+            "ruby",
+            "dockerfile",
+            "diff",
+            "lua",
+            "zig",
+            "nix",
+            "elixir",
+            "haskell",
+        ] {
             assert!(Highlighter::default().block(lang, &["x = 1"]).is_some(), "{lang}");
         }
         assert!(Highlighter::default().block("no-such-language", &["x"]).is_none());

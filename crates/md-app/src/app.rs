@@ -77,36 +77,44 @@ pub fn prepare(args: &Args) -> Prepared {
     let (editor, font_dirs) = build_editor(args);
     crate::timing("config and file read");
     let (config, colors) = (editor.config.clone(), editor.theme.colors);
-    let sample: Vec<String> = (0..editor.buf.line_count().min(80)).map(|line| editor.buf.line_text(line)).collect();
+    let sample: Vec<String> = (0..editor.buf.line_count().min(80))
+        .map(|line| editor.buf.line_text(line))
+        .collect();
     let fonts = std::thread::spawn(move || {
         let mut fonts = Fonts::new(&config, &font_dirs);
         crate::timing("fonts loaded");
         // Most displays that matter here are 2x; a miss only costs the warm-up.
         let font = (config.font_size * 2.0).round();
-        let shape = |fonts: &mut Fonts, text: &str, block: md_core::markdown::Block, face: Option<crate::text::Face>| {
-            crate::text::layout_line(
-                fonts,
-                &crate::text::LineSpec {
-                    text,
-                    spans: &[],
-                    block,
-                    font,
-                    line: (font * config.line_height).round(),
-                    width: font * 40.0,
-                    colors: &colors,
-                    dim: false,
-                    face,
-                    bold: false,
-                },
-            );
-        };
+        let shape =
+            |fonts: &mut Fonts, text: &str, block: md_core::markdown::Block, face: Option<crate::text::Face>| {
+                crate::text::layout_line(
+                    fonts,
+                    &crate::text::LineSpec {
+                        text,
+                        spans: &[],
+                        block,
+                        font,
+                        line: (font * config.line_height).round(),
+                        width: font * 40.0,
+                        colors: &colors,
+                        dim: false,
+                        face,
+                        bold: false,
+                    },
+                );
+            };
         for line in &sample {
             shape(&mut fonts, line, md_core::markdown::Block::Text, None);
         }
         let pangram = "The quick brown fox jumps over the lazy dog 0123456789 #*_`[](){}<>|~-+=.,:;!?/";
         shape(&mut fonts, pangram, md_core::markdown::Block::Heading(1), None);
         shape(&mut fonts, pangram, md_core::markdown::Block::Code, None);
-        shape(&mut fonts, pangram, md_core::markdown::Block::Text, Some(crate::text::Face::Ui));
+        shape(
+            &mut fonts,
+            pangram,
+            md_core::markdown::Block::Text,
+            Some(crate::text::Face::Ui),
+        );
         crate::timing("fonts warm");
         fonts
     });
@@ -132,7 +140,9 @@ struct App {
 
 pub fn run(args: Args) -> Result<(), String> {
     let prepared = prepare(&args);
-    let event_loop = EventLoop::<Wake>::with_user_event().build().map_err(|err| err.to_string())?;
+    let event_loop = EventLoop::<Wake>::with_user_event()
+        .build()
+        .map_err(|err| err.to_string())?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
     if args.drive {
@@ -225,7 +235,10 @@ impl Running {
         #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut attributes = Window::default_attributes()
             .with_title("md")
-            .with_inner_size(LogicalSize::new(size.0.clamp(360.0, 8000.0), size.1.clamp(240.0, 8000.0)))
+            .with_inner_size(LogicalSize::new(
+                size.0.clamp(360.0, 8000.0),
+                size.1.clamp(240.0, 8000.0),
+            ))
             .with_min_inner_size(LogicalSize::new(360.0, 240.0));
         #[cfg(target_os = "macos")]
         {
@@ -296,7 +309,11 @@ impl Running {
         let mut view = View::new(fonts, Images::new(wake, platform::cache_dir()));
         view.scale = window.scale_factor() as f32;
         view.zoom = state.zoom.unwrap_or(1.0).clamp(0.5, 4.0);
-        view.titlebar = if cfg!(target_os = "macos") { 28.0 * view.scale } else { 0.0 };
+        view.titlebar = if cfg!(target_os = "macos") {
+            28.0 * view.scale
+        } else {
+            0.0
+        };
         (view.width, view.height) = (size.width as f32, size.height as f32);
         let mut running = Running {
             session: Session { editor, view },
@@ -332,7 +349,11 @@ impl Running {
         let view = &mut self.session.view;
         (view.width, view.height) = (width as f32, height as f32);
         view.scale = self.window.scale_factor() as f32;
-        view.titlebar = if cfg!(target_os = "macos") && self.window.fullscreen().is_none() { 28.0 * view.scale } else { 0.0 };
+        view.titlebar = if cfg!(target_os = "macos") && self.window.fullscreen().is_none() {
+            28.0 * view.scale
+        } else {
+            0.0
+        };
         view.follow_cursor(&mut self.session.editor);
         self.window.request_redraw();
     }
@@ -340,7 +361,11 @@ impl Running {
     /// Keeps the window chrome in step with the editor after any input.
     fn after_input(&mut self) {
         let editor = &self.session.editor;
-        let title = format!("{}{} — md", editor.file_name(), if editor.buf.is_dirty() { " •" } else { "" });
+        let title = format!(
+            "{}{} — md",
+            editor.file_name(),
+            if editor.buf.is_dirty() { " •" } else { "" }
+        );
         if title != self.title {
             self.window.set_title(&title);
             self.title = title;
@@ -489,7 +514,11 @@ impl Running {
                     }
                 }
                 Effect::ToggleFullscreen => {
-                    let next = self.window.fullscreen().is_none().then_some(Fullscreen::Borderless(None));
+                    let next = self
+                        .window
+                        .fullscreen()
+                        .is_none()
+                        .then_some(Fullscreen::Borderless(None));
                     self.window.set_fullscreen(next);
                 }
                 Effect::AgentMessage { text, selection } => self.agent_message(text, selection),
@@ -502,13 +531,23 @@ impl Running {
 
     /// Tells the editor who is connected, for the status line and the prompt.
     fn agent_changed(&mut self) {
-        if self.working.as_ref().is_some_and(|(_, since)| since.elapsed() > WORKING_LIMIT) {
+        if self
+            .working
+            .as_ref()
+            .is_some_and(|(_, since)| since.elapsed() > WORKING_LIMIT)
+        {
             self.working = None;
             self.outbox.clear();
         }
         let agent = match (self.waiters.front(), &self.working) {
-            (Some(waiter), _) => Some(md_core::editor::Agent { name: waiter.name.clone(), listening: true }),
-            (None, Some((name, _))) => Some(md_core::editor::Agent { name: name.clone(), listening: false }),
+            (Some(waiter), _) => Some(md_core::editor::Agent {
+                name: waiter.name.clone(),
+                listening: true,
+            }),
+            (None, Some((name, _))) => Some(md_core::editor::Agent {
+                name: name.clone(),
+                listening: false,
+            }),
             (None, None) => None,
         };
         if self.session.editor.agent != agent {
@@ -518,10 +557,20 @@ impl Running {
     }
 
     /// One request from the socket.
-    fn request(&mut self, id: u64, request: &str, reply: std::sync::mpsc::Sender<String>, event_loop: &ActiveEventLoop) {
+    fn request(
+        &mut self,
+        id: u64,
+        request: &str,
+        reply: std::sync::mpsc::Sender<String>,
+        event_loop: &ActiveEventLoop,
+    ) {
         let parsed: serde_json::Value = serde_json::from_str(request).unwrap_or_default();
         if parsed["cmd"] == "wait" {
-            let name = parsed["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Claude").to_string();
+            let name = parsed["name"]
+                .as_str()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or("Claude")
+                .to_string();
             self.working = None;
             match self.outbox.pop_front() {
                 Some(message) => {
@@ -555,9 +604,17 @@ impl Running {
         }
         let editor = &mut self.session.editor;
         match (message, &self.working) {
-            (None, Some((name, _))) => editor.message = Some(Message { text: format!("sent to {name}"), error: false }),
+            (None, Some((name, _))) => {
+                editor.message = Some(Message {
+                    text: format!("sent to {name}"),
+                    error: false,
+                })
+            }
             (Some(message), Some((name, _))) => {
-                editor.message = Some(Message { text: format!("{name} is busy; queued"), error: false });
+                editor.message = Some(Message {
+                    text: format!("{name} is busy; queued"),
+                    error: false,
+                });
                 self.outbox.push_back(message);
             }
             _ => editor.message = error("no assistant is connected (one connects with `md ctl wait`)".to_string()),
@@ -574,14 +631,20 @@ impl Running {
         let now = Instant::now();
         let near = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 6.0 && (a.1 - b.1).abs() < 6.0;
         let clicks = match self.last_click {
-            Some((at, place, clicks)) if now - at < Duration::from_millis(450) && near(place, self.mouse) && clicks < 3 => {
+            Some((at, place, clicks))
+                if now - at < Duration::from_millis(450) && near(place, self.mouse) && clicks < 3 =>
+            {
                 clicks + 1
             }
             _ => 1,
         };
         self.last_click = Some((now, self.mouse, clicks));
         let session = &mut self.session;
-        let command = if cfg!(target_os = "macos") { self.mods.super_key() } else { self.mods.control_key() };
+        let command = if cfg!(target_os = "macos") {
+            self.mods.super_key()
+        } else {
+            self.mods.control_key()
+        };
         let editor = &mut session.editor;
         let target = session.view.target_at(self.mouse.0, self.mouse.1);
         if editor.context_menu.is_some() && !matches!(target, Some(Target::ContextRow(_) | Target::ContextMenu)) {
@@ -656,7 +719,10 @@ impl Running {
         }
         if matches!(over, Some(Target::Sidebar | Target::SidebarRow(_))) {
             let rows = (pixels / (28.0 * session.view.scale)).round() as isize;
-            session.view.scroll_sidebar(&mut session.editor, if rows == 0 { pixels.signum() as isize } else { rows });
+            session.view.scroll_sidebar(
+                &mut session.editor,
+                if rows == 0 { pixels.signum() as isize } else { rows },
+            );
         } else {
             session.view.scroll_by(&mut session.editor, pixels);
         }
@@ -686,7 +752,12 @@ impl Running {
         let (command, rest) = line.split_once(' ').unwrap_or((line, ""));
         let numbers: Vec<f32> = rest.split_whitespace().filter_map(|word| word.parse().ok()).collect();
         let scale = self.window.scale_factor() as f32;
-        let point = |at: usize| (numbers.get(at).copied().unwrap_or(0.0) * scale, numbers.get(at + 1).copied().unwrap_or(0.0) * scale);
+        let point = |at: usize| {
+            (
+                numbers.get(at).copied().unwrap_or(0.0) * scale,
+                numbers.get(at + 1).copied().unwrap_or(0.0) * scale,
+            )
+        };
         match command {
             "keys" => {
                 for key in parse_keys(rest) {
@@ -788,11 +859,19 @@ impl Running {
                 self.effects(effects, event_loop);
             }
             WindowEvent::CursorMoved { position, .. } => self.mouse_move(position.x as f32, position.y as f32),
-            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => match state {
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => match state {
                 ElementState::Pressed => self.mouse_press(event_loop),
                 ElementState::Released => self.mouse_release(),
             },
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => self.context_click(event_loop),
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => self.context_click(event_loop),
             WindowEvent::MouseWheel { delta, .. } => {
                 let session = &self.session;
                 let line = session.editor.config.font_size * session.editor.config.line_height * session.view.scale;
@@ -910,7 +989,11 @@ fn capture(gpu: &mut Gpu, session: &mut Session, out: &Path) -> Result<(), Strin
     let format = gpu.format;
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -919,7 +1002,13 @@ fn capture(gpu: &mut Gpu, session: &mut Session, out: &Path) -> Result<(), Strin
         view_formats: &[],
     });
     let target = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    gpu.render(&target, (width, height), &frame, &session.view.layouts, &mut session.view.fonts);
+    gpu.render(
+        &target,
+        (width, height),
+        &frame,
+        &session.view.layouts,
+        &mut session.view.fonts,
+    );
 
     let stride = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -928,7 +1017,9 @@ fn capture(gpu: &mut Gpu, session: &mut Session, out: &Path) -> Result<(), Strin
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: &texture,
@@ -944,17 +1035,26 @@ fn capture(gpu: &mut Gpu, session: &mut Session, out: &Path) -> Result<(), Strin
                 rows_per_image: Some(height),
             },
         },
-        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
     );
     gpu.queue.submit(Some(encoder.finish()));
     buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    gpu.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|err| err.to_string())?;
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|err| err.to_string())?;
     let mapped = buffer.slice(..).get_mapped_range().map_err(|err| err.to_string())?;
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
     for row in mapped.chunks(stride as usize) {
         pixels.extend_from_slice(&row[..(width * 4) as usize]);
     }
-    if matches!(format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) {
+    if matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
         pixels.chunks_exact_mut(4).for_each(|pixel| pixel.swap(0, 2));
     }
     image::save_buffer(out, &pixels, width, height, image::ColorType::Rgba8).map_err(|err| err.to_string())
@@ -969,7 +1069,11 @@ pub fn bench(args: &Args) {
     println!("fonts (prose / code / interface) {prose} / {mono} / {ui}");
     let editor = &mut session.editor;
     let text = editor.buf.text();
-    println!("document                        {} bytes, {} lines", text.len(), editor.buf.line_count());
+    println!(
+        "document                        {} bytes, {} lines",
+        text.len(),
+        editor.buf.line_count()
+    );
 
     let time = |label: &str, rounds: u32, work: &mut dyn FnMut()| {
         let started = Instant::now();
@@ -989,7 +1093,10 @@ pub fn bench(args: &Args) {
     });
     session.settle();
     // The middle of the document, on the next line of ordinary prose.
-    let middle = parse_keys(&format!(":{}<CR>/^[a-z]+ [a-z]+ [a-z]<CR>:noh<CR>", session.editor.buf.line_count() / 2));
+    let middle = parse_keys(&format!(
+        ":{}<CR>/^[a-z]+ [a-z]+ [a-z]<CR>:noh<CR>",
+        session.editor.buf.line_count() / 2
+    ));
     for key in middle {
         session.key(key);
     }
@@ -1005,7 +1112,10 @@ pub fn bench(args: &Args) {
         std::hint::black_box(session.view.frame(&mut session.editor));
     });
     time("  of which analysis", 200, &mut || {
-        session.editor.buf.replace(session.editor.cursor..session.editor.cursor, "x");
+        session
+            .editor
+            .buf
+            .replace(session.editor.cursor..session.editor.cursor, "x");
         session.editor.refresh();
     });
     time("  of which key handling", 200, &mut || {
@@ -1028,13 +1138,21 @@ pub fn bench(args: &Args) {
 
     // Drawing: what the renderer spends on the CPU per frame.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else { return };
-    let Ok((device, queue)) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())) else { return };
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+        return;
+    };
+    let Ok((device, queue)) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())) else {
+        return;
+    };
     let mut gpu = Gpu::new(device, queue, wgpu::TextureFormat::Bgra8UnormSrgb);
     let (width, height) = (session.view.width as u32, session.view.height as u32);
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -1048,10 +1166,22 @@ pub fn bench(args: &Args) {
     }
     let frame = session.view.frame(&mut session.editor);
     time("draw (first, rasterizes glyphs)", 1, &mut || {
-        gpu.render(&target, (width, height), &frame, &session.view.layouts, &mut session.view.fonts);
+        gpu.render(
+            &target,
+            (width, height),
+            &frame,
+            &session.view.layouts,
+            &mut session.view.fonts,
+        );
     });
     time("draw (warm)", 200, &mut || {
-        gpu.render(&target, (width, height), &frame, &session.view.layouts, &mut session.view.fonts);
+        gpu.render(
+            &target,
+            (width, height),
+            &frame,
+            &session.view.layouts,
+            &mut session.view.fonts,
+        );
     });
     let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
 }

@@ -113,7 +113,11 @@ pub fn paragraph_forward(buf: &Buffer, pos: usize) -> usize {
     while line < last && !buf.line_is_blank(line) {
         line += 1;
     }
-    if buf.line_is_blank(line) { buf.line_start(line) } else { buf.line_end(line) }
+    if buf.line_is_blank(line) {
+        buf.line_start(line)
+    } else {
+        buf.line_end(line)
+    }
 }
 
 pub fn paragraph_backward(buf: &Buffer, pos: usize) -> usize {
@@ -165,7 +169,10 @@ pub fn match_pair(buf: &Buffer, pos: usize) -> Option<usize> {
     let end = buf.line_end(buf.line_of(pos));
     let (at, (open, close, forward)) = (pos..end).find_map(|at| {
         let c = buf.char_at(at)?;
-        (c != '<' && c != '>').then(|| pair_of(c)).flatten().map(|pair| (at, pair))
+        (c != '<' && c != '>')
+            .then(|| pair_of(c))
+            .flatten()
+            .map(|pair| (at, pair))
     })?;
     // Walk away from the bracket; `enter` deepens, `leave` closes.
     let (enter, leave) = if forward { (open, close) } else { (close, open) };
@@ -180,7 +187,11 @@ pub fn match_pair(buf: &Buffer, pos: usize) -> Option<usize> {
         }
         None
     };
-    if forward { (at..buf.len()).find_map(&mut step) } else { (0..=at).rev().find_map(&mut step) }
+    if forward {
+        (at..buf.len()).find_map(&mut step)
+    } else {
+        (0..=at).rev().find_map(&mut step)
+    }
 }
 
 fn is_sentence_start(buf: &Buffer, at: usize) -> bool {
@@ -202,14 +213,20 @@ fn is_sentence_start(buf: &Buffer, at: usize) -> bool {
     if back == 0 || newlines >= 2 {
         return true;
     }
-    while back > 0 && buf.char_at(back - 1).is_some_and(|c| matches!(c, ')' | ']' | '"' | '\'' | '*' | '_' | '”' | '’')) {
+    while back > 0
+        && buf
+            .char_at(back - 1)
+            .is_some_and(|c| matches!(c, ')' | ']' | '"' | '\'' | '*' | '_' | '”' | '’'))
+    {
         back -= 1;
     }
     back > 0 && buf.char_at(back - 1).is_some_and(|c| matches!(c, '.' | '!' | '?'))
 }
 
 pub fn sentence_forward(buf: &Buffer, pos: usize) -> usize {
-    (pos + 1..buf.len()).find(|&at| is_sentence_start(buf, at)).unwrap_or(buf.len())
+    (pos + 1..buf.len())
+        .find(|&at| is_sentence_start(buf, at))
+        .unwrap_or(buf.len())
 }
 
 pub fn sentence_backward(buf: &Buffer, pos: usize) -> usize {
@@ -318,7 +335,11 @@ pub fn text_object(buf: &Buffer, pos: usize, around: bool, ch: char) -> Option<O
             })
         }
         's' => {
-            let start = if is_sentence_start(buf, pos) { pos } else { sentence_backward(buf, pos) };
+            let start = if is_sentence_start(buf, pos) {
+                pos
+            } else {
+                sentence_backward(buf, pos)
+            };
             let mut end = sentence_forward(buf, pos);
             if !around {
                 while end > start + 1 && buf.char_at(end - 1).is_some_and(char::is_whitespace) {
@@ -335,12 +356,18 @@ pub fn text_object(buf: &Buffer, pos: usize, around: bool, ch: char) -> Option<O
         '"' | '\'' | '`' => {
             let line = buf.line_of(pos);
             let (line_start, line_end) = (buf.line_start(line), buf.line_end(line));
-            let quotes: Vec<usize> = (line_start..line_end).filter(|&at| buf.char_at(at) == Some(ch)).collect();
+            let quotes: Vec<usize> = (line_start..line_end)
+                .filter(|&at| buf.char_at(at) == Some(ch))
+                .collect();
             let (open, close) = quotes
                 .chunks_exact(2)
                 .map(|pair| (pair[0], pair[1]))
                 .find(|&(_, close)| close >= pos)?;
-            if around { chars(open..close + 1) } else { chars(open + 1..close) }
+            if around {
+                chars(open..close + 1)
+            } else {
+                chars(open + 1..close)
+            }
         }
         _ => {
             let (open, close) = match ch {
@@ -372,7 +399,11 @@ pub fn text_object(buf: &Buffer, pos: usize, around: bool, ch: char) -> Option<O
                 }
                 false
             })?;
-            if around { chars(start..end + 1) } else { chars(start + 1..end) }
+            if around {
+                chars(start..end + 1)
+            } else {
+                chars(start + 1..end)
+            }
         }
     }
 }
@@ -402,14 +433,22 @@ impl Matcher {
         let compiled = regex.then(|| build(pattern)).flatten();
         let literal = compiled.is_none();
         let regex = compiled.or_else(|| build(&regex::escape(pattern)))?;
-        Some(Matcher { regex, pattern: pattern.to_string(), literal })
+        Some(Matcher {
+            regex,
+            pattern: pattern.to_string(),
+            literal,
+        })
     }
 
     /// Matches `word` only as a whole word (`*` and `#`).
     pub fn word(word: &str) -> Option<Matcher> {
         let source = format!(r"\b{}\b", regex::escape(word));
         let regex = regex::Regex::new(&source).ok()?;
-        Some(Matcher { regex, pattern: word.to_string(), literal: false })
+        Some(Matcher {
+            regex,
+            pattern: word.to_string(),
+            literal: false,
+        })
     }
 
     pub fn pattern(&self) -> &str {
@@ -418,7 +457,10 @@ impl Matcher {
 
     /// Non-empty matches as char ranges, in order.
     pub fn find_all(&self, text: &str) -> Vec<Range<usize>> {
-        self.replacements(text, None).into_iter().map(|(range, _)| range).collect()
+        self.replacements(text, None)
+            .into_iter()
+            .map(|(range, _)| range)
+            .collect()
     }
 
     /// Matches as char ranges, each with `replacement` expanded for it

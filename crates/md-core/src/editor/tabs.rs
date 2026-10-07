@@ -39,7 +39,9 @@ fn title_of(path: Option<&Path>) -> String {
 
 /// FNV-1a, stable across builds, so recovery files keep their names.
 fn stable_hash(text: &str) -> u64 {
-    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3))
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -60,7 +62,8 @@ impl Job {
     fn run(self) {
         match self {
             Job::Write(file, contents) => {
-                let _ = std::fs::create_dir_all(file.parent().unwrap_or(Path::new("."))).and_then(|()| write_atomic(&file, &contents));
+                let _ = std::fs::create_dir_all(file.parent().unwrap_or(Path::new(".")))
+                    .and_then(|()| write_atomic(&file, &contents));
             }
             Job::Remove(file) => {
                 let _ = std::fs::remove_file(file);
@@ -269,7 +272,9 @@ impl Editor {
     }
 
     fn tab_with(&self, path: &Path) -> Option<usize> {
-        self.tabs.iter().position(|tab| tab.as_ref().is_some_and(|stash| stash.path.as_deref() == Some(path)))
+        self.tabs
+            .iter()
+            .position(|tab| tab.as_ref().is_some_and(|stash| stash.path.as_deref() == Some(path)))
     }
 
     /// Shows `path`: its tab if it is already open, in place when the active
@@ -326,7 +331,12 @@ impl Editor {
 
     /// Tabs with unsaved changes.
     pub fn dirty_tabs(&self) -> Vec<usize> {
-        self.tabs().iter().enumerate().filter(|(_, tab)| tab.dirty).map(|(index, _)| index).collect()
+        self.tabs()
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| tab.dirty)
+            .map(|(index, _)| index)
+            .collect()
     }
 
     /// Saves every named document with unsaved changes.
@@ -365,7 +375,11 @@ impl Editor {
     pub(super) fn jump(&mut self, back: bool) {
         let target = if back { self.back.pop() } else { self.forward.pop() };
         let Some((path, cursor)) = target else {
-            return self.info(if back { "no earlier location" } else { "no later location" });
+            return self.info(if back {
+                "no earlier location"
+            } else {
+                "no later location"
+            });
         };
         let here = self.here();
         match self.open_path(&path) {
@@ -402,7 +416,11 @@ impl Editor {
         if self.snapshot == Some(self.buf.revision()) {
             return;
         }
-        let path = self.path.as_ref().map(|path| path.to_string_lossy().into_owned()).unwrap_or_default();
+        let path = self
+            .path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let contents = format!("{RECOVERY_HEADER}{path}\n{}", self.buf.to_file_string());
         self.disk.submit(Job::Write(file, contents));
         self.snapshot = Some(self.buf.revision());
@@ -466,7 +484,9 @@ impl Editor {
         let start = self.active;
         let mut recovered = 0;
         for draft in drafts {
-            let Some((_, body)) = Self::read_recovery(&draft) else { continue };
+            let Some((_, body)) = Self::read_recovery(&draft) else {
+                continue;
+            };
             let _ = std::fs::remove_file(&draft);
             if body.trim().is_empty() {
                 continue;
@@ -481,7 +501,10 @@ impl Editor {
         if recovered > 0 {
             self.write_recovery();
             self.switch_tab(start);
-            self.info(format!("recovered {recovered} unsaved draft{}", if recovered == 1 { "" } else { "s" }));
+            self.info(format!(
+                "recovered {recovered} unsaved draft{}",
+                if recovered == 1 { "" } else { "s" }
+            ));
         }
     }
 

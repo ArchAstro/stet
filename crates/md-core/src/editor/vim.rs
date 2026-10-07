@@ -74,7 +74,10 @@ impl State {
         if typing {
             self.preview.as_ref()
         } else {
-            self.search.as_ref().filter(|_| self.highlight).map(|search| &search.matcher)
+            self.search
+                .as_ref()
+                .filter(|_| self.highlight)
+                .map(|search| &search.matcher)
         }
     }
     /// Remembers typed input while `3i…` or a block insert is open.
@@ -113,19 +116,31 @@ enum Motion {
     Column,
     FirstLine,
     LastLine,
-    Find { ch: char, forward: bool, till: bool },
-    RepeatFind { reverse: bool },
+    Find {
+        ch: char,
+        forward: bool,
+        till: bool,
+    },
+    RepeatFind {
+        reverse: bool,
+    },
     ParaFwd,
     ParaBack,
     SentFwd,
     SentBack,
     MatchPair,
-    SearchNext { reverse: bool },
-    StarSearch { forward: bool },
+    SearchNext {
+        reverse: bool,
+    },
+    StarSearch {
+        forward: bool,
+    },
     Mark(char),
     /// Fraction of a screen.
     Page(f32),
-    Suggestion { forward: bool },
+    Suggestion {
+        forward: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -171,7 +186,9 @@ enum Action {
     VisualOp(Op),
     SelectObject(bool, char),
     Insert(InsertAt),
-    Put { before: bool },
+    Put {
+        before: bool,
+    },
     Undo,
     Redo,
     Repeat,
@@ -180,7 +197,9 @@ enum Action {
     VisualInsert(bool),
     VisualReplace(char),
     SwapEnds,
-    Join { spaces: bool },
+    Join {
+        spaces: bool,
+    },
     Tilde,
     Replace(char),
     CmdLine(CmdKind),
@@ -188,7 +207,9 @@ enum Action {
     SaveQuit,
     QuitForce,
     SetMark(char),
-    Resolve { accept: bool },
+    Resolve {
+        accept: bool,
+    },
     ToggleTask,
     ContextMenu,
     AgentPrompt,
@@ -197,7 +218,9 @@ enum Action {
     FollowLink,
     /// Enter: follow a link under the cursor, else move down.
     Enter,
-    Jump { back: bool },
+    Jump {
+        back: bool,
+    },
     Tab(isize),
     Escape,
 }
@@ -245,7 +268,13 @@ impl Reader<'_> {
             if count.is_none() && digit == 0 {
                 break;
             }
-            count = Some(count.unwrap_or(0).saturating_mul(10).saturating_add(digit as usize).min(1_000_000));
+            count = Some(
+                count
+                    .unwrap_or(0)
+                    .saturating_mul(10)
+                    .saturating_add(digit as usize)
+                    .min(1_000_000),
+            );
             self.at += 1;
         }
         count
@@ -262,7 +291,11 @@ fn parse(keys: &[KeyEvent], visual: bool) -> Result<Cmd, Parse> {
     let count = reader.count();
     let event = reader.next()?;
     let action = parse_action(event, &mut reader, visual)?;
-    Ok(Cmd { register, count, action })
+    Ok(Cmd {
+        register,
+        count,
+        action,
+    })
 }
 
 fn parse_action(event: KeyEvent, r: &mut Reader, visual: bool) -> Result<Action, Parse> {
@@ -303,7 +336,11 @@ fn parse_action(event: KeyEvent, r: &mut Reader, visual: bool) -> Result<Action,
         '>' => Some(Op::Indent),
         '<' => Some(Op::Dedent),
         'g' => {
-            let next = r.peek_char().ok_or(if r.at < r.keys.len() { Parse::Invalid } else { Parse::Incomplete })?;
+            let next = r.peek_char().ok_or(if r.at < r.keys.len() {
+                Parse::Invalid
+            } else {
+                Parse::Incomplete
+            })?;
             let op = match next {
                 '~' => Some(Op::ToggleCase),
                 'u' => Some(Op::Lower),
@@ -461,10 +498,26 @@ fn motion_of(event: KeyEvent, r: &mut Reader) -> Result<Motion, Parse> {
             '$' => LineEnd,
             '|' => Column,
             'G' => LastLine,
-            'f' => Find { ch: r.char()?, forward: true, till: false },
-            'F' => Find { ch: r.char()?, forward: false, till: false },
-            't' => Find { ch: r.char()?, forward: true, till: true },
-            'T' => Find { ch: r.char()?, forward: false, till: true },
+            'f' => Find {
+                ch: r.char()?,
+                forward: true,
+                till: false,
+            },
+            'F' => Find {
+                ch: r.char()?,
+                forward: false,
+                till: false,
+            },
+            't' => Find {
+                ch: r.char()?,
+                forward: true,
+                till: true,
+            },
+            'T' => Find {
+                ch: r.char()?,
+                forward: false,
+                till: true,
+            },
             ';' => RepeatFind { reverse: false },
             ',' => RepeatFind { reverse: true },
             '}' => ParaFwd,
@@ -529,21 +582,25 @@ impl Editor {
             return;
         }
         if let Some((inputs, revision)) = self.vim.recording.take()
-            && revision != self.buf.revision() && !self.vim.suppress {
-                self.vim.last_change = inputs;
-            }
+            && revision != self.buf.revision()
+            && !self.vim.suppress
+        {
+            self.vim.last_change = inputs;
+        }
     }
 
     // ----- key handling ---------------------------------------------------
 
     pub(super) fn vim_key(&mut self, event: KeyEvent) {
-        if self.vim.pending.is_empty() && event.plain_char() == Some('q')
-            && let Some((register, mut inputs)) = self.vim.macro_rec.take() {
-                // Drop the `q` that ended the recording.
-                inputs.pop();
-                self.vim.macros.insert(register, inputs);
-                return;
-            }
+        if self.vim.pending.is_empty()
+            && event.plain_char() == Some('q')
+            && let Some((register, mut inputs)) = self.vim.macro_rec.take()
+        {
+            // Drop the `q` that ended the recording.
+            inputs.pop();
+            self.vim.macros.insert(register, inputs);
+            return;
+        }
         self.vim.pending.push(event);
         let visual = self.mode != Mode::Normal;
         match parse(&self.vim.pending, visual) {
@@ -557,7 +614,11 @@ impl Editor {
     }
 
     fn execute(&mut self, cmd: Cmd) {
-        let Cmd { register, count, action } = cmd;
+        let Cmd {
+            register,
+            count,
+            action,
+        } = cmd;
         let n = count.unwrap_or(1);
         let line = self.buf.line_of(self.cursor);
         match action {
@@ -578,7 +639,10 @@ impl Editor {
                 let Some(selection) = self.selection() else { return };
                 let low = selection.start;
                 let range = if self.mode == Mode::VisualLine {
-                    OpRange::Lines(self.buf.line_of(low), self.buf.line_of(self.anchor.unwrap_or(low).max(self.cursor)))
+                    OpRange::Lines(
+                        self.buf.line_of(low),
+                        self.buf.line_of(self.anchor.unwrap_or(low).max(self.cursor)),
+                    )
                 } else {
                     OpRange::Chars(selection)
                 };
@@ -588,7 +652,9 @@ impl Editor {
                 self.apply_op(op, range, register, low);
             }
             Action::SelectObject(around, ch) => {
-                let Some(object) = motion::text_object(&self.buf, self.cursor, around, ch) else { return };
+                let Some(object) = motion::text_object(&self.buf, self.cursor, around, ch) else {
+                    return;
+                };
                 if object.linewise {
                     self.mode = Mode::VisualLine;
                     self.anchor = Some(self.buf.line_start(object.range.start));
@@ -639,7 +705,12 @@ impl Editor {
                         count: 1,
                         inputs: Vec::new(),
                         open: None,
-                        block: Some(BlockInsert { first, last, col, start: self.cursor }),
+                        block: Some(BlockInsert {
+                            first,
+                            last,
+                            col,
+                            start: self.cursor,
+                        }),
                     });
                 } else if append {
                     let end = selection.end.max(1) - usize::from(linewise);
@@ -650,7 +721,9 @@ impl Editor {
             }
             Action::VisualReplace(ch) => {
                 let ranges = self.selection_ranges();
-                let Some(low) = ranges.first().map(|range| range.start) else { return };
+                let Some(low) = ranges.first().map(|range| range.start) else {
+                    return;
+                };
                 self.anchor = None;
                 self.mode = Mode::Normal;
                 for range in ranges.into_iter().rev() {
@@ -711,14 +784,25 @@ impl Editor {
                 if end > self.buf.line_end(line) {
                     return;
                 }
-                let new = if ch == '\n' { "\n".to_string() } else { ch.to_string().repeat(n) };
+                let new = if ch == '\n' {
+                    "\n".to_string()
+                } else {
+                    ch.to_string().repeat(n)
+                };
                 let pos = self.edit(self.cursor..end, &new);
-                self.cursor = if ch == '\n' { pos.end } else { pos.end.saturating_sub(1).max(pos.start) };
+                self.cursor = if ch == '\n' {
+                    pos.end
+                } else {
+                    pos.end.saturating_sub(1).max(pos.start)
+                };
             }
             Action::CmdLine(kind) => {
                 self.anchor = None;
                 self.mode = Mode::Normal;
-                self.cmdline = Some(CmdLine { kind, text: String::new() });
+                self.cmdline = Some(CmdLine {
+                    kind,
+                    text: String::new(),
+                });
             }
             Action::Scroll(to) => self.effects.push(Effect::Scroll(to)),
             Action::SaveQuit => self.run_command("x"),
@@ -753,7 +837,11 @@ impl Editor {
     }
 
     fn play_macro(&mut self, register: char, count: usize) {
-        let register = if register == '@' { self.vim.last_macro } else { Some(register) };
+        let register = if register == '@' {
+            self.vim.last_macro
+        } else {
+            Some(register)
+        };
         let Some(inputs) = register.and_then(|register| self.vim.macros.get(&register).cloned()) else {
             return self.error("no macro recorded there");
         };
@@ -782,12 +870,18 @@ impl Editor {
     /// Runs when insert mode ends: replays `3i…` and fans a block insert out
     /// to the other lines.
     pub(super) fn finish_insert(&mut self) {
-        let Some(repeat) = self.vim.insert_repeat.take() else { return };
+        let Some(repeat) = self.vim.insert_repeat.take() else {
+            return;
+        };
         for _ in 1..repeat.count {
             if let Some(below) = repeat.open {
                 let line = self.buf.line_of(self.cursor);
                 let (start, end) = (self.buf.line_start(line), self.buf.line_end(line));
-                self.cursor = if below { self.edit(end..end, "\n").end } else { self.edit(start..start, "\n").start };
+                self.cursor = if below {
+                    self.edit(end..end, "\n").end
+                } else {
+                    self.edit(start..start, "\n").start
+                };
             }
             for input in &repeat.inputs {
                 match input {
@@ -835,7 +929,11 @@ impl Editor {
     fn block_op(&mut self, op: Op, register: Option<char>) {
         let (first, last, left, _) = self.block_rect();
         let ranges = self.selection_ranges();
-        let text = ranges.iter().map(|range| self.buf.slice(range.clone())).collect::<Vec<_>>().join("\n");
+        let text = ranges
+            .iter()
+            .map(|range| self.buf.slice(range.clone()))
+            .collect::<Vec<_>>()
+            .join("\n");
         self.anchor = None;
         self.mode = Mode::Normal;
         let top = |ed: &Editor| ed.buf.line_start(first) + left.min(ed.buf.line_len(first));
@@ -855,7 +953,12 @@ impl Editor {
                         count: 1,
                         inputs: Vec::new(),
                         open: None,
-                        block: Some(BlockInsert { first, last, col: left, start: self.cursor }),
+                        block: Some(BlockInsert {
+                            first,
+                            last,
+                            col: left,
+                            start: self.cursor,
+                        }),
                     });
                 }
             }
@@ -919,11 +1022,29 @@ impl Editor {
         Some(match motion {
             Motion::Left => {
                 let start = buf.line_start(line);
-                (repeat(&|pos| if pos > start { motion::prev_grapheme(buf, pos) } else { pos }), Exclusive)
+                (
+                    repeat(&|pos| {
+                        if pos > start {
+                            motion::prev_grapheme(buf, pos)
+                        } else {
+                            pos
+                        }
+                    }),
+                    Exclusive,
+                )
             }
             Motion::Right => {
                 let end = buf.line_end(line);
-                (repeat(&|pos| if pos < end { motion::next_grapheme(buf, pos) } else { pos }), Exclusive)
+                (
+                    repeat(&|pos| {
+                        if pos < end {
+                            motion::next_grapheme(buf, pos)
+                        } else {
+                            pos
+                        }
+                    }),
+                    Exclusive,
+                )
             }
             Motion::Up | Motion::Down | Motion::DisplayUp | Motion::DisplayDown => {
                 let down = matches!(motion, Motion::Down | Motion::DisplayDown);
@@ -936,7 +1057,11 @@ impl Editor {
                     return None;
                 }
                 let col = self.goal_col.unwrap_or(from - buf.line_start(line));
-                let target = if down { (line + n).min(last) } else { line.saturating_sub(n) };
+                let target = if down {
+                    (line + n).min(last)
+                } else {
+                    line.saturating_sub(n)
+                };
                 self.goal_col = Some(col);
                 self.keep_goal = true;
                 (self.buf.line_start(target) + col.min(self.buf.line_len(target)), Line)
@@ -957,7 +1082,10 @@ impl Editor {
             Motion::LineEnd => (buf.line_end((line + n - 1).min(last)), Exclusive),
             Motion::Column => (buf.line_start(line) + (n - 1).min(buf.line_len(line)), Exclusive),
             Motion::FirstLine => (motion::first_non_blank(buf, count.map_or(0, |n| n - 1).min(last)), Line),
-            Motion::LastLine => (motion::first_non_blank(buf, count.map_or(last, |n| n - 1).min(last)), Line),
+            Motion::LastLine => (
+                motion::first_non_blank(buf, count.map_or(last, |n| n - 1).min(last)),
+                Line,
+            ),
             Motion::Find { ch, forward, till } => {
                 self.vim.last_find = Some((ch, forward, till));
                 let pos = motion::find_char(&self.buf, from, ch, forward, till, n)?;
@@ -1013,7 +1141,11 @@ impl Editor {
     fn search_target(&mut self, from: usize, forward: bool, count: usize) -> Option<usize> {
         let matcher = &self.vim.search.as_ref()?.matcher;
         let pattern = matcher.pattern().to_string();
-        let starts: Vec<usize> = matcher.find_all(&self.buf.text()).into_iter().map(|range| range.start).collect();
+        let starts: Vec<usize> = matcher
+            .find_all(&self.buf.text())
+            .into_iter()
+            .map(|range| range.start)
+            .collect();
         self.vim.highlight = true;
         if starts.is_empty() {
             self.error(format!("Pattern not found: {pattern}"));
@@ -1024,7 +1156,12 @@ impl Editor {
             pos = if forward {
                 starts.iter().copied().find(|&start| start > pos).unwrap_or(starts[0])
             } else {
-                starts.iter().copied().rev().find(|&start| start < pos).unwrap_or(starts[starts.len() - 1])
+                starts
+                    .iter()
+                    .copied()
+                    .rev()
+                    .find(|&start| start < pos)
+                    .unwrap_or(starts[starts.len() - 1])
             };
         }
         Some(pos)
@@ -1065,7 +1202,9 @@ impl Editor {
                 Some(object) => OpRange::Chars(object.range),
                 None => return,
             },
-            Target::Motion(Motion::WordFwd(big)) if op == Op::Change && buf.char_at(origin).is_some_and(|c| !c.is_whitespace()) => {
+            Target::Motion(Motion::WordFwd(big))
+                if op == Op::Change && buf.char_at(origin).is_some_and(|c| !c.is_whitespace()) =>
+            {
                 // `cw` changes to the end of the word, leaving the space.
                 let word = motion::text_object(buf, origin, false, if big { 'W' } else { 'w' });
                 let mut end = word.map_or(origin, |word| word.range.end - 1);
@@ -1075,7 +1214,9 @@ impl Editor {
                 OpRange::Chars(origin..end + 1)
             }
             Target::Motion(motion) => {
-                let Some((to, kind)) = self.motion_target(motion, count, true) else { return };
+                let Some((to, kind)) = self.motion_target(motion, count, true) else {
+                    return;
+                };
                 let buf = &self.buf;
                 let (from, mut to) = (origin.min(to), origin.max(to));
                 let (from_line, to_line) = (buf.line_of(from), buf.line_of(to));
@@ -1154,7 +1295,11 @@ impl Editor {
                     self.yank(register, text, linewise, false);
                 }
                 self.mode = Mode::Insert;
-                self.cursor = if range.is_empty() { range.start } else { self.edit(range, "").end };
+                self.cursor = if range.is_empty() {
+                    range.start
+                } else {
+                    self.edit(range, "").end
+                };
             }
             (Op::Yank, OpRange::Chars(range)) => {
                 self.yank(register, self.buf.slice(range.clone()), false, true);
@@ -1298,7 +1443,11 @@ impl Editor {
             }
             let buf = &self.buf;
             let end = buf.line_end(line);
-            let next = if spaces { motion::first_non_blank(buf, line + 1) } else { end + 1 };
+            let next = if spaces {
+                motion::first_non_blank(buf, line + 1)
+            } else {
+                end + 1
+            };
             let bare = !spaces
                 || next == buf.line_end(line + 1)
                 || end == buf.line_start(line)

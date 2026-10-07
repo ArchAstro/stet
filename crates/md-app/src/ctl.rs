@@ -67,7 +67,11 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
     };
     match text("cmd").unwrap_or("") {
         "open" => {
-            let files = request.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
+            let files = request
+                .get("files")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             for file in files.iter().filter_map(Value::as_str) {
                 if let Err(err) = editor.open_in_tab(std::path::Path::new(file)) {
                     return (fail(err), true);
@@ -127,16 +131,33 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
                 Err(err) => return (fail(err), false),
             };
             let target = if let Some(old) = text("old") {
-                Target::Text { old: old.to_string(), occurrence: number("occurrence") }
-            } else if let (Some(revision), Some(start), Some(end)) = (request.get("base").and_then(Value::as_u64), number("start"), number("end")) {
-                Target::Range { revision, range: start..end.max(start) }
+                Target::Text {
+                    old: old.to_string(),
+                    occurrence: number("occurrence"),
+                }
+            } else if let (Some(revision), Some(start), Some(end)) = (
+                request.get("base").and_then(Value::as_u64),
+                number("start"),
+                number("end"),
+            ) {
+                Target::Range {
+                    revision,
+                    range: start..end.max(start),
+                }
             } else if let Some(line) = number("line") {
                 Target::Line(line.saturating_sub(1))
             } else {
                 match text("at") {
                     Some("cursor") => Target::Cursor,
                     Some("end") => Target::End,
-                    _ => return (fail("name a target: `old`, `at` (cursor or end), `line`, or `base` with `start` and `end`"), false),
+                    _ => {
+                        return (
+                            fail(
+                                "name a target: `old`, `at` (cursor or end), `line`, or `base` with `start` and `end`",
+                            ),
+                            false,
+                        );
+                    }
                 }
             };
             let Some(new) = text("new").or(text("text")) else {
@@ -149,7 +170,10 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
                 author: text("author").unwrap_or("Claude").to_string(),
             };
             match editor.remote_edit(index, &edit) {
-                Ok(applied) => (json!({ "ok": true, "revision": applied.revision, "line": applied.line + 1, "suggested": edit.suggest }), false),
+                Ok(applied) => (
+                    json!({ "ok": true, "revision": applied.revision, "line": applied.line + 1, "suggested": edit.suggest }),
+                    false,
+                ),
                 Err(err) => (fail(err), false),
             }
         }
@@ -157,7 +181,10 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
             Some(said) => {
                 let author = text("author").unwrap_or("Claude");
                 let line = said.lines().next().unwrap_or("");
-                editor.message = Some(md_core::editor::Message { text: format!("{author}: {line}"), error: false });
+                editor.message = Some(md_core::editor::Message {
+                    text: format!("{author}: {line}"),
+                    error: false,
+                });
                 (json!({ "ok": true }), false)
             }
             None => (fail("`text` is missing"), false),
@@ -186,7 +213,9 @@ fn value(raw: &str) -> Result<String, String> {
     use std::io::Read;
     if raw == "-" {
         let mut text = String::new();
-        std::io::stdin().read_to_string(&mut text).map_err(|err| err.to_string())?;
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .map_err(|err| err.to_string())?;
         return Ok(text);
     }
     match raw.strip_prefix('@') {
@@ -225,7 +254,11 @@ fn build(args: &[String]) -> Result<Value, String> {
                 let range = next("--range")?;
                 let parsed = range.split_once(':').and_then(|(base, span)| {
                     let (start, end) = span.split_once('-')?;
-                    Some((base.parse::<u64>().ok()?, start.parse::<u64>().ok()?, end.parse::<u64>().ok()?))
+                    Some((
+                        base.parse::<u64>().ok()?,
+                        start.parse::<u64>().ok()?,
+                        end.parse::<u64>().ok()?,
+                    ))
                 });
                 let (base, start, end) = parsed.ok_or("--range expects REV:START-END")?;
                 request.insert("base".into(), json!(base));
@@ -239,7 +272,10 @@ fn build(args: &[String]) -> Result<Value, String> {
     let cmd = match command.as_str() {
         "sessions" | "read" | "wait" | "say" => command.as_str(),
         "suggest" | "edit" => {
-            request.insert("mode".into(), json!(if command == "edit" { "direct" } else { "suggest" }));
+            request.insert(
+                "mode".into(),
+                json!(if command == "edit" { "direct" } else { "suggest" }),
+            );
             "edit"
         }
         "open" => {

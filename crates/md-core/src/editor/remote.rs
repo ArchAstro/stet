@@ -115,18 +115,29 @@ impl Editor {
         }
         let sessions = self.sessions();
         if let Ok(number) = spec.parse::<usize>() {
-            return (1..=sessions.len()).contains(&number).then(|| number - 1).ok_or(format!("no tab {number}"));
+            return (1..=sessions.len())
+                .contains(&number)
+                .then(|| number - 1)
+                .ok_or(format!("no tab {number}"));
         }
         let wanted = std::path::absolute(spec).unwrap_or_else(|_| PathBuf::from(spec));
-        let by_path = sessions.iter().filter(|session| session.path.as_deref() == Some(wanted.as_path()));
+        let by_path = sessions
+            .iter()
+            .filter(|session| session.path.as_deref() == Some(wanted.as_path()));
         let by_name = sessions.iter().filter(|session| {
-            session.title == spec || session.path.as_ref().is_some_and(|path| path.file_stem().is_some_and(|stem| stem.to_string_lossy() == spec))
+            session.title == spec
+                || session
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.file_stem().is_some_and(|stem| stem.to_string_lossy() == spec))
         });
         let found: Vec<usize> = by_path.chain(by_name).map(|session| session.index).collect();
         match found.as_slice() {
             [] => Err(format!("no open document matches `{spec}`")),
             [first, rest @ ..] if rest.iter().all(|index| index == first) => Ok(*first),
-            _ => Err(format!("`{spec}` matches several open documents; use the full path or the tab number")),
+            _ => Err(format!(
+                "`{spec}` matches several open documents; use the full path or the tab number"
+            )),
         }
     }
 
@@ -140,7 +151,10 @@ impl Editor {
                 session,
                 text: ed.buf.text(),
                 cursor: ed.cursor,
-                selection: (index == active).then(|| ed.selection()).flatten().map(|range| (range.clone(), ed.buf.slice(range))),
+                selection: (index == active)
+                    .then(|| ed.selection())
+                    .flatten()
+                    .map(|range| (range.clone(), ed.buf.slice(range))),
             }
         })
     }
@@ -151,7 +165,11 @@ impl Editor {
             Target::Cursor => Ok(self.cursor.min(len)..self.cursor.min(len)),
             Target::End => Ok(len..len),
             Target::Line(line) => {
-                let at = if *line >= self.buf.line_count() { len } else { self.buf.line_start(*line) };
+                let at = if *line >= self.buf.line_count() {
+                    len
+                } else {
+                    self.buf.line_start(*line)
+                };
                 Ok(at..at)
             }
             Target::Range { revision, range } => match self.buf.rebase(range.clone(), *revision) {
@@ -167,10 +185,21 @@ impl Editor {
                 let text = self.buf.text();
                 let found: Vec<usize> = text.match_indices(old.as_str()).map(|(at, _)| at).collect();
                 let at = match (found.len(), occurrence) {
-                    (0, _) => return Err("that text is not in the document (it may have just been edited); read it again".to_string()),
+                    (0, _) => {
+                        return Err(
+                            "that text is not in the document (it may have just been edited); read it again"
+                                .to_string(),
+                        );
+                    }
                     (1, None) => found[0],
-                    (count, None) => return Err(format!("that text occurs {count} times; include more of the surrounding text, or pick an occurrence")),
-                    (count, Some(nth)) => *found.get(nth.wrapping_sub(1)).ok_or(format!("there are only {count} occurrences"))?,
+                    (count, None) => {
+                        return Err(format!(
+                            "that text occurs {count} times; include more of the surrounding text, or pick an occurrence"
+                        ));
+                    }
+                    (count, Some(nth)) => *found
+                        .get(nth.wrapping_sub(1))
+                        .ok_or(format!("there are only {count} occurrences"))?,
                 };
                 let start = text[..at].chars().count();
                 Ok(start..start + old.chars().count())
@@ -183,14 +212,21 @@ impl Editor {
         let visible = index == self.active;
         let applied = self.with_doc(index, |ed| ed.apply_remote(edit))?;
         let verb = if edit.suggest { "suggested an edit" } else { "edited" };
-        let place = if visible { String::new() } else { format!(" in {}", self.tabs()[index].title) };
+        let place = if visible {
+            String::new()
+        } else {
+            format!(" in {}", self.tabs()[index].title)
+        };
         self.info(format!("{} {verb} on line {}{place}", edit.author, applied.line + 1));
         Ok(applied)
     }
 
     fn apply_remote(&mut self, edit: &RemoteEdit) -> Result<Applied, String> {
         if edit.suggest && !is_valid_author(&edit.author) {
-            return Err(format!("`{}` cannot be written into a suggestion as an author", edit.author));
+            return Err(format!(
+                "`{}` cannot be written into a suggestion as an author",
+                edit.author
+            ));
         }
         let range = self.locate(&edit.target)?;
         if range.is_empty() && edit.text.is_empty() {

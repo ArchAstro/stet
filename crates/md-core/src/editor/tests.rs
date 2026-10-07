@@ -354,7 +354,15 @@ fn shortcuts_and_wrapping_in_vim_mode() {
     assert_eq!(run("one |two", "viw<D-k>"), "one [two](|)");
     let mut ed = editor("|x");
     keys(&mut ed, "<D-=><D-0><D-S-t><Down><CR>");
-    assert_eq!(ed.take_effects(), vec![Effect::Zoom(1), Effect::Zoom(0), Effect::ThemeChanged, Effect::ThemeChanged]);
+    assert_eq!(
+        ed.take_effects(),
+        vec![
+            Effect::Zoom(1),
+            Effect::Zoom(0),
+            Effect::ThemeChanged,
+            Effect::ThemeChanged
+        ]
+    );
     assert_eq!(ed.theme.name, "ristretto");
     ed.primary = Primary::Ctrl;
     keys(&mut ed, "<C-r>");
@@ -403,12 +411,18 @@ fn normalized(ed: &mut Editor) -> String {
 fn typing_records_one_growing_insertion() {
     let mut ed = suggesting("Hell|o world");
     keys(&mut ed, "a there<Esc>");
-    assert_eq!(normalized(&mut ed), "Hello{++ there++}{>>id:s_00000000 by:Calvin<<} world");
+    assert_eq!(
+        normalized(&mut ed),
+        "Hello{++ there++}{>>id:s_00000000 by:Calvin<<} world"
+    );
     assert_eq!(ed.doc().suggestions.len(), 1);
     let id = ed.doc().suggestions[0].id.clone();
     assert!(id.starts_with("s_") && id.len() == 10);
     keys(&mut ed, "a!<BS><BS><Esc>");
-    assert_eq!(normalized(&mut ed), "Hello{++ ther++}{>>id:s_00000000 by:Calvin<<} world");
+    assert_eq!(
+        normalized(&mut ed),
+        "Hello{++ ther++}{>>id:s_00000000 by:Calvin<<} world"
+    );
     assert_eq!(ed.doc().suggestions[0].id, id, "extending keeps the id");
 }
 
@@ -436,31 +450,59 @@ fn deletions_merge_while_backspacing_or_deleting_forward() {
 fn change_becomes_a_replacement() {
     let mut ed = suggesting("one |two three");
     keys(&mut ed, "cw2<Esc>");
-    assert_eq!(normalized(&mut ed), "one {~~two~>2~~}{>>id:s_00000000 by:Calvin<<} three");
+    assert_eq!(
+        normalized(&mut ed),
+        "one {~~two~>2~~}{>>id:s_00000000 by:Calvin<<} three"
+    );
     keys(&mut ed, "atwo<Esc>");
-    assert_eq!(normalized(&mut ed), "one {~~two~>2two~~}{>>id:s_00000000 by:Calvin<<} three");
+    assert_eq!(
+        normalized(&mut ed),
+        "one {~~two~>2two~~}{>>id:s_00000000 by:Calvin<<} three"
+    );
     let mut ed = suggesting("one |two three");
     keys(&mut ed, "viwcTWO<Esc>");
-    assert_eq!(normalized(&mut ed), "one {~~two~>TWO~~}{>>id:s_00000000 by:Calvin<<} three");
+    assert_eq!(
+        normalized(&mut ed),
+        "one {~~two~>TWO~~}{>>id:s_00000000 by:Calvin<<} three"
+    );
 }
 
 #[test]
 fn accept_and_reject_resolve_with_plain_edits() {
     let source = "one {~~two~>2~~}{>>id:s_0123abcd by:Agent<<} three {++four ++}{>>id:s_0123abce by:Agent<<}";
-    assert_eq!(run(&format!("|{source}"), "wgsa"), "one |2 three {++four ++}{>>id:s_0123abce by:Agent<<}");
-    assert_eq!(run(&format!("|{source}"), "wgsr"), "one |two three {++four ++}{>>id:s_0123abce by:Agent<<}");
-    assert_eq!(run(&format!("|{source}"), "gsa"), "one |2 three {++four ++}{>>id:s_0123abce by:Agent<<}");
+    assert_eq!(
+        run(&format!("|{source}"), "wgsa"),
+        "one |2 three {++four ++}{>>id:s_0123abce by:Agent<<}"
+    );
+    assert_eq!(
+        run(&format!("|{source}"), "wgsr"),
+        "one |two three {++four ++}{>>id:s_0123abce by:Agent<<}"
+    );
+    assert_eq!(
+        run(&format!("|{source}"), "gsa"),
+        "one |2 three {++four ++}{>>id:s_0123abce by:Agent<<}"
+    );
     assert_eq!(run(&format!("|{source}"), ":acceptall<CR>"), "|one 2 three four ");
     assert_eq!(run(&format!("|{source}"), ":rejectall<CR>"), "|one two three ");
     assert_eq!(run(&format!("|{source}"), ":rejectall<CR>u"), format!("|{source}"));
-    assert_eq!(run(&format!("|{source}"), "]s]s"), "one {~~two~>2~~}{>>id:s_0123abcd by:Agent<<} three |{++four ++}{>>id:s_0123abce by:Agent<<}");
-    assert_eq!(run(&format!("|{source}"), "[s"), "one {~~two~>2~~}{>>id:s_0123abcd by:Agent<<} three |{++four ++}{>>id:s_0123abce by:Agent<<}");
+    assert_eq!(
+        run(&format!("|{source}"), "]s]s"),
+        "one {~~two~>2~~}{>>id:s_0123abcd by:Agent<<} three |{++four ++}{>>id:s_0123abce by:Agent<<}"
+    );
+    assert_eq!(
+        run(&format!("|{source}"), "[s"),
+        "one {~~two~>2~~}{>>id:s_0123abcd by:Agent<<} three |{++four ++}{>>id:s_0123abce by:Agent<<}"
+    );
     let mut ed = editor("|plain");
     keys(&mut ed, "gsa");
     assert_eq!(ed.message.as_ref().unwrap().text, "no suggestion here");
     let mut ed = suggesting(&format!("|{source}"));
     keys(&mut ed, "wgsa");
-    assert_eq!(show(&ed), "one |2 three {++four ++}{>>id:s_0123abce by:Agent<<}", "resolving is never itself a suggestion");
+    assert_eq!(
+        show(&ed),
+        "one |2 three {++four ++}{>>id:s_0123abce by:Agent<<}",
+        "resolving is never itself a suggestion"
+    );
 }
 
 #[test]
@@ -532,8 +574,15 @@ fn save_is_atomic_and_tracks_dirty_state() {
     assert!(ed.buf.is_dirty());
     keys(&mut ed, ":w<CR>");
     assert!(!ed.buf.is_dirty(), "{:?}", ed.message);
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "one!\r\ntwo\r\n", "line endings survive");
-    let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "one!\r\ntwo\r\n",
+        "line endings survive"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
     assert_eq!(leftovers.len(), 1, "no temp files remain: {leftovers:?}");
     keys(&mut ed, "u");
     assert!(ed.buf.is_dirty(), "undo past the save point is a change");
@@ -571,7 +620,8 @@ fn external_changes_are_never_clobbered_silently() {
 
 fn filetime_bump(path: &Path, seconds: u64) {
     let file = std::fs::File::options().write(true).open(path).unwrap();
-    file.set_modified(SystemTime::now() + std::time::Duration::from_secs(seconds)).unwrap();
+    file.set_modified(SystemTime::now() + std::time::Duration::from_secs(seconds))
+        .unwrap();
 }
 
 #[test]
@@ -602,9 +652,9 @@ fn focus_lines_cover_the_current_paragraph() {
 fn random_key_storms_never_panic_or_break_invariants() {
     let alphabet: Vec<&str> = vec![
         "h", "j", "k", "l", "w", "b", "e", "0", "$", "G", "g", "d", "c", "y", "p", "P", "x", "u", "<C-r>", ".", "v",
-        "V", "i", "a", "o", "O", "A", "<Esc>", "<Esc>", "<CR>", "<BS>", "<Del>", "<Tab>", "J", "~", "r", "f", "t",
-        ";", "}", "{", "(", ")", "%", "n", "*", "/", ":", "s", "é", "😀", "-", " ", "[", "]", "\"", ">", "<lt>", "2",
-        "3", "{", "+", "~", "<Left>", "<Right>", "<Up>", "<Down>", "<S-Left>", "<D-z>", "<D-b>", "<C-w>", "gsa", "`",
+        "V", "i", "a", "o", "O", "A", "<Esc>", "<Esc>", "<CR>", "<BS>", "<Del>", "<Tab>", "J", "~", "r", "f", "t", ";",
+        "}", "{", "(", ")", "%", "n", "*", "/", ":", "s", "é", "😀", "-", " ", "[", "]", "\"", ">", "<lt>", "2", "3",
+        "{", "+", "~", "<Left>", "<Right>", "<Up>", "<Down>", "<S-Left>", "<D-z>", "<D-b>", "<C-w>", "gsa", "`",
     ];
     let seed_text = "# Title\n\nSome *text* with {++a suggestion++}{>>id:s_0123abcd by:Calvin<<} here.\n\n- [ ] item\n- two\n\n```\ncode\n```\n\nEnd 😀.\n";
     let mut state = 0x2545_f491_4f6c_dd1du64;
@@ -674,12 +724,18 @@ fn search_and_substitute_use_regexes() {
     assert_eq!(run("|foo bar baz", "/b.z<CR>"), "foo bar |baz");
     assert_eq!(run("|a1 b22 c333", "/\\d{2,}<CR>n"), "a1 b22 c|333");
     assert_eq!(run("|x (y", "/(y<CR>"), "x |(y");
-    assert_eq!(run("|ann@home bob@work", ":s/(\\w+)@(\\w+)/\\2:\\1/g<CR>"), "|home:ann work:bob");
+    assert_eq!(
+        run("|ann@home bob@work", ":s/(\\w+)@(\\w+)/\\2:\\1/g<CR>"),
+        "|home:ann work:bob"
+    );
     assert_eq!(run("|aXa", ":s/x/[&]/<CR>"), "a|[X]a");
     assert_eq!(run("|foo foobar foo", "*"), "foo foobar |foo");
     let mut ed = editor("|abc abd");
     keys(&mut ed, "/ab");
-    assert_eq!(ed.search_highlight().map(|m| m.find_all("abc abd")), Some(vec![0..2, 4..6]));
+    assert_eq!(
+        ed.search_highlight().map(|m| m.find_all("abc abd")),
+        Some(vec![0..2, 4..6])
+    );
     keys(&mut ed, "<Esc>");
     assert!(ed.search_highlight().is_none());
 }
@@ -712,18 +768,38 @@ fn tabs_keep_each_documents_state() {
 
 #[test]
 fn links_are_found_under_the_cursor() {
-    let wiki = |note: &str, anchor: Option<&str>| Some(Link::Wiki { note: note.into(), anchor: anchor.map(str::to_string) });
+    let wiki = |note: &str, anchor: Option<&str>| {
+        Some(Link::Wiki {
+            note: note.into(),
+            anchor: anchor.map(str::to_string),
+        })
+    };
     assert_eq!(link_in("see [[Other Note]] now", 6), wiki("Other Note", None));
     assert_eq!(link_in("see [[Other Note]] now", 3), None);
     assert_eq!(link_in("[[a/b|shown]]", 4), wiki("a/b", None));
     assert_eq!(link_in("[[Note#Some Heading]]", 4), wiki("Note", Some("Some Heading")));
     assert_eq!(
         link_in("go [here](sub/my%20file.md#top \"t\") x", 5),
-        Some(Link::File { path: "sub/my file.md".into(), anchor: Some("top".into()) })
+        Some(Link::File {
+            path: "sub/my file.md".into(),
+            anchor: Some("top".into())
+        })
     );
-    assert_eq!(link_in("[x](https://example.com/a)", 2), Some(Link::Url("https://example.com/a".into())));
-    assert_eq!(link_in("bare https://example.com/a, ok", 10), Some(Link::Url("https://example.com/a".into())));
-    assert_eq!(link_in("[x](#local)", 1), Some(Link::File { path: String::new(), anchor: Some("local".into()) }));
+    assert_eq!(
+        link_in("[x](https://example.com/a)", 2),
+        Some(Link::Url("https://example.com/a".into()))
+    );
+    assert_eq!(
+        link_in("bare https://example.com/a, ok", 10),
+        Some(Link::Url("https://example.com/a".into()))
+    );
+    assert_eq!(
+        link_in("[x](#local)", 1),
+        Some(Link::File {
+            path: String::new(),
+            anchor: Some("local".into())
+        })
+    );
 }
 
 #[test]
@@ -731,9 +807,17 @@ fn notes_link_into_a_knowledge_base() {
     let dir = temp_dir("links");
     std::fs::create_dir_all(dir.join("deep/er")).unwrap();
     std::fs::create_dir_all(dir.join(".git")).unwrap();
-    std::fs::write(dir.join("index.md"), "# Index\n\nSee [[Plan]] and [[Ideas#Later]] and [guide](deep/guide.md).\nNew: [[Fresh Note]]\n").unwrap();
+    std::fs::write(
+        dir.join("index.md"),
+        "# Index\n\nSee [[Plan]] and [[Ideas#Later]] and [guide](deep/guide.md).\nNew: [[Fresh Note]]\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("deep/er/Plan.md"), "# Plan\n\nBack to [[index]].\n").unwrap();
-    std::fs::write(dir.join("Ideas.md"), "# Ideas\n\n## Now\n\n## Later\n\ntext, see [the index](index.md)\n").unwrap();
+    std::fs::write(
+        dir.join("Ideas.md"),
+        "# Ideas\n\n## Now\n\n## Later\n\ntext, see [the index](index.md)\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("deep/guide.md"), "guide, no links\n").unwrap();
 
     let mut ed = editor("");
@@ -756,13 +840,23 @@ fn notes_link_into_a_knowledge_base() {
 
     // Heading anchors land on the heading.
     keys(&mut ed, "ggjjfIgf");
-    assert_eq!((ed.file_name().as_str(), ed.buf.line_text(ed.buf.line_of(ed.cursor)).as_str()), ("Ideas.md", "## Later"));
+    assert_eq!(
+        (
+            ed.file_name().as_str(),
+            ed.buf.line_text(ed.buf.line_of(ed.cursor)).as_str()
+        ),
+        ("Ideas.md", "## Later")
+    );
     keys(&mut ed, "<C-o>fggf");
     assert_eq!(ed.file_name(), "guide.md");
 
     // Backlinks: who links to index.md?
     ed.open_path(&dir.join("index.md")).unwrap();
-    let mut from: Vec<String> = ed.backlinks().iter().map(|link| link.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    let mut from: Vec<String> = ed
+        .backlinks()
+        .iter()
+        .map(|link| link.path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
     from.sort();
     assert_eq!(from, vec!["Ideas.md", "Plan.md"]);
     keys(&mut ed, ":backlinks<CR>");
@@ -800,7 +894,10 @@ fn typing_two_brackets_offers_notes() {
     let mut ed = editor("");
     ed.open(&dir.join("a.md")).unwrap();
     keys(&mut ed, "isee [[");
-    assert_eq!(ed.palette.as_ref().map(|palette| palette.kind), Some(PaletteKind::Notes));
+    assert_eq!(
+        ed.palette.as_ref().map(|palette| palette.kind),
+        Some(PaletteKind::Notes)
+    );
     keys(&mut ed, "targ<CR>");
     assert_eq!(show(&ed), "see [[Target Note]]|");
     assert_eq!(ed.mode, Mode::Insert);
@@ -814,11 +911,22 @@ fn the_menu_lists_runs_and_inserts() {
     let palette = ed.palette.as_ref().unwrap();
     assert_eq!(palette.kind, PaletteKind::Help);
     let sections: std::collections::BTreeSet<&str> = palette.items.iter().map(|item| item.section.as_str()).collect();
-    assert_eq!(sections.into_iter().collect::<Vec<_>>(), vec!["Commands", "Markdown", "Vim keys"]);
-    assert!(palette.items.iter().any(|item| item.label == "Save" && item.detail == "⌘S"));
+    assert_eq!(
+        sections.into_iter().collect::<Vec<_>>(),
+        vec!["Commands", "Markdown", "Vim keys"]
+    );
+    assert!(
+        palette
+            .items
+            .iter()
+            .any(|item| item.label == "Save" && item.detail == "⌘S")
+    );
     // Typing filters; keys never reach the document.
     keys(&mut ed, "focus");
-    assert_eq!(ed.palette.as_ref().unwrap().selected_item().unwrap().label, "Focus mode");
+    assert_eq!(
+        ed.palette.as_ref().unwrap().selected_item().unwrap().label,
+        "Focus mode"
+    );
     keys(&mut ed, "<CR>");
     assert!(ed.palette.is_none() && ed.config.focus);
     assert_eq!(ed.buf.text(), "text");
@@ -826,9 +934,15 @@ fn the_menu_lists_runs_and_inserts() {
     keys(&mut ed, "<D-/><D-/>");
     assert!(ed.palette.is_none());
     keys(&mut ed, ":help<CR>table");
-    assert_eq!(ed.palette.as_ref().unwrap().selected_item().unwrap().section, "Markdown");
+    assert_eq!(
+        ed.palette.as_ref().unwrap().selected_item().unwrap().section,
+        "Markdown"
+    );
     keys(&mut ed, "<CR>");
-    assert_eq!(ed.buf.text(), "text\n| Column | Column |\n|--------|--------|\n|        |        |");
+    assert_eq!(
+        ed.buf.text(),
+        "text\n| Column | Column |\n|--------|--------|\n|        |        |"
+    );
     // Themes preview as the selection moves and revert on Esc.
     let before = ed.theme.name.clone();
     keys(&mut ed, "<Esc>:theme<CR><Down>");
@@ -861,9 +975,18 @@ fn the_file_browser_walks_and_opens() {
     assert!(!ed.sidebar.visible);
     keys(&mut ed, "<D-\\>");
     assert!(ed.sidebar.visible && ed.sidebar.focused);
-    let names = |ed: &Editor| ed.sidebar.entries.iter().map(|entry| format!("{}{}", "  ".repeat(entry.depth), entry.name)).collect::<Vec<_>>();
+    let names = |ed: &Editor| {
+        ed.sidebar
+            .entries
+            .iter()
+            .map(|entry| format!("{}{}", "  ".repeat(entry.depth), entry.name))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(names(&ed), vec!["notes", "a", "b", "pic.png"]);
-    assert_eq!(ed.sidebar.entries[ed.sidebar.selected].name, "b", "the open document is selected");
+    assert_eq!(
+        ed.sidebar.entries[ed.sidebar.selected].name, "b",
+        "the open document is selected"
+    );
     // Keys drive the tree, not the text.
     keys(&mut ed, "ggl");
     assert_eq!(names(&ed), vec!["notes", "  sub", "  inner", "a", "b", "pic.png"]);
@@ -902,7 +1025,10 @@ fn unsaved_text_survives_a_crash() {
     ed.open(&file).unwrap();
     ed.write_recovery();
     ed.flush_recovery();
-    assert!(!recovery.exists() || std::fs::read_dir(&recovery).unwrap().count() == 0, "clean documents leave nothing");
+    assert!(
+        !recovery.exists() || std::fs::read_dir(&recovery).unwrap().count() == 0,
+        "clean documents leave nothing"
+    );
     keys(&mut ed, "Aand unsaved<Esc>");
     ed.write_recovery();
     ed.new_tab();
@@ -920,7 +1046,11 @@ fn unsaved_text_survives_a_crash() {
     assert_eq!(ed.buf.text(), "saved\n");
     keys(&mut ed, "<C-r>:w<CR>");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "savedand unsaved\n");
-    assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 1, "saving removes the snapshot");
+    assert_eq!(
+        std::fs::read_dir(&recovery).unwrap().count(),
+        1,
+        "saving removes the snapshot"
+    );
 
     // Untitled drafts from another process come back as tabs.
     let draft = std::fs::read_dir(&recovery).unwrap().next().unwrap().unwrap().path();
@@ -938,16 +1068,26 @@ fn unsaved_text_survives_a_crash() {
 #[test]
 fn code_blocks_are_highlighted_by_language() {
     use crate::markdown::syntax;
-    let mut ed = editor("---\ntitle: x\n---\n\n```rust\nfn main() {}\n```\n\n> ```py\n> def f(): pass\n> ```\n\n```nope\nplain\n```\n");
+    let mut ed = editor(
+        "---\ntitle: x\n---\n\n```rust\nfn main() {}\n```\n\n> ```py\n> def f(): pass\n> ```\n\n```nope\nplain\n```\n",
+    );
     ed.refresh();
     let kinds = |ed: &Editor, line: usize| {
         let text = ed.buf.line_text(line);
         let (lines, at) = ed.code_spans(line)?;
-        Some(lines[at].iter().map(|span| (text[span.start as usize..span.end as usize].to_string(), span.syntax)).collect::<Vec<_>>())
+        Some(
+            lines[at]
+                .iter()
+                .map(|span| (text[span.start as usize..span.end as usize].to_string(), span.syntax))
+                .collect::<Vec<_>>(),
+        )
     };
     assert!(kinds(&ed, 5).unwrap().contains(&("fn".to_string(), syntax::KEYWORD)));
     assert!(kinds(&ed, 1).unwrap().contains(&("title".to_string(), syntax::TAG)));
-    assert!(kinds(&ed, 9).unwrap().contains(&("def".to_string(), syntax::KEYWORD)), "nested blocks skip the quote prefix");
+    assert!(
+        kinds(&ed, 9).unwrap().contains(&("def".to_string(), syntax::KEYWORD)),
+        "nested blocks skip the quote prefix"
+    );
     assert_eq!(kinds(&ed, 13), None);
     assert_eq!(kinds(&ed, 4), None, "fence lines are markdown");
     keys(&mut ed, "5Gjcwlet<Esc>");
@@ -982,10 +1122,24 @@ fn highlighting_never_leaks_between_documents() {
 #[test]
 fn the_context_menu_acts_on_what_is_under_the_cursor() {
     let mut ed = editor("see {++more++}{>>id:s_0123abcd by:Claude<<} and [[Other]] - [ ] x");
-    let labels = |ed: &Editor| ed.context_menu.as_ref().unwrap().items.iter().map(|item| (item.label.clone(), item.key)).collect::<Vec<_>>();
+    let labels = |ed: &Editor| {
+        ed.context_menu
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| (item.label.clone(), item.key))
+            .collect::<Vec<_>>()
+    };
     // On a suggestion: K opens it, `a` accepts.
     keys(&mut ed, "fmK");
-    assert_eq!(labels(&ed)[..2], [("Accept Claude's suggestion".to_string(), Some('a')), ("Reject it".to_string(), Some('r'))]);
+    assert_eq!(
+        labels(&ed)[..2],
+        [
+            ("Accept Claude's suggestion".to_string(), Some('a')),
+            ("Reject it".to_string(), Some('r'))
+        ]
+    );
     keys(&mut ed, "a");
     assert!(ed.context_menu.is_none());
     assert_eq!(ed.buf.text(), "see more and [[Other]] - [ ] x");
@@ -1000,7 +1154,11 @@ fn the_context_menu_acts_on_what_is_under_the_cursor() {
     ed.context_menu_at(12, 40.0, 50.0);
     assert_eq!(ed.cursor, 12);
     assert_eq!(ed.context_menu.as_ref().unwrap().at, MenuAt::Point(40.0, 50.0));
-    assert!(labels(&ed).iter().any(|(label, key)| label == "Go to \"Other\"" && *key == Some('f')));
+    assert!(
+        labels(&ed)
+            .iter()
+            .any(|(label, key)| label == "Go to \"Other\"" && *key == Some('f'))
+    );
     // A right-click inside a selection keeps it and offers editing.
     keys(&mut ed, "<Esc>0ve");
     ed.context_menu_at(1, 0.0, 0.0);
@@ -1011,9 +1169,18 @@ fn the_context_menu_acts_on_what_is_under_the_cursor() {
     // Letters never collide with the navigation keys.
     keys(&mut ed, "K");
     let menu = ed.context_menu.as_ref().unwrap();
-    assert!(menu.items.iter().all(|item| item.key.is_none_or(|key| !"jkhlq".contains(key))));
+    assert!(
+        menu.items
+            .iter()
+            .all(|item| item.key.is_none_or(|key| !"jkhlq".contains(key)))
+    );
     let mut seen = std::collections::HashSet::new();
-    assert!(menu.items.iter().filter_map(|item| item.key).all(|key| seen.insert(key)));
+    assert!(
+        menu.items
+            .iter()
+            .filter_map(|item| item.key)
+            .all(|key| seen.insert(key))
+    );
 }
 
 fn editor_with_keys(text: &str, toml: &str) -> Editor {
@@ -1052,7 +1219,11 @@ fn key_bindings_can_all_be_overridden() {
     assert_eq!(run("  ab|c", "H").0, "  |abc");
     let (_, ed) = run("|x", "<Space>w");
     assert!(ed.suggesting);
-    assert_eq!(run("one\n|two\nthree", "<Space>x").0, "one\n|three", "bindings run built-in keys, not other bindings");
+    assert_eq!(
+        run("one\n|two\nthree", "<Space>x").0,
+        "one\n|three",
+        "bindings run built-in keys, not other bindings"
+    );
     // A built-in can be switched off or replaced, shortcuts included.
     assert_eq!(run("- [ ] |a", "gt").0, "- [ ] |a");
     let (_, ed) = run("|x", "K<D-s>");
@@ -1081,12 +1252,29 @@ fn other_programs_edit_without_disturbing_the_writer() {
     ed.open(&dir.join("a.md")).unwrap();
     ed.open_in_tab(&dir.join("b.md")).unwrap();
     ed.switch_tab(0);
-    let suggest = |target: Target, text: &str| RemoteEdit { target, text: text.to_string(), suggest: true, author: "Claude".to_string() };
-    let direct = |target: Target, text: &str| RemoteEdit { suggest: false, ..suggest(target, text) };
-    let old = |text: &str| Target::Text { old: text.to_string(), occurrence: None };
+    let suggest = |target: Target, text: &str| RemoteEdit {
+        target,
+        text: text.to_string(),
+        suggest: true,
+        author: "Claude".to_string(),
+    };
+    let direct = |target: Target, text: &str| RemoteEdit {
+        suggest: false,
+        ..suggest(target, text)
+    };
+    let old = |text: &str| Target::Text {
+        old: text.to_string(),
+        occurrence: None,
+    };
 
     let sessions = ed.sessions();
-    assert_eq!(sessions.iter().map(|s| (s.title.as_str(), s.active, s.lines)).collect::<Vec<_>>(), vec![("a.md", true, 3), ("b.md", false, 2)]);
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|s| (s.title.as_str(), s.active, s.lines))
+            .collect::<Vec<_>>(),
+        vec![("a.md", true, 3), ("b.md", false, 2)]
+    );
     assert_eq!(ed.find_session("b.md"), Ok(1));
     assert_eq!(ed.find_session("2"), Ok(1));
     assert_eq!(ed.find_session(&dir.join("a.md").to_string_lossy()), Ok(0));
@@ -1097,13 +1285,20 @@ fn other_programs_edit_without_disturbing_the_writer() {
     keys(&mut ed, "wwiX");
     assert_eq!(show(&ed), "alpha beta X|gamma\nsecond line\n");
     let read = ed.snapshot(0);
-    assert_eq!((read.text.as_str(), read.cursor), ("alpha beta Xgamma\nsecond line\n", 12));
+    assert_eq!(
+        (read.text.as_str(), read.cursor),
+        ("alpha beta Xgamma\nsecond line\n", 12)
+    );
     let applied = ed.remote_edit(0, &suggest(old("alpha"), "ALPHA")).unwrap();
     assert_eq!(applied.line, 0);
     assert_eq!(ed.mode, Mode::Insert);
     keys(&mut ed, "Y");
     let text = ed.buf.text();
-    assert!(text.starts_with("{~~alpha~>ALPHA~~}{>>id:s_") && text.contains(" by:Claude<<} beta XY|gamma".replace('|', "").as_str()), "{text}");
+    assert!(
+        text.starts_with("{~~alpha~>ALPHA~~}{>>id:s_")
+            && text.contains(" by:Claude<<} beta XY|gamma".replace('|', "").as_str()),
+        "{text}"
+    );
     assert_eq!(ed.config.author, "Calvin", "the writer's own name is untouched");
     // Undo takes back their typing and the suggestion as separate steps.
     keys(&mut ed, "<Esc>u");
@@ -1115,15 +1310,37 @@ fn other_programs_edit_without_disturbing_the_writer() {
     let read = ed.snapshot(0);
     let second = read.text.find("second").unwrap();
     keys(&mut ed, "ggI>> <Esc>");
-    let range = Target::Range { revision: read.session.revision, range: second..second + 6 };
+    let range = Target::Range {
+        revision: read.session.revision,
+        range: second..second + 6,
+    };
     ed.remote_edit(0, &direct(range.clone(), "2nd")).unwrap();
     assert_eq!(ed.buf.text(), ">> alpha beta Xgamma\n2nd line\n");
-    assert!(ed.remote_edit(0, &direct(range, "again")).unwrap_err().contains("changed"), "the same range is now stale");
+    assert!(
+        ed.remote_edit(0, &direct(range, "again"))
+            .unwrap_err()
+            .contains("changed"),
+        "the same range is now stale"
+    );
 
     // Text targets must be unambiguous and present.
     assert!(ed.remote_edit(0, &direct(old("a"), "b")).unwrap_err().contains("times"));
-    assert!(ed.remote_edit(0, &direct(old("nowhere"), "b")).unwrap_err().contains("not in the document"));
-    ed.remote_edit(0, &direct(Target::Text { old: "a".into(), occurrence: Some(2) }, "A")).unwrap();
+    assert!(
+        ed.remote_edit(0, &direct(old("nowhere"), "b"))
+            .unwrap_err()
+            .contains("not in the document")
+    );
+    ed.remote_edit(
+        0,
+        &direct(
+            Target::Text {
+                old: "a".into(),
+                occurrence: Some(2),
+            },
+            "A",
+        ),
+    )
+    .unwrap();
     assert!(ed.buf.text().starts_with(">> alphA beta"));
 
     // A background tab is edited in place; the visible one does not flicker.
@@ -1145,7 +1362,16 @@ fn other_programs_edit_without_disturbing_the_writer() {
     // What a suggestion cannot hold is refused, and nothing changes.
     let before = ed.buf.text();
     assert!(ed.remote_edit(0, &suggest(old("beta"), "x {++ y")).is_err());
-    assert!(ed.remote_edit(0, &RemoteEdit { author: "a<<}b".into(), ..suggest(old("beta"), "x") }).is_err());
+    assert!(
+        ed.remote_edit(
+            0,
+            &RemoteEdit {
+                author: "a<<}b".into(),
+                ..suggest(old("beta"), "x")
+            }
+        )
+        .is_err()
+    );
     assert_eq!(ed.buf.text(), before);
     let _ = std::fs::remove_dir_all(dir);
 }

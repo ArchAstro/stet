@@ -25,10 +25,9 @@ impl Editor {
                     CmdKind::Agent => self.agent_send(&text),
                 }
             }
-            Key::Backspace
-                if cmdline.text.pop().is_none() => {
-                    self.cmdline = None;
-                }
+            Key::Backspace if cmdline.text.pop().is_none() => {
+                self.cmdline = None;
+            }
             Key::Tab => self.complete(),
             Key::Char(c) if event.plain_char().is_some() => cmdline.text.push(c),
             _ => {}
@@ -39,7 +38,9 @@ impl Editor {
     /// Highlights matches while a search is being typed.
     pub(super) fn preview_search(&mut self) {
         self.vim.preview = match &self.cmdline {
-            Some(cmdline) if matches!(cmdline.kind, CmdKind::SearchForward | CmdKind::SearchBackward) => Matcher::new(&cmdline.text, self.config.regex_search),
+            Some(cmdline) if matches!(cmdline.kind, CmdKind::SearchForward | CmdKind::SearchBackward) => {
+                Matcher::new(&cmdline.text, self.config.regex_search)
+            }
             _ => None,
         };
     }
@@ -49,7 +50,9 @@ impl Editor {
         let Some(cmdline) = self.cmdline.as_mut().filter(|cmdline| cmdline.kind == CmdKind::Command) else {
             return;
         };
-        let Some((command, typed)) = cmdline.text.split_once(' ') else { return };
+        let Some((command, typed)) = cmdline.text.split_once(' ') else {
+            return;
+        };
         let names: Vec<&str> = match command {
             "theme" | "colorscheme" | "colo" => self.themes.names().collect(),
             "font" | "monofont" | "uifont" => self.font_families.iter().map(String::as_str).collect(),
@@ -82,7 +85,11 @@ impl Editor {
         }
         for (prefix, whole) in [("%s", true), ("s", false)] {
             let rest = line.strip_prefix(prefix).unwrap_or("");
-            if rest.chars().next().is_some_and(|c| !c.is_alphanumeric() && !c.is_whitespace() && c != '!') {
+            if rest
+                .chars()
+                .next()
+                .is_some_and(|c| !c.is_alphanumeric() && !c.is_whitespace() && c != '!')
+            {
                 return self.substitute(rest, whole);
             }
         }
@@ -140,7 +147,12 @@ impl Editor {
             "tabnext" | "tabn" | "bn" | "bnext" => self.cycle_tab(1),
             "tabprevious" | "tabp" | "tabprev" | "bp" | "bprevious" => self.cycle_tab(-1),
             "files" | "find" if name == "files" || !arg.is_empty() => self.open_palette(PaletteKind::Files),
-            "find" => self.cmdline = Some(CmdLine { kind: CmdKind::SearchForward, text: String::new() }),
+            "find" => {
+                self.cmdline = Some(CmdLine {
+                    kind: CmdKind::SearchForward,
+                    text: String::new(),
+                })
+            }
             "sidebar" | "browse" | "tree" | "Ex" | "Explore" => self.toggle_sidebar(),
             "backlinks" => self.open_palette(PaletteKind::Backlinks),
             "agent" | "ask" if arg.is_empty() => self.agent_prompt(),
@@ -153,7 +165,12 @@ impl Editor {
             "actions" | "context" => self.open_context_menu(super::MenuAt::Cursor),
             "nextsuggestion" | "prevsuggestion" => {
                 self.refresh();
-                let starts: Vec<usize> = self.doc().suggestions.iter().map(|suggestion| suggestion.span.start).collect();
+                let starts: Vec<usize> = self
+                    .doc()
+                    .suggestions
+                    .iter()
+                    .map(|suggestion| suggestion.span.start)
+                    .collect();
                 let cursor = self.cursor;
                 let found = if name == "nextsuggestion" {
                     starts.iter().find(|&&start| start > cursor).or(starts.first())
@@ -186,7 +203,11 @@ impl Editor {
                     _ => &mut self.config.ui_font,
                 };
                 if arg.is_empty() {
-                    return if name == "monofont" { self.open_mono_fonts() } else { self.open_palette(PaletteKind::Fonts) };
+                    return if name == "monofont" {
+                        self.open_mono_fonts()
+                    } else {
+                        self.open_palette(PaletteKind::Fonts)
+                    };
                 }
                 list.retain(|family| !family.eq_ignore_ascii_case(arg));
                 list.insert(0, arg.to_string());
@@ -197,7 +218,11 @@ impl Editor {
                 if self.buf.is_dirty() && !force {
                     return self.error(unsaved);
                 }
-                let path = if arg.is_empty() { self.path.clone() } else { Some(Path::new(arg).to_path_buf()) };
+                let path = if arg.is_empty() {
+                    self.path.clone()
+                } else {
+                    Some(Path::new(arg).to_path_buf())
+                };
                 match path {
                     None => self.error("No file name"),
                     Some(path) => {
@@ -283,7 +308,11 @@ impl Editor {
             return self.error("empty pattern");
         };
         let current = self.buf.line_of(self.cursor);
-        let lines = if whole { 0..self.buf.line_count() } else { current..current + 1 };
+        let lines = if whole {
+            0..self.buf.line_count()
+        } else {
+            current..current + 1
+        };
         let mut count = 0;
         for line in lines.rev() {
             let start = self.buf.line_start(line);
