@@ -1055,7 +1055,11 @@ fn capture(gpu: &mut Gpu, session: &mut Session, out: &Path) -> Result<(), Strin
         format,
         wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
     ) {
-        pixels.chunks_exact_mut(4).for_each(|pixel| pixel.swap(0, 2));
+        pixels
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .for_each(|pixel| pixel.swap(0, 2));
     }
     image::save_buffer(out, &pixels, width, height, image::ColorType::Rgba8).map_err(|err| err.to_string())
 }
