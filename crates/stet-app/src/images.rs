@@ -119,7 +119,7 @@ fn fetch(url: &str) -> Option<Vec<u8>> {
         .timeout_global(Some(std::time::Duration::from_secs(20)))
         .build()
         .into();
-    let mut response = agent.get(url).header("User-Agent", "md").call().ok()?;
+    let mut response = agent.get(url).header("User-Agent", "stet").call().ok()?;
     response.body_mut().with_config().limit(MAX_BYTES).read_to_vec().ok()
 }
 

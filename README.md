@@ -1,22 +1,31 @@
-# md
+<p align="center">
+  <img src="assets/banner.jpg" alt="stet — a quiet, fast markdown writer" width="100%">
+</p>
 
-A minimal markdown writer in the spirit of iA Writer. Rust core, GPU-rendered,
-vim keys, linked notes, review suggestions, ArchDev themes.
+# Stet
+
+A quiet, fast markdown writer. Rust core, GPU-rendered, vim keys, linked
+notes, review suggestions, and a way for an assistant to work in your
+document without getting in your way.
+
+*Stet* is the proofreader's mark for "let it stand" — written beside a
+correction, with dots under the words, to keep the original. Suggestions you
+can accept or let stand are what the review mode is built around.
 
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ArchAstro/md/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ArchAstro/stet/main/install.sh | sh
 ```
 
 This downloads the latest release for macOS (Apple Silicon or Intel) or Linux
-(x64), checks it against the published checksums, puts `md` in `~/.local/bin`
-and the Claude Code skill in `~/.claude/skills/md`. `MD_INSTALL_DIR`,
-`MD_VERSION=v0.1.0` and `MD_SKILL=0` change that.
+(x64), checks it against the published checksums, puts `stet` in `~/.local/bin`
+and the Claude Code skill in `~/.claude/skills/stet`. `STET_INSTALL_DIR`,
+`STET_VERSION=v0.1.0` and `STET_SKILL=0` change that.
 
-On a Mac this installs `md.app` into `/Applications` (the `md` command is
-the same program inside it); `MD_APP=0` installs only the command. You can
-also download `md-macos.dmg` from the releases page and drag the app across.
+On a Mac this installs `Stet.app` into `/Applications` (the `stet` command is
+the same program inside it); `STET_APP=0` installs only the command. You can
+also download `stet-macos.dmg` from the releases page and drag the app across.
 Until releases are signed with a Developer ID, an app downloaded in a browser
 needs a right-click → Open the first time; the installer does not.
 
@@ -24,24 +33,24 @@ While this repository is private the anonymous download does not work; with
 the GitHub CLI signed in, use:
 
 ```sh
-gh api repos/ArchAstro/md/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
+gh api repos/ArchAstro/stet/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
 ```
 
-On Windows, download `md-windows-x64.zip` from the releases page. To build
+On Windows, download `stet-windows-x64.zip` from the releases page. To build
 from source instead (needs Rust 1.90+):
 
 ```sh
-sh scripts/install.sh        # builds md into ~/.cargo/bin, links the skill
+sh scripts/install.sh        # builds stet into ~/.cargo/bin, links the skill
 cargo run --release -- examples/tour.md
 ```
 
 ## Using it
 
-Started from a terminal, `md file.md` opens its window as a separate process
-and hands the prompt straight back. `md --wait file.md` (or `-f`) stays attached
+Started from a terminal, `stet file.md` opens its window as a separate process
+and hands the prompt straight back. `stet --wait file.md` (or `-f`) stays attached
 until the window closes, which is what `$EDITOR` and `git commit` need.
 
-If md is already running, `md other.md` opens the file there as a tab in a
+If Stet is already running, `stet other.md` opens the file there as a tab in a
 few milliseconds instead of starting again (`-n` forces a separate window).
 
 Press **Cmd-/** (Ctrl-/ elsewhere, or F1) for the menu: every command with its
@@ -51,8 +60,8 @@ shortcut, markdown syntax you can insert, and the vim keys. Type to filter.
 
 | Crate | Owns | Platform code |
 |---|---|---|
-| `crates/md-core` | buffer + undo, vim and standard keys, markdown analysis, syntax highlighting, suggestions, links, tabs, menu and file-browser state, themes, config, file I/O, crash recovery | none |
-| `crates/md-app` | window (`winit`), renderer (`wgpu` + `glyphon`), text layout, fonts, images, clipboard, dialogs | all of it |
+| `crates/stet-core` | buffer + undo, vim and standard keys, markdown analysis, syntax highlighting, suggestions, links, tabs, menu and file-browser state, themes, config, file I/O, crash recovery | none |
+| `crates/stet-app` | window (`winit`), renderer (`wgpu` + `glyphon`), text layout, fonts, images, clipboard, dialogs | all of it |
 
 The core takes `KeyEvent`s, text and mouse positions, and emits `Effect`s for
 what only a shell can do (display-line motion, dialogs, opening URLs, quitting).
@@ -92,7 +101,7 @@ vim keeps its own Ctrl chords):
 
 ## On the Mac
 
-`md.app` is a normal Mac app: double-click a markdown file, drag one onto
+`Stet.app` is a normal Mac app: double-click a markdown file, drag one onto
 the Dock icon, or use Open With, and it opens as a tab in the running window.
 The menu bar has every command with its shortcut (a shortcut you rebind in
 `[keys]` drops out of the menu so yours wins), and Quit asks about unsaved
@@ -142,22 +151,22 @@ Every action has a command to bind (the menu lists them): `:w :q :tabnew
 
 ## Assistants
 
-Other programs work in your documents through `md ctl` while you type. The
-included skill (`skill/md/SKILL.md`) teaches Claude Code to use it.
+Other programs work in your documents through `stet ctl` while you type. The
+included skill (`skill/stet/SKILL.md`) teaches Claude Code to use it.
 
 | Command | Does |
 |---|---|
-| `md ctl sessions` | lists open documents |
-| `md ctl read [--doc D] [--lines A-B]` | the live text, cursor, selection, suggestions |
-| `md ctl suggest --old T --new T` | proposes a change as a suggestion you accept or reject |
-| `md ctl edit ...` | changes the text directly (one undo step) |
-| `md ctl wait --name Claude` | connects an assistant and waits for your message |
-| `md ctl say --text T` | shows a line in the status bar |
+| `stet ctl sessions` | lists open documents |
+| `stet ctl read [--doc D] [--lines A-B]` | the live text, cursor, selection, suggestions |
+| `stet ctl suggest --old T --new T` | proposes a change as a suggestion you accept or reject |
+| `stet ctl edit ...` | changes the text directly (one undo step) |
+| `stet ctl wait --name Claude` | connects an assistant and waits for your message |
+| `stet ctl say --text T` | shows a line in the status bar |
 
 1. **Your flow is left alone.** An edit never moves your cursor, changes mode, steals focus or saves; it lands as its own undo step, in background tabs too.
 2. **Edits follow your typing.** A target is either the exact text to replace, or a range read at an earlier revision that is carried forward through everything typed since (the transform half of operational transformation, with the window as the single authority). If you changed that same text, the edit is refused rather than misplaced.
 3. **You can talk back.** While an assistant waits, the status bar shows `● Claude`. Press Cmd/Ctrl-Shift-A (or `ga`, or `:agent <message>`) to send it a request; a selection travels with it ("make this punchier"), and without one it is a general request ("make a diagram and insert it"). `◌ Claude working` shows until it comes back for the next one.
-4. The socket is `~/.config/md/md.sock`, and only your user can connect to it. macOS and Linux only for now.
+4. The socket is `~/.config/stet/stet.sock`, and only your user can connect to it. macOS and Linux only for now.
 
 ## Linked notes
 
@@ -168,7 +177,7 @@ A folder of markdown files works as a knowledge base.
 3. Typing `[[` offers the notes you can link.
 4. Following a link replaces the document in place when it has no unsaved changes, and opens a tab otherwise. Back and forward retrace your path across files.
 5. `:backlinks` lists every note that links to the current one.
-6. The workspace is the nearest parent folder containing `.git`, `.obsidian` or `.md-root`, else the document's folder.
+6. The workspace is the nearest parent folder containing `.git`, `.obsidian` or `.stet-root`, else the document's folder.
 7. URLs, images and other files open in their own apps.
 
 ## File browser
@@ -213,10 +222,10 @@ message rather than written wrongly.
 
 Every installed font is available.
 
-1. `:font` and `:monofont` open a picker that previews as you move; `:font Georgia` sets one directly (Tab completes). `md --fonts` lists the families.
+1. `:font` and `:monofont` open a picker that previews as you move; `:font Georgia` sets one directly (Tab completes). `stet --fonts` lists the families.
 2. Generic names follow the platform: `system-ui` (San Francisco, Segoe UI, …), `serif`, `sans-serif`, `monospace`.
 3. Proportional fonts work for prose; code, tables and the status line use the code font.
-4. Any `.ttf`/`.otf` in `~/.config/md/fonts/` is loaded as well.
+4. Any `.ttf`/`.otf` in `~/.config/stet/fonts/` is loaded as well.
 
 ## Images
 
@@ -228,15 +237,15 @@ contacting servers. Dropping an image on the window inserts a link to it.
 ## Never losing text
 
 1. Saves are atomic (temp file, fsync, rename) and refuse to overwrite a file that changed on disk.
-2. Unsaved text is snapshotted to `~/.config/md/recovery/` shortly after you stop typing. After a crash, reopening the file restores it as an undoable edit (`u` returns to the saved version); untitled drafts come back as tabs.
+2. Unsaved text is snapshotted to `~/.config/stet/recovery/` shortly after you stop typing. After a crash, reopening the file restores it as an undoable edit (`u` returns to the saved version); untitled drafts come back as tabs.
 3. An orderly quit, or saving, removes the snapshots.
 
 ## Configuration
 
-`~/.config/md/config.toml` (`%APPDATA%\md` on Windows; `MD_CONFIG_DIR` overrides):
+`~/.config/stet/config.toml` (`%APPDATA%\stet` on Windows; `STET_CONFIG_DIR` overrides):
 
 ```toml
-theme = "paper"        # latte frappe macchiato mocha gruvbox-light everforest
+theme = "stet"         # stet stet-ink latte frappe macchiato mocha gruvbox-light everforest
                        # everforest-light dracula solaris-light solaris-dark
                        # paper ristretto nord
 vim = true
@@ -261,7 +270,7 @@ The theme, fonts, zoom and window size you choose while running are remembered
 in `state.toml` beside it. Editing `config.toml` afterwards makes the file win
 again.
 
-- **Themes** — drop `~/.config/md/themes/<name>.toml`; it inherits a built-in
+- **Themes** — drop `~/.config/stet/themes/<name>.toml`; it inherits a built-in
   and overrides palette tokens or editor roles (including `syntax_keyword`,
   `syntax_string`, … and `panel`):
 
@@ -284,20 +293,20 @@ Measured with `--bench` on an M-series Mac (release build):
 | 0.9 MB of prose, 21k lines | 0.2 ms | 3.6 ms |
 | 0.9 MB with 1,800 suggestions | 0.6 ms | 4.8 ms |
 
-1. **Analysis is incremental.** An edit re-parses only the top-level blocks around it and splices the result into the previous analysis. Where markdown lets distant text decide how a block reads (reference and footnote definitions, unclosed fences, metadata blocks), it falls back to a full pass. A randomized test checks that the incremental result equals a full one after every edit (`MD_FUZZ=50000 cargo test --release -p md-core incremental_analysis` runs three million of them). Below 16 KB the whole document is simply re-parsed.
+1. **Analysis is incremental.** An edit re-parses only the top-level blocks around it and splices the result into the previous analysis. Where markdown lets distant text decide how a block reads (reference and footnote definitions, unclosed fences, metadata blocks), it falls back to a full pass. A randomized test checks that the incremental result equals a full one after every edit (`STET_FUZZ=50000 cargo test --release -p stet-core incremental_analysis` runs three million of them). Below 16 KB the whole document is simply re-parsed.
 2. **Layout is cached per line**, keyed by content, so a frame after a keystroke shapes one line.
 3. **Code highlighting restarts at the edited line** and stops when the parser state converges with the previous run.
 4. **Nothing slow runs on the typing thread.** Crash-recovery snapshots (a synced write, 4–5 ms) happen on a worker.
 5. **A second launch does not start anything**: it hands the file to the running window.
-6. **Startup overlaps work with the OS creating the window**: fonts are scanned and the first screen shaped on another thread. `MD_TIMING=1 md -f file.md` prints each step.
+6. **Startup overlaps work with the OS creating the window**: fonts are scanned and the first screen shaped on another thread. `STET_TIMING=1 stet -f file.md` prints each step.
 7. **Frames are presented as soon as they are drawn** rather than queued behind the display refresh.
 
-`MD_TRACE_PARSE=1` reports each edit that needed a full analysis, and why.
+`STET_TRACE_PARSE=1` reports each edit that needed a full analysis, and why.
 
 ## Releases
 
 1. CI (`.github/workflows/ci.yml`) runs tests on Linux, macOS and Windows, formatting, clippy, docs, the minimum supported Rust (1.90), a dependency audit, and a soak of the incremental analysis.
-2. Pushing a tag `vX.Y.Z` that matches the version in `Cargo.toml` runs `.github/workflows/release.yml`: it re-verifies, builds `md-linux-x64`, `md-darwin-arm64`, `md-darwin-x64` and `md-windows-x64`, and publishes them with `SHA256SUMS` and generated notes. Each archive holds the binary, the skill, the license and this file.
+2. Pushing a tag `vX.Y.Z` that matches the version in `Cargo.toml` runs `.github/workflows/release.yml`: it re-verifies, builds `stet-linux-x64`, `stet-darwin-arm64`, `stet-darwin-x64` and `stet-windows-x64`, and publishes them with `SHA256SUMS` and generated notes. Each archive holds the binary, the skill, the license and this file.
 3. Running that workflow by hand (Actions → Release → Run workflow) is a dry run: every target is built and packaged, nothing is published.
 4. Once the repository is public, a release also attests build provenance, and `install.sh` works anonymously.
 

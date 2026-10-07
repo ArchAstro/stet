@@ -1,10 +1,10 @@
 ---
-title: A tour of md
+title: A tour of Stet
 ---
 
 # Writing, and nothing else
 
-md shows your *source*, styled just enough to read: **bold**, *italic*,
+Stet shows your *source*, styled just enough to read: **bold**, *italic*,
 ~~struck~~, `inline code`, and [links](https://example.com) keep their markers,
 dimmed so the words come first.
 

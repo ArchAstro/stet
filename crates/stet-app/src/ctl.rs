@@ -1,23 +1,23 @@
-//! `md ctl`: talking to the running window from another program. One JSON
+//! `stet ctl`: talking to the running window from another program. One JSON
 //! request per line over the local socket, one JSON reply.
 //!
 //! The client half turns a command line into a request; the server half
 //! runs a request against the live editor on the UI thread.
 
 use crate::platform;
-use md_core::Editor;
-use md_core::editor::{RemoteEdit, Session, Target};
 use serde_json::{Value, json};
+use stet_core::Editor;
+use stet_core::editor::{RemoteEdit, Session, Target};
 
-pub const USAGE: &str = "md ctl <command>   control the running md (replies are JSON)
+pub const USAGE: &str = "stet ctl <command>   control the running stet (replies are JSON)
 
   sessions                       list the open documents
   read [--doc D] [--lines A-B]   the live text (unsaved changes included), cursor, selection, suggestions
   suggest [--doc D] <target> ... propose an edit as a suggestion the writer accepts or rejects
   edit    [--doc D] <target> ... change the text directly
   wait [--name NAME]             connect as an assistant: blocks until the writer sends a message from
-                                 md (Cmd/Ctrl-Shift-A or ga), prints it with their selection, and exits
-  say --text TEXT                show one line in md's status bar
+                                 stet (Cmd/Ctrl-Shift-A or ga), prints it with their selection, and exits
+  say --text TEXT                show one line in stet's status bar
   open <file>...                 open files as tabs
   call                           send one JSON request read from stdin
 
@@ -181,7 +181,7 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
             Some(said) => {
                 let author = text("author").unwrap_or("Claude");
                 let line = said.lines().next().unwrap_or("");
-                editor.message = Some(md_core::editor::Message {
+                editor.message = Some(stet_core::editor::Message {
                     text: format!("{author}: {line}"),
                     error: false,
                 });
@@ -293,23 +293,23 @@ fn build(args: &[String]) -> Result<Value, String> {
     Ok(Value::Object(request))
 }
 
-/// The `md ctl` command line. Returns the process exit code.
+/// The `stet ctl` command line. Returns the process exit code.
 pub fn cli(args: &[String]) -> i32 {
     let request = match build(args) {
         Ok(request) => request,
         Err(err) => {
             if !err.is_empty() {
-                eprintln!("md ctl: {err}\n");
+                eprintln!("stet ctl: {err}\n");
             }
             eprintln!("{USAGE}");
             return 2;
         }
     };
     let Some(reply) = platform::request(&request.to_string(), request["cmd"] == "wait") else {
-        println!("{}", fail("md is not running; start it with `md <file>`"));
+        println!("{}", fail("stet is not running; start it with `stet <file>`"));
         return 1;
     };
-    let parsed: Value = serde_json::from_str(&reply).unwrap_or_else(|_| fail("md sent a reply that is not JSON"));
+    let parsed: Value = serde_json::from_str(&reply).unwrap_or_else(|_| fail("stet sent a reply that is not JSON"));
     println!("{}", serde_json::to_string_pretty(&parsed).unwrap_or(reply));
     if parsed["ok"] == json!(true) { 0 } else { 1 }
 }

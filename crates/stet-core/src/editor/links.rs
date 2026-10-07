@@ -172,7 +172,7 @@ impl Editor {
         dir.ancestors()
             .take(8)
             .find(|dir| {
-                [".git", ".obsidian", ".md-root"]
+                [".git", ".obsidian", ".stet-root"]
                     .iter()
                     .any(|marker| dir.join(marker).exists())
             })

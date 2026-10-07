@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds md.app from a compiled binary.
+# Builds Stet.app from a compiled binary.
 #
-#   scripts/bundle-macos.sh <md binary> <output folder> [version]
+#   scripts/bundle-macos.sh <stet binary> <output folder> [version]
 #
 # The bundle is ad-hoc signed, which is enough to run it on the machine that
 # built it and on any Mac once quarantine is cleared. Signing with a Developer
@@ -12,24 +12,24 @@ binary="$1"
 out="$2"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 version="${3:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo/Cargo.toml" | head -1)}"
-app="$out/md.app"
+app="$out/Stet.app"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$binary" "$app/Contents/MacOS/md"
-chmod 755 "$app/Contents/MacOS/md"
+cp "$binary" "$app/Contents/MacOS/stet"
+chmod 755 "$app/Contents/MacOS/stet"
 cp -R "$repo/skill" "$app/Contents/Resources/skill"
 cp "$repo/LICENSE" "$app/Contents/Resources/LICENSE"
 
 # The icon in every size macOS asks for.
-iconset="$(mktemp -d)/md.iconset"
+iconset="$(mktemp -d)/stet.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
     double=$((size * 2))
     sips -z "$size" "$size" "$repo/assets/icon.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
     sips -z "$double" "$double" "$repo/assets/icon.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/md.icns"
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/stet.icns"
 rm -rf "$(dirname "$iconset")"
 
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -38,15 +38,15 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>md</string>
+    <string>Stet</string>
     <key>CFBundleDisplayName</key>
-    <string>md</string>
+    <string>Stet</string>
     <key>CFBundleIdentifier</key>
-    <string>ai.archastro.md</string>
+    <string>ai.archastro.stet</string>
     <key>CFBundleExecutable</key>
-    <string>md</string>
+    <string>stet</string>
     <key>CFBundleIconFile</key>
-    <string>md</string>
+    <string>stet</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>

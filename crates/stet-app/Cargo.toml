@@ -1,19 +1,19 @@
 [package]
-name = "md-app"
+name = "stet-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Windowed shell for md: winit + wgpu"
+description = "Windowed shell for stet: winit + wgpu"
 
 [[bin]]
-name = "md"
+name = "stet"
 path = "src/main.rs"
 
 [dependencies]
-md-core = { path = "../md-core" }
+stet-core = { path = "../stet-core" }
 winit = "0.30"
 wgpu = "30"
 glyphon = "0.12"

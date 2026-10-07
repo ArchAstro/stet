@@ -33,7 +33,7 @@ jobs:
       - run: cargo test --locked --all-targets --all-features
       # The editor never opens a window in tests, so this is the one place the
       # binary itself is run.
-      - run: cargo run --locked --bin md -- --version
+      - run: cargo run --locked --bin stet -- --version
 
   quality:
     name: Quality
@@ -77,9 +77,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-      - run: cargo test --locked --release -p md-core incremental_analysis
+      - run: cargo test --locked --release -p stet-core incremental_analysis
         env:
-          MD_FUZZ: "20000"
+          STET_FUZZ: "20000"
 
   audit:
     name: Dependency audit
@@ -97,13 +97,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - run: cargo build --locked --release
-      - run: scripts/bundle-macos.sh target/release/md target/bundle
+      - run: scripts/bundle-macos.sh target/release/stet target/bundle
       - name: Check the bundle
         run: |
-          plutil -lint target/bundle/md.app/Contents/Info.plist
-          codesign --verify --strict target/bundle/md.app
-          test -s target/bundle/md.app/Contents/Resources/md.icns
-          target/bundle/md.app/Contents/MacOS/md --version
+          plutil -lint target/bundle/Stet.app/Contents/Info.plist
+          codesign --verify --strict target/bundle/Stet.app
+          test -s target/bundle/Stet.app/Contents/Resources/stet.icns
+          target/bundle/Stet.app/Contents/MacOS/stet --version
 
   installer:
     name: Install script

@@ -1,7 +1,7 @@
 //! The few things that differ per OS: clipboard, config location, dialogs.
 
-use md_core::Clipboard;
 use std::path::PathBuf;
+use stet_core::Clipboard;
 
 /// The system clipboard. Opened lazily: some platforms block on first use.
 #[derive(Default)]
@@ -27,16 +27,16 @@ impl Clipboard for SystemClipboard {
     }
 }
 
-/// `~/.config/md` on Linux and macOS, `%APPDATA%\md` on Windows.
+/// `~/.config/stet` on Linux and macOS, `%APPDATA%\stet` on Windows.
 pub fn config_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("MD_CONFIG_DIR") {
+    if let Some(dir) = std::env::var_os("STET_CONFIG_DIR") {
         return Some(PathBuf::from(dir));
     }
     let dirs = directories::BaseDirs::new()?;
     Some(if cfg!(windows) {
-        dirs.config_dir().join("md")
+        dirs.config_dir().join("stet")
     } else {
-        dirs.home_dir().join(".config").join("md")
+        dirs.home_dir().join(".config").join("stet")
     })
 }
 
@@ -76,10 +76,10 @@ pub fn confirm_unsaved(name: &str) -> Unsaved {
 
 /// Downloaded images are kept here between runs.
 pub fn cache_dir() -> Option<PathBuf> {
-    if std::env::var_os("MD_CONFIG_DIR").is_some() {
+    if std::env::var_os("STET_CONFIG_DIR").is_some() {
         return config_dir().map(|dir| dir.join("cache"));
     }
-    Some(directories::BaseDirs::new()?.cache_dir().join("md"))
+    Some(directories::BaseDirs::new()?.cache_dir().join("stet"))
 }
 
 /// Choices made while running (as opposed to written in `config.toml`),
@@ -130,9 +130,9 @@ impl State {
     }
 }
 
-/// Where a running md listens for files to open.
+/// Where a running stet listens for files to open.
 pub fn socket_path() -> Option<PathBuf> {
-    let socket = config_dir()?.join("md.sock");
+    let socket = config_dir()?.join("stet.sock");
     // Socket addresses are short (about 100 bytes); a deep config folder
     // gets a stand-in under the temp folder instead.
     if socket.as_os_str().len() < 96 {
@@ -144,10 +144,10 @@ pub fn socket_path() -> Option<PathBuf> {
         .fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
             (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
         });
-    Some(std::env::temp_dir().join(format!("md-{hash:016x}.sock")))
+    Some(std::env::temp_dir().join(format!("stet-{hash:016x}.sock")))
 }
 
-/// Sends one request line to the md that is already running and returns
+/// Sends one request line to the stet that is already running and returns
 /// its reply. `None` if none is running.
 #[cfg(unix)]
 pub fn request(line: &str, patient: bool) -> Option<String> {
@@ -167,9 +167,9 @@ pub fn request(_: &str, _: bool) -> Option<String> {
     None
 }
 
-/// Answers requests from later `md` launches and from `md ctl`, one line in
+/// Answers requests from later `stet` launches and from `stet ctl`, one line in
 /// and one line out, calling `answer` for each with a way to ask whether
-/// the caller is still there. False if another md is already listening.
+/// the caller is still there. False if another stet is already listening.
 #[cfg(unix)]
 pub fn listen(answer: impl Fn(String, &dyn Fn() -> bool) -> String + Send + Sync + 'static) -> bool {
     use std::io::{BufRead, BufReader, Write};
@@ -178,7 +178,7 @@ pub fn listen(answer: impl Fn(String, &dyn Fn() -> bool) -> String + Send + Sync
     if UnixStream::connect(&socket).is_ok() {
         return false;
     }
-    // Whatever is there was left by an md that is gone.
+    // Whatever is there was left by an stet that is gone.
     let _ = std::fs::remove_file(&socket);
     if let Some(dir) = socket.parent() {
         let _ = std::fs::create_dir_all(dir);

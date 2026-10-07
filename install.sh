@@ -1,38 +1,38 @@
 #!/bin/sh
-# Installs the latest released md, and its Claude Code skill.
+# Installs the latest released stet, and its Claude Code skill.
 #
-#   curl -fsSL https://raw.githubusercontent.com/ArchAstro/md/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/ArchAstro/stet/main/install.sh | sh
 #
 # Settings (environment variables):
-#   MD_VERSION      release to install, for example v0.1.0 (default: the latest)
-#   MD_INSTALL_DIR  where the md binary goes (default: ~/.local/bin)
-#   MD_APP          on macOS, set to 0 for the command only, without md.app
-#   MD_APP_DIR      where md.app goes (default: /Applications, else ~/Applications)
-#   MD_SKILL        set to 0 to skip the Claude Code skill
+#   STET_VERSION      release to install, for example v0.1.0 (default: the latest)
+#   STET_INSTALL_DIR  where the stet binary goes (default: ~/.local/bin)
+#   STET_APP          on macOS, set to 0 for the command only, without Stet.app
+#   STET_APP_DIR      where Stet.app goes (default: /Applications, else ~/Applications)
+#   STET_SKILL        set to 0 to skip the Claude Code skill
 #   CLAUDE_SKILLS_DIR  where skills live (default: ~/.claude/skills)
 set -eu
 
-repo="ArchAstro/md"
-version="${MD_VERSION:-latest}"
-bin_dir="${MD_INSTALL_DIR:-$HOME/.local/bin}"
+repo="ArchAstro/stet"
+version="${STET_VERSION:-latest}"
+bin_dir="${STET_INSTALL_DIR:-$HOME/.local/bin}"
 skills_dir="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 
 say() { printf '%s\n' "$*"; }
-fail() { printf 'md install: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'stet install: %s\n' "$*" >&2; exit 1; }
 
 case "$(uname -s)" in
     Darwin) os=darwin ;;
     Linux) os=linux ;;
-    *) fail "no prebuilt md for $(uname -s). On Windows, download md-windows-x64.zip from https://github.com/$repo/releases" ;;
+    *) fail "no prebuilt stet for $(uname -s). On Windows, download stet-windows-x64.zip from https://github.com/$repo/releases" ;;
 esac
 case "$(uname -m)" in
     arm64 | aarch64) arch=arm64 ;;
     x86_64 | amd64) arch=x64 ;;
-    *) fail "no prebuilt md for $(uname -m); build it with: cargo install --git https://github.com/$repo md-app" ;;
+    *) fail "no prebuilt stet for $(uname -m); build it with: cargo install --git https://github.com/$repo stet-app" ;;
 esac
-asset="md-$os-$arch.tar.gz"
+asset="stet-$os-$arch.tar.gz"
 if [ "$os-$arch" = "linux-arm64" ]; then
-    fail "no prebuilt md for Linux on arm64 yet; build it with: cargo install --git https://github.com/$repo md-app"
+    fail "no prebuilt stet for Linux on arm64 yet; build it with: cargo install --git https://github.com/$repo stet-app"
 fi
 
 work="$(mktemp -d)"
@@ -77,45 +77,45 @@ verified() {
 mkdir -p "$bin_dir"
 skill=""
 
-# On a Mac, md.app goes in Applications and `md` on the command line is the
-# same program inside it. MD_APP=0 installs only the command.
-if [ "$os" = "darwin" ] && [ "${MD_APP:-1}" != "0" ] && verified md-macos-app.zip; then
-    apps="${MD_APP_DIR:-/Applications}"
+# On a Mac, Stet.app goes in Applications and `stet` on the command line is the
+# same program inside it. STET_APP=0 installs only the command.
+if [ "$os" = "darwin" ] && [ "${STET_APP:-1}" != "0" ] && verified stet-macos-app.zip; then
+    apps="${STET_APP_DIR:-/Applications}"
     if [ ! -w "$apps" ]; then
         apps="$HOME/Applications"
         mkdir -p "$apps"
     fi
-    rm -rf "$apps/md.app"
-    ditto -x -k "$work/md-macos-app.zip" "$apps"
-    ln -sf "$apps/md.app/Contents/MacOS/md" "$bin_dir/md"
-    skill="$apps/md.app/Contents/Resources/skill/md/SKILL.md"
-    say "Installed $("$bin_dir/md" --version) to $apps/md.app, and the md command to $bin_dir/md"
+    rm -rf "$apps/Stet.app"
+    ditto -x -k "$work/stet-macos-app.zip" "$apps"
+    ln -sf "$apps/Stet.app/Contents/MacOS/stet" "$bin_dir/stet"
+    skill="$apps/Stet.app/Contents/Resources/skill/stet/SKILL.md"
+    say "Installed $("$bin_dir/stet" --version) to $apps/Stet.app, and the stet command to $bin_dir/stet"
 else
     say "Downloading $asset ($version)..."
     verified "$asset" || fail "could not download $asset from $base (if the repository is private, sign in with: gh auth login)"
     mkdir "$work/unpacked"
     tar -xzf "$work/$asset" -C "$work/unpacked"
-    # Replace by rename, so an md that is running keeps its own copy.
-    rm -f "$bin_dir/.md.new"
-    cp "$work/unpacked/md" "$bin_dir/.md.new"
-    chmod 755 "$bin_dir/.md.new"
-    mv -f "$bin_dir/.md.new" "$bin_dir/md"
-    skill="$work/unpacked/skill/md/SKILL.md"
-    say "Installed $("$bin_dir/md" --version) to $bin_dir/md"
+    # Replace by rename, so an stet that is running keeps its own copy.
+    rm -f "$bin_dir/.stet.new"
+    cp "$work/unpacked/stet" "$bin_dir/.stet.new"
+    chmod 755 "$bin_dir/.stet.new"
+    mv -f "$bin_dir/.stet.new" "$bin_dir/stet"
+    skill="$work/unpacked/skill/stet/SKILL.md"
+    say "Installed $("$bin_dir/stet" --version) to $bin_dir/stet"
 fi
 
-if [ "${MD_SKILL:-1}" != "0" ] && [ -d "$(dirname "$skills_dir")" ]; then
-    if [ -L "$skills_dir/md" ]; then
-        say "The skill at $skills_dir/md is a link (a development checkout); left as it is."
+if [ "${STET_SKILL:-1}" != "0" ] && [ -d "$(dirname "$skills_dir")" ]; then
+    if [ -L "$skills_dir/stet" ]; then
+        say "The skill at $skills_dir/stet is a link (a development checkout); left as it is."
     else
-        mkdir -p "$skills_dir/md"
-        cp "$skill" "$skills_dir/md/SKILL.md"
-        say "Installed the Claude Code skill to $skills_dir/md"
+        mkdir -p "$skills_dir/stet"
+        cp "$skill" "$skills_dir/stet/SKILL.md"
+        say "Installed the Claude Code skill to $skills_dir/stet"
     fi
 fi
 
 case ":$PATH:" in
     *":$bin_dir:"*) ;;
-    *) say "Add $bin_dir to your PATH to run md from anywhere." ;;
+    *) say "Add $bin_dir to your PATH to run stet from anywhere." ;;
 esac
-say "Open a document with: md notes.md"
+say "Open a document with: stet notes.md"

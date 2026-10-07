@@ -11,19 +11,19 @@ build:
 build-release:
 	cargo build --release
 
-# Install md to ~/.cargo/bin and link the Claude Code skill
+# Install stet to ~/.cargo/bin and link the Claude Code skill
 install:
 	sh scripts/install.sh
 
-# Build md.app (macOS) into target/bundle
+# Build Stet.app (macOS) into target/bundle
 app: build-release
-	scripts/bundle-macos.sh target/release/md target/bundle
+	scripts/bundle-macos.sh target/release/stet target/bundle
 
-# Put md.app in /Applications
+# Put Stet.app in /Applications
 install-app: app
-	rm -rf /Applications/md.app
-	ditto target/bundle/md.app /Applications/md.app
-	@echo "Installed /Applications/md.app"
+	rm -rf /Applications/Stet.app
+	ditto target/bundle/Stet.app /Applications/Stet.app
+	@echo "Installed /Applications/Stet.app"
 
 # Validate a release candidate. Tagging and pushing stay explicit human actions.
 release-check:
@@ -43,11 +43,11 @@ test-all:
 
 # Soak the incremental markdown analysis against full parses.
 fuzz:
-	MD_FUZZ=50000 cargo test --release -p md-core incremental_analysis
+	STET_FUZZ=50000 cargo test --release -p stet-core incremental_analysis
 
 # Hot-path timings on the example document
 bench: build-release
-	target/release/md --bench examples/tour.md
+	target/release/stet --bench examples/tour.md
 
 # Clean build artifacts
 clean:

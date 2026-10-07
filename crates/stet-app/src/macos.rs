@@ -1,9 +1,7 @@
-//! What makes md a Mac app rather than a program with a window: files opened
+//! What makes stet a Mac app rather than a program with a window: files opened
 //! from Finder or the Dock arrive as tabs, Quit asks about unsaved work, and
 //! the menu bar offers every command.
 
-use md_core::input::parse_keys;
-use md_core::{Editor, Key, KeyEvent};
 use muda::accelerator::{Accelerator, Code, Modifiers};
 use muda::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use objc2::runtime::{AnyClass, AnyObject, Sel};
@@ -11,6 +9,8 @@ use objc2::sel;
 use objc2_foundation::{NSArray, NSURL};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use stet_core::input::parse_keys;
+use stet_core::{Editor, Key, KeyEvent};
 
 /// What the application delegate reports to the event loop.
 pub enum AppEvent {
@@ -23,7 +23,7 @@ pub enum AppEvent {
 static SINK: OnceLock<Box<dyn Fn(AppEvent) + Send + Sync>> = OnceLock::new();
 
 // The windowing library owns the application delegate and gives it only the
-// two methods it needs itself. These are the two md needs, added to that
+// two methods it needs itself. These are the two stet needs, added to that
 // same class when the app starts.
 
 extern "C" fn open_urls(_this: &AnyObject, _cmd: Sel, _application: &AnyObject, urls: &NSArray<NSURL>) {
@@ -228,20 +228,20 @@ fn item(editor: &Editor, label: &str, action: &str) -> MenuItem {
 pub fn menu_bar(editor: &Editor, chosen: impl Fn(String) + Send + Sync + 'static) -> Option<Menu> {
     let menu = Menu::new();
     let about = AboutMetadata {
-        name: Some("md".into()),
+        name: Some("Stet".into()),
         version: Some(env!("CARGO_PKG_VERSION").into()),
         copyright: Some("© ArchAstro. MIT license.".into()),
         ..Default::default()
     };
-    let app = Submenu::new("md", true);
+    let app = Submenu::new("Stet", true);
     app.append_items(&[
-        &PredefinedMenuItem::about(Some("About md"), Some(about)),
+        &PredefinedMenuItem::about(Some("About Stet"), Some(about)),
         &PredefinedMenuItem::separator(),
         &PredefinedMenuItem::hide(None),
         &PredefinedMenuItem::hide_others(None),
         &PredefinedMenuItem::show_all(None),
         &PredefinedMenuItem::separator(),
-        &item(editor, "Quit md", "<D-q>"),
+        &item(editor, "Quit Stet", "<D-q>"),
     ])
     .ok()?;
     menu.append(&app).ok()?;

@@ -1,14 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/md-core", "crates/md-app"]
+members = ["crates/stet-core", "crates/stet-app"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
-repository = "https://github.com/ArchAstro/md"
-homepage = "https://github.com/ArchAstro/md"
+repository = "https://github.com/ArchAstro/stet"
+homepage = "https://github.com/ArchAstro/stet"
 
 [profile.release]
 opt-level = 3

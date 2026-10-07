@@ -11,7 +11,7 @@ use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::SystemTime;
 
-const RECOVERY_HEADER: &str = "md-recovery\t";
+const RECOVERY_HEADER: &str = "stet-recovery\t";
 
 pub(super) struct Stash {
     buf: Buffer,

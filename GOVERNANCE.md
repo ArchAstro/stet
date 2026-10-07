@@ -1,6 +1,6 @@
 # Governance
 
-md is maintained by the ArchAstro maintainers.
+Stet is maintained by the ArchAstro maintainers.
 
 Routine changes are reviewed through pull requests. Maintainers weigh technical
 quality, compatibility, maintenance cost, and community impact and aim for

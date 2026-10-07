@@ -1,4 +1,4 @@
-//! Platform-free editing core for md: text buffer, vim and standard key
+//! Platform-free editing core for stet: text buffer, vim and standard key
 //! handling, markdown analysis, review suggestions, themes and settings.
 //! Nothing here touches a window, GPU, font or OS API.
 

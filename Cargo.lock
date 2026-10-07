@@ -1138,45 +1138,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
 
 [[package]]
-name = "md-app"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "bytemuck",
- "directories",
- "glyphon",
- "image",
- "md-core",
- "muda",
- "objc2 0.5.3",
- "objc2-foundation 0.2.2",
- "open",
- "pollster 1.0.1",
- "rfd",
- "serde",
- "serde_json",
- "toml",
- "ureq",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "md-core"
-version = "0.1.0"
-dependencies = [
- "memchr",
- "pulldown-cmark",
- "regex",
- "ropey",
- "serde",
- "syntect",
- "toml",
- "two-face",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2385,6 +2346,45 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "stet-app"
+version = "0.2.0"
+dependencies = [
+ "arboard",
+ "bytemuck",
+ "directories",
+ "glyphon",
+ "image",
+ "muda",
+ "objc2 0.5.3",
+ "objc2-foundation 0.2.2",
+ "open",
+ "pollster 1.0.1",
+ "rfd",
+ "serde",
+ "serde_json",
+ "stet-core",
+ "toml",
+ "ureq",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "stet-core"
+version = "0.2.0"
+dependencies = [
+ "memchr",
+ "pulldown-cmark",
+ "regex",
+ "ropey",
+ "serde",
+ "syntect",
+ "toml",
+ "two-face",
+ "unicode-segmentation",
+]
 
 [[package]]
 name = "str_indices"

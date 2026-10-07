@@ -158,7 +158,7 @@ impl Editor {
             "agent" | "ask" if arg.is_empty() => self.agent_prompt(),
             "agent" | "ask" => {
                 if self.agent.is_none() {
-                    return self.error("no assistant is connected (one connects with `md ctl wait`)");
+                    return self.error("no assistant is connected (one connects with `stet ctl wait`)");
                 }
                 self.agent_send(arg);
             }

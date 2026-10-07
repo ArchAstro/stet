@@ -8,12 +8,12 @@ use crate::session::Session;
 use crate::text::Fonts;
 use crate::view::{Target, View};
 use crate::{Args, build_editor, no_wake};
-use md_core::editor::{Message, PaletteKind};
-use md_core::input::parse_keys;
-use md_core::{Effect, Key, KeyEvent, Mode, Mods};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use stet_core::editor::{Message, PaletteKind};
+use stet_core::input::parse_keys;
+use stet_core::{Effect, Key, KeyEvent, Mode, Mods};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
@@ -31,7 +31,7 @@ enum Wake {
     Redraw,
     /// A line from `--drive`: scripted input for end-to-end checks.
     Drive(String),
-    /// A request from `md ctl` or a later `md` launch, and where to reply.
+    /// A request from `stet ctl` or a later `stet` launch, and where to reply.
     Request(u64, String, std::sync::mpsc::Sender<String>),
     /// The caller of request `id` hung up before it was answered.
     Gone(u64),
@@ -60,9 +60,9 @@ struct Running {
     ime_allowed: bool,
     recovery_due: Option<Instant>,
     drawn: bool,
-    /// This process answers later `md` launches.
+    /// This process answers later `stet` launches.
     listening: bool,
-    /// Assistants blocked in `md ctl wait`, oldest first.
+    /// Assistants blocked in `stet ctl wait`, oldest first.
     waiters: std::collections::VecDeque<Waiter>,
     /// Messages sent while the assistant was busy with an earlier one.
     outbox: std::collections::VecDeque<String>,
@@ -74,7 +74,7 @@ struct Running {
 
 /// What can be made ready while the OS is still creating the window.
 pub struct Prepared {
-    editor: md_core::Editor,
+    editor: stet_core::Editor,
     fonts: std::thread::JoinHandle<Fonts>,
 }
 
@@ -82,7 +82,7 @@ pub struct Prepared {
 /// thread: scanning them, and shaping the first screen of text once so the
 /// font data and shaping plans are warm when the window appears.
 pub fn prepare(args: &Args) -> Prepared {
-    md_core::highlight::warm();
+    stet_core::highlight::warm();
     let (editor, font_dirs) = build_editor(args);
     crate::timing("config and file read");
     let (config, colors) = (editor.config.clone(), editor.theme.colors);
@@ -95,7 +95,7 @@ pub fn prepare(args: &Args) -> Prepared {
         // Most displays that matter here are 2x; a miss only costs the warm-up.
         let font = (config.font_size * 2.0).round();
         let shape =
-            |fonts: &mut Fonts, text: &str, block: md_core::markdown::Block, face: Option<crate::text::Face>| {
+            |fonts: &mut Fonts, text: &str, block: stet_core::markdown::Block, face: Option<crate::text::Face>| {
                 crate::text::layout_line(
                     fonts,
                     &crate::text::LineSpec {
@@ -113,15 +113,15 @@ pub fn prepare(args: &Args) -> Prepared {
                 );
             };
         for line in &sample {
-            shape(&mut fonts, line, md_core::markdown::Block::Text, None);
+            shape(&mut fonts, line, stet_core::markdown::Block::Text, None);
         }
         let pangram = "The quick brown fox jumps over the lazy dog 0123456789 #*_`[](){}<>|~-+=.,:;!?/";
-        shape(&mut fonts, pangram, md_core::markdown::Block::Heading(1), None);
-        shape(&mut fonts, pangram, md_core::markdown::Block::Code, None);
+        shape(&mut fonts, pangram, stet_core::markdown::Block::Heading(1), None);
+        shape(&mut fonts, pangram, stet_core::markdown::Block::Code, None);
         shape(
             &mut fonts,
             pangram,
-            md_core::markdown::Block::Text,
+            stet_core::markdown::Block::Text,
             Some(crate::text::Face::Ui),
         );
         crate::timing("fonts warm");
@@ -154,7 +154,7 @@ pub fn run(args: Args) -> Result<(), String> {
     let mut builder = EventLoop::<Wake>::with_user_event();
     #[cfg(target_os = "macos")]
     {
-        // md brings its own menu bar.
+        // stet brings its own menu bar.
         use winit::platform::macos::EventLoopBuilderExtMacOS;
         builder.with_default_menu(false);
     }
@@ -192,7 +192,7 @@ pub fn run(args: Args) -> Result<(), String> {
             let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let (reply, answer) = std::sync::mpsc::channel();
             if proxy.send_event(Wake::Request(id, request, reply)).is_err() {
-                return r#"{"ok":false,"error":"md is closing"}"#.to_string();
+                return r#"{"ok":false,"error":"stet is closing"}"#.to_string();
             }
             // Most requests are answered at once; an assistant waiting for a
             // message is answered when the writer sends one.
@@ -265,7 +265,7 @@ impl Running {
         let size = state.window.unwrap_or((1040.0, 760.0));
         #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut attributes = Window::default_attributes()
-            .with_title("md")
+            .with_title("Stet")
             .with_inner_size(LogicalSize::new(
                 size.0.clamp(360.0, 8000.0),
                 size.1.clamp(240.0, 8000.0),
@@ -393,7 +393,7 @@ impl Running {
     fn after_input(&mut self) {
         let editor = &self.session.editor;
         let title = format!(
-            "{}{} — md",
+            "{}{} — Stet",
             editor.file_name(),
             if editor.buf.is_dirty() { " •" } else { "" }
         );
@@ -571,11 +571,11 @@ impl Running {
             self.outbox.clear();
         }
         let agent = match (self.waiters.front(), &self.working) {
-            (Some(waiter), _) => Some(md_core::editor::Agent {
+            (Some(waiter), _) => Some(stet_core::editor::Agent {
                 name: waiter.name.clone(),
                 listening: true,
             }),
-            (None, Some((name, _))) => Some(md_core::editor::Agent {
+            (None, Some((name, _))) => Some(stet_core::editor::Agent {
                 name: name.clone(),
                 listening: false,
             }),
@@ -648,7 +648,7 @@ impl Running {
                 });
                 self.outbox.push_back(message);
             }
-            _ => editor.message = error("no assistant is connected (one connects with `md ctl wait`)".to_string()),
+            _ => editor.message = error("no assistant is connected (one connects with `stet ctl wait`)".to_string()),
         }
         self.agent_changed();
     }
@@ -846,7 +846,7 @@ impl Running {
                 // What the window shows now, straight from its own renderer.
                 self.redraw();
                 if let Err(err) = capture(&mut self.gpu, &mut self.session, Path::new(rest.trim())) {
-                    eprintln!("md: shot: {err}");
+                    eprintln!("stet: shot: {err}");
                 }
             }
             "quit" => self.quit(event_loop),
@@ -872,7 +872,7 @@ impl Running {
                     WinitKey::Named(NamedKey::ContextMenu) | WinitKey::Named(NamedKey::F10)
                         if event.logical_key == WinitKey::Named(NamedKey::ContextMenu) || self.mods.shift_key() =>
                     {
-                        self.session.editor.open_context_menu(md_core::editor::MenuAt::Cursor);
+                        self.session.editor.open_context_menu(stet_core::editor::MenuAt::Cursor);
                         return self.effects(Vec::new(), event_loop);
                     }
                     WinitKey::Named(NamedKey::F1) => {
@@ -1149,10 +1149,10 @@ pub fn bench(args: &Args) {
         println!("{label:<32}{:>9.2?}", started.elapsed() / rounds);
     };
     time("markdown analysis", 20, &mut || {
-        std::hint::black_box(md_core::markdown::parse(&text));
+        std::hint::black_box(stet_core::markdown::parse(&text));
     });
     time("  of which suggestions", 20, &mut || {
-        std::hint::black_box(md_core::critic::parse(&text));
+        std::hint::black_box(stet_core::critic::parse(&text));
     });
     time("buffer to string", 20, &mut || {
         std::hint::black_box(session.editor.buf.text());
@@ -1193,7 +1193,7 @@ pub fn bench(args: &Args) {
         std::hint::black_box(session.view.frame(&mut session.editor));
     });
 
-    let recovery = std::env::temp_dir().join(format!("md-bench-recovery-{}", std::process::id()));
+    let recovery = std::env::temp_dir().join(format!("stet-bench-recovery-{}", std::process::id()));
     session.editor.recovery_dir = Some(recovery.clone());
     time("recovery snapshot", 10, &mut || {
         session.editor.buf.replace(0..0, "x");

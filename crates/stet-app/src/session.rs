@@ -2,7 +2,7 @@
 //! connects them. The window and the screenshot path both drive a `Session`.
 
 use crate::view::View;
-use md_core::{Editor, Effect, KeyEvent};
+use stet_core::{Editor, Effect, KeyEvent};
 
 pub struct Session {
     pub editor: Editor,

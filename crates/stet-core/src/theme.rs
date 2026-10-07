@@ -120,7 +120,19 @@ const BUILTIN: &[(&str, &str, Palette)] = &[
         0xd8dee9, 0xb9c1ce, 0x9aa5b5, 0x7b8799, 0x657187, 0x596579, 0x4c566a, 0x434c5e, 0x3b4252, 0x2e3440, 0x292e39, 0x242933])),
 ];
 
-pub const DEFAULT_THEME: &str = "paper";
+/// Stet's own themes, listed before the ArchDev catalog: warm paper with a
+/// proofreader's vermilion for the cursor, and its ink-dark counterpart.
+#[rustfmt::skip]
+const BRAND: &[(&str, &str, Palette)] = &[
+    ("stet", "Stet", Palette::from_hex([
+        0x9a4f2b, 0xb8503f, 0xbf3989, 0x7a4fcf, 0xc8321f, 0xa8321f, 0x9a4a12, 0x8a6300, 0x2f7d3a, 0x1b7c83, 0x0e7490, 0x1f5fae, 0xd9432f, 0x6639ba,
+        0x1b1e27, 0x4b4f5a, 0x5f636e, 0x7c8089, 0x8d9098, 0x9a9ca3, 0xb9b6ae, 0xd9d4c9, 0xebe6db, 0xfbf7f0, 0xf5f0e6, 0xeee8dc])),
+    ("stet-ink", "Stet Ink", Palette::from_hex([
+        0xf1d5c8, 0xeba99b, 0xe8a3c8, 0xb9a3f0, 0xef6f5e, 0xe5857a, 0xf0a070, 0xe6c77a, 0x9fcf8a, 0x86cfc0, 0x8fd3e0, 0x7fb4e8, 0xef6a55, 0xb4b9f5,
+        0xf3eee4, 0xcfcabf, 0xb4afa5, 0x918d86, 0x7d7a75, 0x67656a, 0x4a4b57, 0x343645, 0x262836, 0x12151f, 0x0d1018, 0x090b11])),
+];
+
+pub const DEFAULT_THEME: &str = "stet";
 
 /// Semantic colors the editor reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,8 +280,9 @@ pub struct Themes {
 impl Default for Themes {
     fn default() -> Self {
         Themes {
-            themes: BUILTIN
+            themes: BRAND
                 .iter()
+                .chain(BUILTIN)
                 .map(|(name, label, palette)| Theme::new(name, label, *palette))
                 .collect(),
         }
@@ -372,7 +385,7 @@ mod tests {
     fn catalog_matches_archdev_order_and_values() {
         let themes = Themes::default();
         assert_eq!(
-            themes.names().collect::<Vec<_>>(),
+            themes.names().skip(BRAND.len()).collect::<Vec<_>>(),
             [
                 "latte",
                 "frappe",
@@ -434,7 +447,7 @@ mod tests {
         assert_eq!(mine.colors.cursor, Rgb(255, 0, 0));
         assert!(themes.load_toml("bad", "[palette]\nnope = \"#000000\"").is_err());
         assert!(themes.load_toml("bad", "[palette]\nblue = \"blue\"").is_err());
-        assert_eq!(themes.next("mine", 1).name, "latte");
-        assert_eq!(themes.next("latte", -1).name, "mine");
+        assert_eq!(themes.next("mine", 1).name, "stet");
+        assert_eq!(themes.next("stet", -1).name, "mine");
     }
 }

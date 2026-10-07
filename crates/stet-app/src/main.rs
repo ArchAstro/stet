@@ -1,5 +1,5 @@
-//! md — a minimal markdown writer. This crate is the shell: it owns the
-//! window, GPU and OS integration, and drives the platform-free `md-core`.
+//! stet — a minimal markdown writer. This crate is the shell: it owns the
+//! window, GPU and OS integration, and drives the platform-free `stet-core`.
 
 mod app;
 mod ctl;
@@ -12,11 +12,11 @@ mod session;
 mod text;
 mod view;
 
-use md_core::{Config, Editor};
 use std::path::PathBuf;
 use std::sync::Arc;
+use stet_core::{Config, Editor};
 
-const USAGE: &str = "md [options] [file]
+const USAGE: &str = "stet [options] [file]
 
   --theme <name>          start with this theme
   --novim                 standard (non-modal) keys
@@ -26,13 +26,13 @@ const USAGE: &str = "md [options] [file]
   --keys <notation>       keys to replay before the screenshot, e.g. 'ggvj' or ':theme nord<CR>'
   --bench                 print parse and layout timings for the file and exit
   --fonts                 list the installed font families and exit
-  -n, --new-window        open a separate window even if md is already running
+  -n, --new-window        open a separate window even if stet is already running
   -f, --foreground        stay attached to the terminal until the window closes (also --wait)
   --drive                 read scripted input from stdin (keys, click, drag, scroll, resize, drop, quit)
   -V, --version           print the version
   -h, --help              this text
 
-md ctl ...                control the running md from another program (md ctl --help)";
+stet ctl ...                control the running stet from another program (stet ctl --help)";
 
 #[derive(Default)]
 pub struct Args {
@@ -69,7 +69,7 @@ fn parse_args() -> Result<Args, String> {
         match arg.as_str() {
             "-h" | "--help" => return Err(String::new()),
             "-V" | "--version" => {
-                println!("md {}", env!("CARGO_PKG_VERSION"));
+                println!("stet {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             "--theme" => args.theme = Some(value("--theme")?),
@@ -164,7 +164,7 @@ pub fn build_editor(args: &Args) -> (Editor, Vec<PathBuf>) {
         }
     }
     if !problems.is_empty() {
-        editor.message = Some(md_core::editor::Message {
+        editor.message = Some(stet_core::editor::Message {
             text: problems.join("; "),
             error: true,
         });
@@ -182,11 +182,11 @@ pub fn build_editor(args: &Args) -> (Editor, Vec<PathBuf>) {
 
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
-/// With `MD_TIMING` set, prints how long after launch a startup step ended.
+/// With `STET_TIMING` set, prints how long after launch a startup step ended.
 pub fn timing(step: &str) {
-    if std::env::var_os("MD_TIMING").is_some() {
+    if std::env::var_os("STET_TIMING").is_some() {
         let start = START.get_or_init(std::time::Instant::now);
-        eprintln!("md: {:>8.2?}  {step}", start.elapsed());
+        eprintln!("stet: {:>8.2?}  {step}", start.elapsed());
     }
 }
 
@@ -203,7 +203,7 @@ fn main() {
                 println!("{USAGE}");
                 return;
             }
-            eprintln!("md: {err}\n\n{USAGE}");
+            eprintln!("stet: {err}\n\n{USAGE}");
             std::process::exit(2);
         }
     };
@@ -222,12 +222,12 @@ fn main() {
     }
     if args.screenshot.is_some() {
         if let Err(err) = app::screenshot(&args) {
-            eprintln!("md: {err}");
+            eprintln!("stet: {err}");
             std::process::exit(1);
         }
         return;
     }
-    // An md that is already running takes the file as a tab: no new process,
+    // An stet that is already running takes the file as a tab: no new process,
     // no new window, nothing to wait for.
     let own_process = args.foreground || args.drive || args.new_window;
     let files: Vec<String> = args
@@ -248,7 +248,7 @@ fn main() {
         return;
     }
     if let Err(err) = app::run(args) {
-        eprintln!("md: {err}");
+        eprintln!("stet: {err}");
         std::process::exit(1);
     }
 }
@@ -258,7 +258,7 @@ fn main() {
 fn detach() -> bool {
     use std::io::IsTerminal;
     use std::process::{Command, Stdio};
-    const MARK: &str = "MD_DETACHED";
+    const MARK: &str = "STET_DETACHED";
     let from_terminal = std::io::stdin().is_terminal() || std::io::stderr().is_terminal();
     if !from_terminal || std::env::var_os(MARK).is_some() {
         return false;

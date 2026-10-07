@@ -826,10 +826,10 @@ impl Change {
 }
 
 fn plan(old: &Doc, text: &str) -> Option<Change> {
-    // MD_TRACE_PARSE=1 prints which check sent an edit to a full analysis.
+    // STET_TRACE_PARSE=1 prints which check sent an edit to a full analysis.
     fn why<T>(check: u32) -> Option<T> {
-        if std::env::var_os("MD_TRACE_PARSE").is_some() {
-            eprintln!("md: full analysis (check {check})");
+        if std::env::var_os("STET_TRACE_PARSE").is_some() {
+            eprintln!("stet: full analysis (check {check})");
         }
         None
     }
@@ -1333,7 +1333,7 @@ mod tests {
             "]:",
             "\n```js\nlet a = 1;\n```\n",
         ];
-        let mut seed = std::env::var("MD_FUZZ_SEED")
+        let mut seed = std::env::var("STET_FUZZ_SEED")
             .ok()
             .and_then(|seed| seed.parse().ok())
             .unwrap_or(0x2545_f491_4f6c_dd1du64);
@@ -1345,8 +1345,8 @@ mod tests {
         };
         let mut taken = 0;
         let mut rounds = 0;
-        // MD_FUZZ=5000 runs a long soak.
-        let documents = std::env::var("MD_FUZZ")
+        // STET_FUZZ=5000 runs a long soak.
+        let documents = std::env::var("STET_FUZZ")
             .ok()
             .and_then(|count| count.parse().ok())
             .unwrap_or(60);

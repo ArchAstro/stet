@@ -4,13 +4,13 @@
 use crate::gpu::linear;
 use crate::images::{self, Images};
 use crate::text::{Face, Fonts, Layer as Depth, LineLayout, LineSpec, color, layout_line};
-use md_core::editor::{CmdKind, EntryKind, MenuAt, PaletteKind};
-use md_core::markdown::{Block, Span};
-use md_core::theme::Rgb;
-use md_core::{Editor, Mode, ScrollTo};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
+use stet_core::editor::{CmdKind, EntryKind, MenuAt, PaletteKind};
+use stet_core::markdown::{Block, Span};
+use stet_core::theme::Rgb;
+use stet_core::{Editor, Mode, ScrollTo};
 
 pub struct Quad {
     pub rect: [f32; 4],
@@ -769,7 +769,7 @@ impl View {
             count => format!("{count} suggestions    "),
         };
         let hint = format!("{} menu", ed.chord(false, "/"));
-        // Who is on the other end of `md ctl wait`, if anyone.
+        // Who is on the other end of `stet ctl wait`, if anyone.
         let agent = match &ed.agent {
             Some(agent) if agent.listening => format!("● {}    ", agent.name),
             Some(agent) => format!("◌ {} working    ", agent.name),

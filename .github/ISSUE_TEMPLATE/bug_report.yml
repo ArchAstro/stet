@@ -21,8 +21,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: md version
-      placeholder: md 0.1.0
+      label: stet version
+      placeholder: stet 0.1.0
     validations:
       required: true
   - type: input

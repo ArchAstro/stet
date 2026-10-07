@@ -9,7 +9,7 @@ Security fixes are provided for the latest released version.
 Do not open a public issue for a suspected vulnerability. Use GitHub's private
 vulnerability reporting for this repository:
 
-https://github.com/ArchAstro/md/security/advisories/new
+https://github.com/ArchAstro/stet/security/advisories/new
 
 Include affected versions, reproduction steps, impact, and any suggested
 mitigation. Maintainers will acknowledge a complete report within five business

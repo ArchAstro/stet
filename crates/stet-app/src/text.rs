@@ -4,11 +4,11 @@
 
 use glyphon::cosmic_text::{Align, Wrap};
 use glyphon::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
-use md_core::Config;
-use md_core::markdown::{Block, Span, style};
-use md_core::theme::{EditorColors, Rgb};
 use std::ops::Range;
 use std::path::PathBuf;
+use stet_core::Config;
+use stet_core::markdown::{Block, Span, style};
+use stet_core::theme::{EditorColors, Rgb};
 
 /// Which configured family a piece of text uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -285,7 +285,7 @@ pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
                     base_weight
                 })
                 .color(color(dim(span_color(span, base_color, c))));
-            if span.syntax == md_core::markdown::syntax::COMMENT {
+            if span.syntax == stet_core::markdown::syntax::COMMENT {
                 attrs = attrs.style(Style::Italic);
             }
             if bits & style::ITALIC != 0 {

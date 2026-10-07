@@ -385,7 +385,7 @@ impl Gpu {
 }
 
 /// sRGB bytes to the linear floats an sRGB render target expects.
-pub fn linear(rgb: md_core::theme::Rgb, alpha: f32) -> [f32; 4] {
+pub fn linear(rgb: stet_core::theme::Rgb, alpha: f32) -> [f32; 4] {
     let channel = |c: u8| {
         let c = c as f32 / 255.0;
         if c <= 0.04045 {

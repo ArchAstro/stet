@@ -288,7 +288,7 @@ fn command_line() {
     keys(&mut ed, ":theme no<Tab><CR>");
     assert_eq!(ed.theme.name, "nord");
     keys(&mut ed, ":theme nord<Tab><CR>");
-    assert_eq!(ed.theme.name, "latte");
+    assert_eq!(ed.theme.name, "stet");
     keys(&mut ed, ":theme bogus<CR>");
     assert!(ed.message.as_ref().unwrap().error);
     ed.take_effects();
@@ -363,7 +363,7 @@ fn shortcuts_and_wrapping_in_vim_mode() {
             Effect::ThemeChanged
         ]
     );
-    assert_eq!(ed.theme.name, "ristretto");
+    assert_eq!(ed.theme.name, "stet-ink");
     ed.primary = Primary::Ctrl;
     keys(&mut ed, "<C-r>");
     assert!(ed.take_effects().is_empty(), "Ctrl-r stays redo under vim");
@@ -556,7 +556,7 @@ fn suggestion_toggle_and_author() {
 // ----- files ----------------------------------------------------------------
 
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("md-core-test-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("stet-core-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

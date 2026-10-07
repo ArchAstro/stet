@@ -123,7 +123,7 @@ pub enum CmdKind {
     Agent,
 }
 
-/// An assistant attached through `md ctl wait`, as the shell reports it.
+/// An assistant attached through `stet ctl wait`, as the shell reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Agent {
     pub name: String,
@@ -467,7 +467,7 @@ impl Editor {
         // Write through symlinks instead of replacing them.
         let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
         let name = target.file_name().ok_or("not a file path")?.to_string_lossy();
-        let temp = target.with_file_name(format!(".{name}.md-save-{}", std::process::id()));
+        let temp = target.with_file_name(format!(".{name}.stet-save-{}", std::process::id()));
         let write = || -> std::io::Result<()> {
             use std::io::Write;
             let mut file = std::fs::File::create(&temp)?;
@@ -597,7 +597,7 @@ impl Editor {
     /// selection stays as it is and travels with the message.
     pub fn agent_prompt(&mut self) {
         if self.agent.is_none() {
-            return self.error("no assistant is connected (one connects with `md ctl wait`)");
+            return self.error("no assistant is connected (one connects with `stet ctl wait`)");
         }
         self.close_group();
         self.vim.clear_pending();
