@@ -3,12 +3,33 @@
 A minimal markdown writer in the spirit of iA Writer. Rust core, GPU-rendered,
 vim keys, linked notes, review suggestions, ArchDev themes.
 
+## Install
+
 ```sh
-sh scripts/install.sh        # builds md into ~/.cargo/bin, links the Claude Code skill
-md examples/tour.md
+curl -fsSL https://raw.githubusercontent.com/ArchAstro/md/main/install.sh | sh
 ```
 
-Or run it from the checkout with `cargo run --release -- examples/tour.md`.
+This downloads the latest release for macOS (Apple Silicon or Intel) or Linux
+(x64), checks it against the published checksums, puts `md` in `~/.local/bin`
+and the Claude Code skill in `~/.claude/skills/md`. `MD_INSTALL_DIR`,
+`MD_VERSION=v0.1.0` and `MD_SKILL=0` change that.
+
+While this repository is private the anonymous download does not work; with
+the GitHub CLI signed in, use:
+
+```sh
+gh api repos/ArchAstro/md/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
+```
+
+On Windows, download `md-windows-x64.zip` from the releases page. To build
+from source instead (needs Rust 1.90+):
+
+```sh
+sh scripts/install.sh        # builds md into ~/.cargo/bin, links the skill
+cargo run --release -- examples/tour.md
+```
+
+## Using it
 
 Started from a terminal, `md file.md` opens its window as a separate process
 and hands the prompt straight back. `md --wait file.md` (or `-f`) stays attached
@@ -263,7 +284,7 @@ Measured with `--bench` on an M-series Mac (release build):
 1. CI (`.github/workflows/ci.yml`) runs tests on Linux, macOS and Windows, formatting, clippy, docs, the minimum supported Rust (1.90), a dependency audit, and a soak of the incremental analysis.
 2. Pushing a tag `vX.Y.Z` that matches the version in `Cargo.toml` runs `.github/workflows/release.yml`: it re-verifies, builds `md-linux-x64`, `md-darwin-arm64`, `md-darwin-x64` and `md-windows-x64`, and publishes them with `SHA256SUMS` and generated notes. Each archive holds the binary, the skill, the license and this file.
 3. Running that workflow by hand (Actions → Release → Run workflow) is a dry run: every target is built and packaged, nothing is published.
-4. Once the repository is public, a release also attests build provenance and updates the Homebrew formula in `ArchAstro/homebrew-tools` (needs the `ARCHASTRO_RELEASE_GITHUB_TOKEN` secret).
+4. Once the repository is public, a release also attests build provenance, and `install.sh` works anonymously.
 
 ```console
 make release-check

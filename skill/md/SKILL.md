@@ -22,26 +22,30 @@ command -v md && md ctl sessions
 
 ### Installing md and this skill
 
-md builds from source and needs Rust (`cargo`). If `cargo` is missing, point
-the user to https://rustup.rs rather than installing a toolchain yourself.
-
 ```sh
-gh repo clone ArchAstro/md ~/src/md      # or: git clone https://github.com/ArchAstro/md ~/src/md
-sh ~/src/md/scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/ArchAstro/md/main/install.sh | sh
 ```
 
-The script builds the `md` binary into `~/.cargo/bin` and links this skill
-into `~/.claude/skills/md` (other agents: copy `skill/md/SKILL.md` to
-wherever your skills live). The first build takes a few minutes. Without a
-checkout, the binary alone installs with:
+This downloads the latest release for macOS or Linux (x64), verifies its
+checksum, puts `md` in `~/.local/bin` and this skill in `~/.claude/skills/md`
+(other agents: copy `SKILL.md` to wherever your skills live). If the download
+is refused because the repository is private, and `gh` is signed in:
+
+```sh
+gh api repos/ArchAstro/md/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
+```
+
+If there is no prebuilt binary for the machine, build from source (needs
+Rust; if `cargo` is missing, point the user to https://rustup.rs rather than
+installing a toolchain yourself):
 
 ```sh
 CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --git https://github.com/ArchAstro/md --locked md-app
 ```
 
-Check it worked with `md --help`, then have the user open a document. To
-update later: `git -C ~/src/md pull && sh ~/src/md/scripts/install.sh`. To
-remove: `cargo uninstall md-app && rm ~/.claude/skills/md`.
+Check it worked with `md --version`, then have the user open a document.
+Running the installer again updates md. To remove it: delete `~/.local/bin/md`
+and `~/.claude/skills/md`.
 
 `md ctl` (everything below) works on macOS and Linux.
 

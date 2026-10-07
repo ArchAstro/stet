@@ -90,24 +90,10 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  homebrew-formula:
-    name: Homebrew formula
-    runs-on: macos-latest
+  installer:
+    name: Install script
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Render the formula
-        run: |
-          brew tap-new --no-git md-ci/public-release
-          formula="$(brew --repository md-ci/public-release)/Formula/md.rb"
-          zeros="$(printf '0%.0s' {1..64})"
-          sed \
-            -e "s/__VERSION__/0.0.0/g" \
-            -e "s/__SHA_DARWIN_ARM64__/${zeros}/g" \
-            -e "s/__SHA_DARWIN_X64__/${zeros}/g" \
-            -e "s/__SHA_LINUX_X64__/${zeros}/g" \
-            .github/homebrew/md.rb.template > "${formula}"
-          ruby -c "${formula}"
-          if grep -n -E 'HOMEBREW_GITHUB_API_TOKEN|api\.github\.com|download_strategy' "${formula}"; then
-            echo "Homebrew formula must use only anonymous public release URLs" >&2
-            exit 1
-          fi
+      - run: sh -n install.sh
+      - run: shellcheck install.sh scripts/install.sh
