@@ -360,8 +360,10 @@ pub fn text_object(buf: &Buffer, pos: usize, around: bool, ch: char) -> Option<O
                 .filter(|&at| buf.char_at(at) == Some(ch))
                 .collect();
             let (open, close) = quotes
-                .chunks_exact(2)
-                .map(|pair| (pair[0], pair[1]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&[open, close]| (open, close))
                 .find(|&(_, close)| close >= pos)?;
             if around {
                 chars(open..close + 1)

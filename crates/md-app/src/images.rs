@@ -56,6 +56,13 @@ pub fn resolve(url: &str, document: Option<&Path>, remote: bool) -> Option<Sourc
         return Some(Source::Data(url.to_string()));
     }
     let path = percent_decode(url.strip_prefix("file://").unwrap_or(url));
+    // `file:///C:/pictures/a.png` leaves `/C:/pictures/a.png`.
+    let drive = |path: &str| path.len() > 2 && path.as_bytes()[1].is_ascii_alphabetic() && path.as_bytes()[2] == b':';
+    let path = if cfg!(windows) && path.starts_with('/') && drive(&path) {
+        path[1..].to_string()
+    } else {
+        path
+    };
     let path = PathBuf::from(path);
     if path.is_absolute() {
         return Some(Source::File(path));
@@ -249,8 +256,14 @@ mod tests {
         let doc = Path::new("/notes/a.md");
         let file = |path: &str| Some(Source::File(PathBuf::from(path)));
         assert_eq!(resolve("img/x%20y.png", Some(doc), true), file("/notes/img/x y.png"));
-        assert_eq!(resolve("/abs.png", None, true), file("/abs.png"));
-        assert_eq!(resolve("file:///abs.png", Some(doc), true), file("/abs.png"));
+        // What counts as an absolute path is the platform's call.
+        if cfg!(windows) {
+            assert_eq!(resolve("C:/abs.png", None, true), file("C:/abs.png"));
+            assert_eq!(resolve("file:///C:/abs.png", Some(doc), true), file("C:/abs.png"));
+        } else {
+            assert_eq!(resolve("/abs.png", None, true), file("/abs.png"));
+            assert_eq!(resolve("file:///abs.png", Some(doc), true), file("/abs.png"));
+        }
         assert_eq!(
             resolve("https://example.com/x.png", Some(doc), true),
             Some(Source::Url("https://example.com/x.png".into()))
