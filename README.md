@@ -14,6 +14,12 @@ This downloads the latest release for macOS (Apple Silicon or Intel) or Linux
 and the Claude Code skill in `~/.claude/skills/md`. `MD_INSTALL_DIR`,
 `MD_VERSION=v0.1.0` and `MD_SKILL=0` change that.
 
+On a Mac this installs `md.app` into `/Applications` (the `md` command is
+the same program inside it); `MD_APP=0` installs only the command. You can
+also download `md-macos.dmg` from the releases page and drag the app across.
+Until releases are signed with a Developer ID, an app downloaded in a browser
+needs a right-click → Open the first time; the installer does not.
+
 While this repository is private the anonymous download does not work; with
 the GitHub CLI signed in, use:
 
@@ -83,6 +89,15 @@ vim keeps its own Ctrl chords):
 | Bold, italic, link | `B`, `I`, `K` |
 | Theme picker, focus mode, full screen | `Shift-T`, `Shift-D`, `Shift-F` or F11 |
 | Zoom | `+`, `-`, `0` |
+
+## On the Mac
+
+`md.app` is a normal Mac app: double-click a markdown file, drag one onto
+the Dock icon, or use Open With, and it opens as a tab in the running window.
+The menu bar has every command with its shortcut (a shortcut you rebind in
+`[keys]` drops out of the menu so yours wins), and Quit asks about unsaved
+documents. Build it from a checkout with `make app`, or `make install-app` to
+put it in `/Applications`.
 
 ## Right-click and the actions menu
 

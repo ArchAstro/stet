@@ -35,6 +35,15 @@ enum Wake {
     Request(u64, String, std::sync::mpsc::Sender<String>),
     /// The caller of request `id` hung up before it was answered.
     Gone(u64),
+    /// Files opened from outside the window (Finder, the Dock).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Opened(Vec<std::path::PathBuf>),
+    /// The system asked the app to quit.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    QuitRequested,
+    /// A native menu item: key notation, or a `:command`.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Menu(String),
 }
 
 struct Running {
@@ -131,6 +140,8 @@ struct Waiter {
 const WORKING_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 struct App {
+    /// Events that arrived before the window existed.
+    early: Vec<Wake>,
     listening: bool,
     prepared: Option<Prepared>,
     proxy: EventLoopProxy<Wake>,
@@ -140,11 +151,30 @@ struct App {
 
 pub fn run(args: Args) -> Result<(), String> {
     let prepared = prepare(&args);
-    let event_loop = EventLoop::<Wake>::with_user_event()
-        .build()
-        .map_err(|err| err.to_string())?;
+    let mut builder = EventLoop::<Wake>::with_user_event();
+    #[cfg(target_os = "macos")]
+    {
+        // md brings its own menu bar.
+        use winit::platform::macos::EventLoopBuilderExtMacOS;
+        builder.with_default_menu(false);
+    }
+    let event_loop = builder.build().map_err(|err| err.to_string())?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
+    #[cfg(target_os = "macos")]
+    let _menu = {
+        let to_loop = proxy.clone();
+        crate::macos::install(move |event| {
+            let _ = to_loop.send_event(match event {
+                crate::macos::AppEvent::Open(files) => Wake::Opened(files),
+                crate::macos::AppEvent::Quit => Wake::QuitRequested,
+            });
+        });
+        let to_loop = proxy.clone();
+        crate::macos::menu_bar(&prepared.editor, move |action| {
+            let _ = to_loop.send_event(Wake::Menu(action));
+        })
+    };
     if args.drive {
         let proxy = proxy.clone();
         std::thread::spawn(move || {
@@ -179,6 +209,7 @@ pub fn run(args: Args) -> Result<(), String> {
         })
     };
     let mut app = App {
+        early: Vec::new(),
         listening,
         prepared: Some(prepared),
         proxy,
@@ -904,6 +935,9 @@ impl ApplicationHandler<Wake> for App {
             Ok(mut running) => {
                 running.listening = self.listening;
                 self.running = Some(running);
+                for wake in std::mem::take(&mut self.early) {
+                    self.user_event(event_loop, wake);
+                }
             }
             Err(err) => {
                 self.error = Some(err);
@@ -919,8 +953,36 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, wake: Wake) {
-        let Some(running) = &mut self.running else { return };
+        let Some(running) = &mut self.running else {
+            // A file opened from Finder can arrive before the window does.
+            return self.early.push(wake);
+        };
         match wake {
+            Wake::Opened(files) => {
+                for file in &files {
+                    let editor = &mut running.session.editor;
+                    if let Err(err) = editor.open_in_tab(file) {
+                        editor.message = error(err);
+                    }
+                }
+                let effects = running.session.settle();
+                running.effects(effects, event_loop);
+                running.window.set_minimized(false);
+                running.window.focus_window();
+            }
+            Wake::QuitRequested => running.effects(vec![Effect::CloseAll], event_loop),
+            Wake::Menu(action) => match action.strip_prefix(':') {
+                Some(command) => {
+                    running.session.editor.run_command(command);
+                    let effects = running.session.settle();
+                    running.effects(effects, event_loop);
+                }
+                None => {
+                    for key in parse_keys(&action) {
+                        running.key(key, event_loop);
+                    }
+                }
+            },
             Wake::Redraw => running.window.request_redraw(),
             Wake::Drive(line) => running.drive(&line, event_loop),
             Wake::Request(id, request, reply) => running.request(id, &request, reply, event_loop),

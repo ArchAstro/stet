@@ -1,4 +1,4 @@
-.PHONY: all build build-release install test test-all fuzz bench clean release-check fmt lint check setup
+.PHONY: all build build-release install app install-app test test-all fuzz bench clean release-check fmt lint check setup
 
 # Default target
 all: build
@@ -14,6 +14,16 @@ build-release:
 # Install md to ~/.cargo/bin and link the Claude Code skill
 install:
 	sh scripts/install.sh
+
+# Build md.app (macOS) into target/bundle
+app: build-release
+	scripts/bundle-macos.sh target/release/md target/bundle
+
+# Put md.app in /Applications
+install-app: app
+	rm -rf /Applications/md.app
+	ditto target/bundle/md.app /Applications/md.app
+	@echo "Installed /Applications/md.app"
 
 # Validate a release candidate. Tagging and pushing stay explicit human actions.
 release-check:

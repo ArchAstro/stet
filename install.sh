@@ -6,6 +6,8 @@
 # Settings (environment variables):
 #   MD_VERSION      release to install, for example v0.1.0 (default: the latest)
 #   MD_INSTALL_DIR  where the md binary goes (default: ~/.local/bin)
+#   MD_APP          on macOS, set to 0 for the command only, without md.app
+#   MD_APP_DIR      where md.app goes (default: /Applications, else ~/Applications)
 #   MD_SKILL        set to 0 to skip the Claude Code skill
 #   CLAUDE_SKILLS_DIR  where skills live (default: ~/.claude/skills)
 set -eu
@@ -58,34 +60,56 @@ fetch() {
     return 1
 }
 
-say "Downloading $asset ($version)..."
-fetch "$asset" || fail "could not download $asset from $base (if the repository is private, sign in with: gh auth login)"
-fetch SHA256SUMS || fail "could not download SHA256SUMS"
+# Downloads $1 and checks it against the published checksums.
+verified() {
+    fetch "$1" || return 1
+    [ -f "$work/SHA256SUMS" ] || fetch SHA256SUMS || fail "could not download SHA256SUMS"
+    expected="$(awk -v name="$1" '$2 == name { print $1 }' "$work/SHA256SUMS")"
+    [ -n "$expected" ] || fail "$1 is not listed in SHA256SUMS"
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$work/$1" | cut -d' ' -f1)"
+    else
+        actual="$(shasum -a 256 "$work/$1" | cut -d' ' -f1)"
+    fi
+    [ "$expected" = "$actual" ] || fail "checksum mismatch for $1; nothing was installed"
+}
 
-expected="$(awk -v name="$asset" '$2 == name { print $1 }' "$work/SHA256SUMS")"
-[ -n "$expected" ] || fail "$asset is not listed in SHA256SUMS"
-if command -v sha256sum >/dev/null 2>&1; then
-    actual="$(sha256sum "$work/$asset" | cut -d' ' -f1)"
-else
-    actual="$(shasum -a 256 "$work/$asset" | cut -d' ' -f1)"
-fi
-[ "$expected" = "$actual" ] || fail "checksum mismatch for $asset; nothing was installed"
-
-mkdir "$work/unpacked"
-tar -xzf "$work/$asset" -C "$work/unpacked"
 mkdir -p "$bin_dir"
-# Replace by rename, so an md that is running keeps its own copy.
-cp "$work/unpacked/md" "$bin_dir/.md.new"
-chmod 755 "$bin_dir/.md.new"
-mv -f "$bin_dir/.md.new" "$bin_dir/md"
-say "Installed $("$bin_dir/md" --version) to $bin_dir/md"
+skill=""
+
+# On a Mac, md.app goes in Applications and `md` on the command line is the
+# same program inside it. MD_APP=0 installs only the command.
+if [ "$os" = "darwin" ] && [ "${MD_APP:-1}" != "0" ] && verified md-macos-app.zip; then
+    apps="${MD_APP_DIR:-/Applications}"
+    if [ ! -w "$apps" ]; then
+        apps="$HOME/Applications"
+        mkdir -p "$apps"
+    fi
+    rm -rf "$apps/md.app"
+    ditto -x -k "$work/md-macos-app.zip" "$apps"
+    ln -sf "$apps/md.app/Contents/MacOS/md" "$bin_dir/md"
+    skill="$apps/md.app/Contents/Resources/skill/md/SKILL.md"
+    say "Installed $("$bin_dir/md" --version) to $apps/md.app, and the md command to $bin_dir/md"
+else
+    say "Downloading $asset ($version)..."
+    verified "$asset" || fail "could not download $asset from $base (if the repository is private, sign in with: gh auth login)"
+    mkdir "$work/unpacked"
+    tar -xzf "$work/$asset" -C "$work/unpacked"
+    # Replace by rename, so an md that is running keeps its own copy.
+    rm -f "$bin_dir/.md.new"
+    cp "$work/unpacked/md" "$bin_dir/.md.new"
+    chmod 755 "$bin_dir/.md.new"
+    mv -f "$bin_dir/.md.new" "$bin_dir/md"
+    skill="$work/unpacked/skill/md/SKILL.md"
+    say "Installed $("$bin_dir/md" --version) to $bin_dir/md"
+fi
 
 if [ "${MD_SKILL:-1}" != "0" ] && [ -d "$(dirname "$skills_dir")" ]; then
     if [ -L "$skills_dir/md" ]; then
         say "The skill at $skills_dir/md is a link (a development checkout); left as it is."
     else
         mkdir -p "$skills_dir/md"
-        cp "$work/unpacked/skill/md/SKILL.md" "$skills_dir/md/SKILL.md"
+        cp "$skill" "$skills_dir/md/SKILL.md"
         say "Installed the Claude Code skill to $skills_dir/md"
     fi
 fi

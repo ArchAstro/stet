@@ -90,10 +90,25 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  macos-app:
+    name: Mac app bundle
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - run: cargo build --locked --release
+      - run: scripts/bundle-macos.sh target/release/md target/bundle
+      - name: Check the bundle
+        run: |
+          plutil -lint target/bundle/md.app/Contents/Info.plist
+          codesign --verify --strict target/bundle/md.app
+          test -s target/bundle/md.app/Contents/Resources/md.icns
+          target/bundle/md.app/Contents/MacOS/md --version
+
   installer:
     name: Install script
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: sh -n install.sh
-      - run: shellcheck install.sh scripts/install.sh
+      - run: shellcheck install.sh scripts/install.sh scripts/bundle-macos.sh

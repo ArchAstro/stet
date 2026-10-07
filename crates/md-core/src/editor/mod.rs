@@ -621,6 +621,12 @@ impl Editor {
         }
     }
 
+    /// True if the user bound this single key themselves, in any mode. The
+    /// shell then leaves it out of native menus so the binding still wins.
+    pub fn has_binding(&self, event: &KeyEvent) -> bool {
+        self.keymap.iter().any(|mapping| mapping.keys.as_slice() == [*event])
+    }
+
     /// The mode a key binding must be declared for to apply now, or `None`
     /// where bindings do not apply (menus, prompts, the file browser).
     fn map_mode(&self) -> Option<MapMode> {

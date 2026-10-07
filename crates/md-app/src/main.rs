@@ -5,6 +5,8 @@ mod app;
 mod ctl;
 mod gpu;
 mod images;
+#[cfg(target_os = "macos")]
+mod macos;
 mod platform;
 mod session;
 mod text;

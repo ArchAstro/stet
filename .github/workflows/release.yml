@@ -110,10 +110,78 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  macos-app:
+    name: Build md.app
+    needs: [verify, build]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+      - name: Build a universal md.app
+        run: |
+          set -euo pipefail
+          mkdir arm64 x64 build dist
+          tar -xzf artifacts/md-darwin-arm64/md-darwin-arm64.tar.gz -C arm64
+          tar -xzf artifacts/md-darwin-x64/md-darwin-x64.tar.gz -C x64
+          lipo -create -output md-universal arm64/md x64/md
+          scripts/bundle-macos.sh md-universal build "${{ needs.verify.outputs.version }}"
+          lipo -archs build/md.app/Contents/MacOS/md
+          test "$(build/md.app/Contents/MacOS/md --version)" = "md ${{ needs.verify.outputs.version }}"
+      # With a Developer ID certificate configured the app is signed and
+      # notarized, so it opens without a Gatekeeper warning. Without one it
+      # stays ad-hoc signed.
+      - name: Sign and notarize
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MACOS_CERTIFICATE}" ]]; then
+            echo "No Developer ID certificate is configured; md.app stays ad-hoc signed."
+            exit 0
+          fi
+          keychain="${RUNNER_TEMP}/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          printf '%s' "${MACOS_CERTIFICATE}" | base64 --decode > "${RUNNER_TEMP}/certificate.p12"
+          security create-keychain -p "${keychain_password}" "${keychain}"
+          security set-keychain-settings -lut 3600 "${keychain}"
+          security unlock-keychain -p "${keychain_password}" "${keychain}"
+          security import "${RUNNER_TEMP}/certificate.p12" -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -A -t cert -f pkcs12 -k "${keychain}"
+          security set-key-partition-list -S apple-tool:,apple: -k "${keychain_password}" "${keychain}" > /dev/null
+          security list-keychains -d user -s "${keychain}"
+          codesign --force --options runtime --timestamp --sign "${MACOS_SIGNING_IDENTITY}" build/md.app
+          codesign --verify --strict build/md.app
+          ditto -c -k --keepParent build/md.app "${RUNNER_TEMP}/notarize.zip"
+          xcrun notarytool submit "${RUNNER_TEMP}/notarize.zip" \
+            --apple-id "${APPLE_ID}" --team-id "${APPLE_TEAM_ID}" --password "${APPLE_APP_PASSWORD}" --wait
+          xcrun stapler staple build/md.app
+          security delete-keychain "${keychain}"
+          rm -f "${RUNNER_TEMP}/certificate.p12"
+      - name: Package
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent build/md.app dist/md-macos-app.zip
+          mkdir dmg
+          cp -R build/md.app dmg/md.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname md -srcfolder dmg -ov -format UDZO dist/md-macos.dmg
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: md-macos-app
+          path: dist/
+          if-no-files-found: error
+
   release:
     name: Publish release
     if: github.ref_type == 'tag'
-    needs: [verify, build]
+    needs: [verify, build, macos-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -126,7 +194,7 @@ jobs:
       - name: Create checksums
         run: |
           mkdir release-assets
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp '{}' release-assets/ \;
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.dmg' \) -exec cp '{}' release-assets/ \;
           cd release-assets
           sha256sum ./* | sed 's#  \./#  #' > ../SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
