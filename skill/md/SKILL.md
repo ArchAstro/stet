@@ -1,6 +1,6 @@
 ---
 name: md
-description: Work with the user inside their md markdown editor - see what they have open, read the live (unsaved) text, propose edits as suggestions they accept or reject, insert text or images at their cursor, and take requests they send from the editor. Use when the user asks for help writing or editing a document they have open in md, says "my editor/draft/doc", or asks you to listen for requests from md.
+description: Work with the user inside their md markdown editor - see what they have open, read the live (unsaved) text, propose edits as suggestions they accept or reject, insert text or images at their cursor, and take requests they send from the editor. Also covers installing md and this skill. Use when the user asks for help writing or editing a document they have open in md, says "my editor/draft/doc", asks you to listen for requests from md, or asks to install or set up md.
 ---
 
 # Working in the user's md editor
@@ -8,6 +8,42 @@ description: Work with the user inside their md markdown editor - see what they 
 `md ctl` talks to the running md window. Every reply is JSON with `"ok"`.
 The user is usually typing while you work: nothing you do moves their cursor,
 steals focus, or saves the file.
+
+## 0. Is md installed?
+
+```sh
+command -v md && md ctl sessions
+```
+
+- `md` found, and the reply lists sessions: go to step 1.
+- `md` found, but the reply says md is not running: ask the user to open
+  their document (`md notes.md`). Do not launch it for them unless asked.
+- `md` not found: offer to install it, and install only when they agree.
+
+### Installing md and this skill
+
+md builds from source and needs Rust (`cargo`). If `cargo` is missing, point
+the user to https://rustup.rs rather than installing a toolchain yourself.
+
+```sh
+gh repo clone ArchAstro/md ~/src/md      # or: git clone https://github.com/ArchAstro/md ~/src/md
+sh ~/src/md/scripts/install.sh
+```
+
+The script builds the `md` binary into `~/.cargo/bin` and links this skill
+into `~/.claude/skills/md` (other agents: copy `skill/md/SKILL.md` to
+wherever your skills live). The first build takes a few minutes. Without a
+checkout, the binary alone installs with:
+
+```sh
+CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --git https://github.com/ArchAstro/md --locked md-app
+```
+
+Check it worked with `md --help`, then have the user open a document. To
+update later: `git -C ~/src/md pull && sh ~/src/md/scripts/install.sh`. To
+remove: `cargo uninstall md-app && rm ~/.claude/skills/md`.
+
+`md ctl` (everything below) works on macOS and Linux.
 
 ## 1. See what is open
 

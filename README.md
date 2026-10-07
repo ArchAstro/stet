@@ -4,8 +4,11 @@ A minimal markdown writer in the spirit of iA Writer. Rust core, GPU-rendered,
 vim keys, linked notes, review suggestions, ArchDev themes.
 
 ```sh
-cargo run --release -- examples/tour.md
+sh scripts/install.sh        # builds md into ~/.cargo/bin, links the Claude Code skill
+md examples/tour.md
 ```
+
+Or run it from the checkout with `cargo run --release -- examples/tour.md`.
 
 Started from a terminal, `md file.md` opens its window as a separate process
 and hands the prompt straight back. `md --wait file.md` (or `-f`) stays attached
@@ -254,6 +257,18 @@ Measured with `--bench` on an M-series Mac (release build):
 7. **Frames are presented as soon as they are drawn** rather than queued behind the display refresh.
 
 `MD_TRACE_PARSE=1` reports each edit that needed a full analysis, and why.
+
+## Releases
+
+1. CI (`.github/workflows/ci.yml`) runs tests on Linux, macOS and Windows, formatting, clippy, docs, the minimum supported Rust (1.90), a dependency audit, and a soak of the incremental analysis.
+2. Pushing a tag `vX.Y.Z` that matches the version in `Cargo.toml` runs `.github/workflows/release.yml`: it re-verifies, builds `md-linux-x64`, `md-darwin-arm64`, `md-darwin-x64` and `md-windows-x64`, and publishes them with `SHA256SUMS` and generated notes. Each archive holds the binary, the skill, the license and this file.
+3. Running that workflow by hand (Actions → Release → Run workflow) is a dry run: every target is built and packaged, nothing is published.
+4. Once the repository is public, a release also attests build provenance and updates the Homebrew formula in `ArchAstro/homebrew-tools` (needs the `ARCHASTRO_RELEASE_GITHUB_TOKEN` secret).
+
+```console
+make release-check
+git tag v0.1.0 && git push origin v0.1.0
+```
 
 ## Checks
 
