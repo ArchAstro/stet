@@ -34,6 +34,7 @@ targets (one of):
                                  replace chars START..END as they were at revision REV; typing since is followed
 
   --doc D        tab number, file name or path (default: the document in front)
+  --margin       read or write the document's margin (its scratch pane for research) instead of its text
   --author NAME  whose suggestion it is (default: Claude)
   A value of @FILE is read from FILE, and - from stdin.";
 
@@ -70,6 +71,8 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
         Some(Value::String(spec)) => editor.find_session(spec),
         Some(_) => Err("`doc` is a tab number, file name or path".to_string()),
     };
+    // `margin` addresses the document's scratch pane instead of its text.
+    let margin = request.get("margin").and_then(Value::as_bool).unwrap_or(false);
     match text("cmd").unwrap_or("") {
         "open" => {
             let files = request
@@ -93,29 +96,33 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
                 Ok(index) => index,
                 Err(err) => return (fail(err), false),
             };
-            let snapshot = editor.snapshot(index);
+            let Some(snapshot) = editor.snapshot(index, margin) else {
+                return (fail("that document has no margin until it is saved"), false);
+            };
             let lines: Vec<&str> = snapshot.text.split('\n').collect();
             let from = number("from_line").unwrap_or(1).clamp(1, lines.len());
             let to = number("to_line").unwrap_or(lines.len()).clamp(from, lines.len());
             let offset: usize = lines[..from - 1].iter().map(|line| line.chars().count() + 1).sum();
             let cursor_line = snapshot.session.cursor.0 + 1;
-            let suggestions = editor.with_session(index, |ed| {
-                ed.refresh();
-                ed.doc()
-                    .suggestions
-                    .iter()
-                    .map(|suggestion| {
-                        json!({
-                            "id": suggestion.id,
-                            "author": suggestion.author,
-                            "kind": format!("{:?}", suggestion.kind).to_lowercase(),
-                            "old": suggestion.old_text,
-                            "new": suggestion.new_text,
-                            "line": ed.buf.line_of(suggestion.span.start) + 1,
+            let suggestions = editor
+                .with_pane(index, margin, |ed| {
+                    ed.refresh();
+                    ed.doc()
+                        .suggestions
+                        .iter()
+                        .map(|suggestion| {
+                            json!({
+                                "id": suggestion.id,
+                                "author": suggestion.author,
+                                "kind": format!("{:?}", suggestion.kind).to_lowercase(),
+                                "old": suggestion.old_text,
+                                "new": suggestion.new_text,
+                                "line": ed.buf.line_of(suggestion.span.start) + 1,
+                            })
                         })
-                    })
-                    .collect::<Vec<Value>>()
-            });
+                        .collect::<Vec<Value>>()
+                })
+                .unwrap_or_default();
             let reply = json!({
                 "ok": true,
                 "session": session_json(&snapshot.session),
@@ -174,7 +181,7 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
                 suggest: text("mode") != Some("direct"),
                 author: text("author").unwrap_or("Claude").to_string(),
             };
-            match editor.remote_edit(index, &edit) {
+            match editor.remote_edit(index, margin, &edit) {
                 Ok(applied) => (
                     json!({ "ok": true, "revision": applied.revision, "line": applied.line + 1, "suggested": edit.suggest }),
                     false,
@@ -201,7 +208,10 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
 /// What an assistant receives when the writer sends it a message: the
 /// request, and where they were when they wrote it.
 pub fn message(editor: &mut Editor, text: &str, selection: Option<(std::ops::Range<usize>, String)>) -> Value {
-    let snapshot = editor.snapshot(editor.active);
+    let in_margin = editor.in_margin();
+    let snapshot = editor
+        .snapshot(editor.active, in_margin)
+        .expect("the pane with the keyboard exists");
     let line = snapshot.session.cursor.0;
     json!({
         "ok": true,
@@ -210,6 +220,7 @@ pub fn message(editor: &mut Editor, text: &str, selection: Option<(std::ops::Ran
         "revision": snapshot.session.revision,
         "cursor": { "line": line + 1, "column": snapshot.session.cursor.1 + 1, "offset": snapshot.cursor },
         "line_text": snapshot.text.split('\n').nth(line).unwrap_or(""),
+        "in_margin": in_margin,
         "selection": selection.map(|(range, text)| json!({ "start": range.start, "end": range.end, "text": text })),
     })
 }
@@ -237,6 +248,9 @@ fn build(args: &[String]) -> Result<Value, String> {
     while let Some(arg) = rest.next() {
         let mut next = |name: &str| rest.next().ok_or(format!("{name} needs a value"));
         match arg.as_str() {
+            "--margin" => {
+                request.insert("margin".into(), json!(true));
+            }
             "--doc" => {
                 let doc = next("--doc")?;
                 request.insert("doc".into(), doc.parse::<u64>().map_or(json!(doc), |tab| json!(tab)));

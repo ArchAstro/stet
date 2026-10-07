@@ -14,16 +14,16 @@ use std::time::SystemTime;
 const RECOVERY_HEADER: &str = "stet-recovery\t";
 
 pub(super) struct Stash {
-    buf: Buffer,
-    cursor: usize,
-    path: Option<PathBuf>,
-    doc: Doc,
-    doc_revision: Option<u64>,
-    disk_mtime: Option<SystemTime>,
-    scroll_line: usize,
-    scroll_px: f32,
-    doc_id: u64,
-    snapshot: Option<u64>,
+    pub(super) buf: Buffer,
+    pub(super) cursor: usize,
+    pub(super) path: Option<PathBuf>,
+    pub(super) doc: Doc,
+    pub(super) doc_revision: Option<u64>,
+    pub(super) disk_mtime: Option<SystemTime>,
+    pub(super) scroll_line: usize,
+    pub(super) scroll_px: f32,
+    pub(super) doc_id: u64,
+    pub(super) snapshot: Option<u64>,
 }
 
 pub struct TabInfo {
@@ -132,6 +132,7 @@ impl Editor {
     }
 
     fn stash(&mut self) -> Stash {
+        self.focus_document();
         self.close_group();
         self.write_recovery();
         self.vim.clear_pending();
@@ -190,7 +191,7 @@ impl Editor {
     }
 
     /// Exchanges the active document's state with a stashed one.
-    fn trade(&mut self, other: &mut Stash) {
+    pub(super) fn trade(&mut self, other: &mut Stash) {
         use std::mem::swap;
         swap(&mut self.buf, &mut other.buf);
         swap(&mut self.cursor, &mut other.cursor);
@@ -236,8 +237,14 @@ impl Editor {
                     active: false,
                 },
                 None => TabInfo {
-                    title: self.file_name(),
-                    dirty: self.buf.is_dirty(),
+                    title: match &self.margin_parent {
+                        Some(parent) => title_of(parent.path.as_deref()),
+                        None => self.file_name(),
+                    },
+                    dirty: match &self.margin_parent {
+                        Some(parent) => parent.buf.is_dirty(),
+                        None => self.buf.is_dirty(),
+                    },
                     active: index == self.active,
                 },
             })
@@ -289,6 +296,8 @@ impl Editor {
     }
 
     fn open_with(&mut self, path: &Path, new_tab: bool) -> Result<(), String> {
+        // Files open in the document pane.
+        self.focus_document();
         let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         if self.path.as_deref() == Some(&path) {
             return Ok(());
@@ -312,6 +321,14 @@ impl Editor {
     /// Closes the active tab; the last one quits. False if unsaved changes
     /// block it.
     pub fn close_tab(&mut self, force: bool) -> bool {
+        // Closing from the margin closes the margin pane, not the document.
+        if self.margin_active {
+            self.toggle_margin();
+            return true;
+        }
+        if let Some(owner) = &self.path {
+            self.margins.remove(owner);
+        }
         if self.buf.is_dirty() && !force {
             self.error("No write since last change (add ! to override)");
             return false;
@@ -510,6 +527,7 @@ impl Editor {
 
     /// An orderly exit: whatever is still unsaved was discarded on purpose.
     pub fn shutdown(&mut self) {
+        self.focus_document();
         let mut files = Vec::new();
         for index in 0..self.tabs.len() {
             self.switch_tab(index);

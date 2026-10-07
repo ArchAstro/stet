@@ -56,6 +56,8 @@ pub enum Target {
     Palette,
     ContextRow(usize),
     ContextMenu,
+    /// A margin note shown beside its pin.
+    Note(usize),
     /// The dimmed area around the menu.
     Scrim,
     MenuHint,
@@ -68,8 +70,11 @@ struct Metrics {
     advance: f32,
     column: f32,
     left: f32,
-    /// Left edge of the editor area (the file browser's width).
+    /// Left and right edges of this pane's text area.
     origin: f32,
+    right: f32,
+    /// Left edge of the editor area as a whole (the file browser's width).
+    chrome: f32,
     /// Top of the text area (below the tab strip).
     top: f32,
     top_pad: f32,
@@ -100,6 +105,10 @@ pub struct View {
     palette_scroll: usize,
     /// Bottom-left of the text cursor in the last frame, if it was on screen.
     cursor_point: Option<(f32, f32)>,
+    /// Margin sections and where they are pinned, for this frame.
+    pins: Vec<stet_core::editor::Pin>,
+    /// Window y of each pin's anchor, for the pins on screen this frame.
+    pin_tops: Vec<(usize, f32)>,
 }
 
 impl View {
@@ -121,6 +130,8 @@ impl View {
             sidebar_selected: usize::MAX,
             palette_scroll: 0,
             cursor_point: None,
+            pins: Vec::new(),
+            pin_tops: Vec::new(),
         }
     }
 
@@ -145,6 +156,20 @@ impl View {
         } else {
             0.0
         }
+    }
+
+    /// Where the document pane ends and the margin begins, if it is open.
+    fn split(&self, ed: &Editor) -> Option<f32> {
+        let chrome = self.sidebar_width(ed);
+        ed.margin_visible()
+            .then(|| (chrome + (self.width - chrome) * 0.58).round())
+    }
+
+    /// True if a window x position is over the pane that does not have the
+    /// keyboard.
+    pub fn over_other_pane(&self, ed: &Editor, x: f32) -> bool {
+        self.split(ed)
+            .is_some_and(|split| (x >= split) != ed.in_margin() && x >= self.sidebar_width(ed))
     }
 
     fn metrics(&mut self, ed: &Editor) -> Metrics {
@@ -173,10 +198,17 @@ impl View {
                 advance
             }
         };
-        let origin = self.sidebar_width(ed);
-        let available = self.width - origin;
-        // Leave room for hanging heading markers.
-        let margin = advance * 7.0;
+        // With the margin open the editor area is two panes; these are the
+        // metrics of whichever one `ed` currently holds.
+        let chrome = self.sidebar_width(ed);
+        let (origin, right) = match self.split(ed) {
+            Some(split) if ed.in_margin() => (split, self.width),
+            Some(split) => (chrome, split),
+            None => (chrome, self.width),
+        };
+        let available = right - origin;
+        // Leave room for hanging heading markers; less in a narrow pane.
+        let margin = advance * if available < advance * 64.0 { 4.0 } else { 7.0 };
         let column = (ed.config.line_width as f32 * advance)
             .min(available - margin * 2.0)
             .max(advance * 12.0)
@@ -195,6 +227,8 @@ impl View {
             column,
             left: origin + ((available - column) / 2.0).round().max(advance),
             origin,
+            right,
+            chrome,
             top,
             top_pad: top + (line * 1.6).round(),
             bottom: (self.height - line * 1.5).round(),
@@ -209,7 +243,15 @@ impl View {
         let doc = ed.doc();
         let block = doc.block(line);
         let code = ed.code_spans(line);
+        // A pin line in the margin is bookkeeping, and reads as such.
+        let pin_line = [Span {
+            start: 0,
+            end: text.len() as u32,
+            style: stet_core::markdown::style::MUTED,
+            syntax: 0,
+        }];
         let spans: &[Span] = match &code {
+            _ if ed.in_margin() && text.starts_with("@ ") => &pin_line,
             Some((lines, at)) => &lines[*at],
             None => doc.spans(line),
         };
@@ -538,13 +580,7 @@ impl View {
         ed.refresh();
         self.frame += 1;
         self.targets.clear();
-        let m = self.metrics(ed);
-        self.focus = ed.config.focus.then(|| ed.focus_lines());
-        self.normalize(ed, &m);
-        ed.view_rows = ((m.bottom - m.top_pad) / m.line).max(1.0) as usize;
-
-        let c = ed.theme.colors;
-        let background = linear(c.background, 1.0);
+        let background = linear(ed.theme.colors.background, 1.0);
         let mut frame = Frame {
             clear: wgpu::Color {
                 r: background[0] as f64,
@@ -554,9 +590,205 @@ impl View {
             },
             ..Frame::default()
         };
-        let layer = &mut frame.base;
-        layer.image_clip = [m.origin, m.top, self.width - m.origin, m.bottom - m.top];
-        let clip = [m.origin, m.top, self.width, m.bottom];
+        self.cursor_point = None;
+        self.pin_tops.clear();
+        self.pins = if ed.margin_visible() { ed.pins() } else { Vec::new() };
+        // The document first: where its lines fall decides where pinned
+        // notes go.
+        let reveal = ed.margin_visible() && ed.take_reveal();
+        if ed.margin_visible() && ed.in_margin() {
+            let mut layer = std::mem::take(&mut frame.base);
+            ed.with_other_pane(|document| {
+                document.refresh();
+                if reveal {
+                    self.follow_cursor(document);
+                }
+                self.body(document, &mut layer, false);
+            });
+            frame.base = layer;
+            self.body(ed, &mut frame.base, true);
+        } else {
+            self.body(ed, &mut frame.base, true);
+            if ed.margin_visible() {
+                let mut layer = std::mem::take(&mut frame.base);
+                let beside = ed.config.pinned_notes && self.pins.iter().any(|pin| pin.pinned());
+                ed.with_other_pane(|margin| {
+                    margin.refresh();
+                    if beside {
+                        self.notes(margin, &mut layer);
+                    } else {
+                        if reveal {
+                            self.follow_cursor(margin);
+                        }
+                        self.body(margin, &mut layer, false);
+                    }
+                });
+                frame.base = layer;
+            }
+        }
+        let m = self.metrics(ed);
+        frame.base.image_clip = [m.chrome, m.top, self.width - m.chrome, m.bottom - m.top];
+
+        self.status(ed, &m, &mut frame.base);
+        self.tabs(ed, &m, &mut frame.base);
+        self.sidebar(ed, &m, &mut frame.base);
+        self.palette(ed, &m, &mut frame.over);
+        self.context_menu(ed, &m, &mut frame.over);
+        if self.layouts.len() > 3000 {
+            let keep = self.frame - 1;
+            self.layouts.retain(|_, layout| layout.last_used >= keep);
+        }
+        frame
+    }
+
+    /// The margin's own surface, with a quiet label.
+    fn margin_surface(&mut self, ed: &Editor, m: &Metrics, layer: &mut Layer, focused: bool) {
+        let c = ed.theme.colors;
+        let hairline = self.scale.max(1.0);
+        layer.back.push(Quad {
+            rect: [m.origin, m.top, m.right - m.origin, self.height - m.top],
+            color: linear(c.panel, 1.0),
+            radius: 0.0,
+        });
+        layer.back.push(Quad {
+            rect: [m.origin, m.top, hairline, self.height - m.top],
+            color: linear(c.rule, 0.7),
+            radius: 0.0,
+        });
+        let rgb = if focused { c.cursor } else { c.status };
+        let label = self.label(ed, "MARGIN", rgb, m.ui * 0.78, Face::Ui, true);
+        let width = self.layouts[&label].rows[0].width;
+        let clip = [m.origin, m.top, m.right, m.bottom];
+        self.put(
+            layer,
+            label,
+            m.right - width - 14.0 * self.scale,
+            m.top + 16.0 * self.scale,
+            clip,
+            rgb,
+        );
+    }
+
+    /// The margin as marginalia: each pinned section drawn beside the text
+    /// it is pinned to, moving with the document. `ed` holds the margin.
+    fn notes(&mut self, ed: &mut Editor, layer: &mut Layer) {
+        let m = self.metrics(ed);
+        self.focus = None;
+        self.margin_surface(ed, &m, layer, false);
+        let c = ed.theme.colors;
+        let clip = [m.origin, m.top, m.right, m.bottom];
+        let gap = (m.line * 0.7).round();
+        let bar = (2.0 * self.scale).round().max(1.0);
+        let mut tops = self.pin_tops.clone();
+        tops.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let mut floor = m.top + gap;
+        for (index, anchor_y) in tops {
+            let pin = self.pins[index].clone();
+            let top = anchor_y.max(floor);
+            if top >= m.bottom {
+                break;
+            }
+            // The section without its `@` line, and without trailing blanks.
+            let mut lines: Vec<usize> = pin
+                .lines
+                .clone()
+                .filter(|&line| line < ed.buf.line_count() && !ed.buf.line_text(line).starts_with("@ "))
+                .collect();
+            while lines.last().is_some_and(|&line| ed.buf.line_is_blank(line)) {
+                lines.pop();
+            }
+            let more = lines.len() > 12;
+            lines.truncate(12);
+            let mut y = top;
+            for line in lines {
+                if y >= m.bottom {
+                    break;
+                }
+                let key = self.line(ed, line, &m);
+                let layout = &self.layouts[&key];
+                // Clear of the stroke down the side.
+                let left = (m.left - layout.hang).max(m.origin + 24.0 * self.scale);
+                for decoration in &layout.decorations {
+                    let [x, dy, width, height] = decoration.rect;
+                    let quad = Quad {
+                        rect: [left + x, y + dy, width, height],
+                        color: linear(decoration.color, 1.0),
+                        radius: decoration.radius,
+                    };
+                    match decoration.layer {
+                        Depth::Back => layer.back.push(quad),
+                        Depth::Front => layer.front.push(quad),
+                    }
+                }
+                layer.texts.push(TextItem {
+                    key,
+                    left,
+                    top: y,
+                    clip,
+                    color: color(c.text),
+                });
+                y += layout.height;
+            }
+            if more {
+                let key = self.label(ed, "…", c.status, m.font, Face::Prose, false);
+                self.put(layer, key, m.left, y + m.line / 2.0, clip, c.status);
+                y += m.line;
+            }
+            let height = (y - top).min(m.bottom - top);
+            // The proofreader's stroke down the side of the note.
+            layer.back.push(Quad {
+                rect: [m.origin + (10.0 * self.scale).round(), top, bar, height],
+                color: linear(c.cursor, 0.85),
+                radius: bar / 2.0,
+            });
+            self.targets
+                .push(([m.origin, top, m.right - m.origin, height], Target::Note(index)));
+            floor = y + gap;
+        }
+        // What is not beside anything: say so, quietly.
+        let loose = self.pins.iter().filter(|pin| !pin.pinned()).count();
+        let unseen = self
+            .pins
+            .iter()
+            .filter(|pin| pin.pinned())
+            .count()
+            .saturating_sub(self.pin_tops.len());
+        let mut parts = Vec::new();
+        if unseen > 0 {
+            parts.push(format!("{unseen} pinned elsewhere"));
+        }
+        if loose > 0 {
+            parts.push(format!("{loose} not pinned"));
+        }
+        if !parts.is_empty() {
+            let text = format!("{}  ·  {} opens the margin", parts.join("  ·  "), ed.chord(true, "O"));
+            let key = self.label(ed, &text, c.status, m.ui * 0.82, Face::Ui, false);
+            let clip = [m.origin, m.top, m.right, self.height];
+            self.put(
+                layer,
+                key,
+                m.origin + 22.0 * self.scale,
+                m.bottom - m.line * 0.6,
+                clip,
+                c.status,
+            );
+        }
+    }
+
+    /// Draws the text of the buffer `ed` holds into its pane. `focused` is
+    /// the pane with the keyboard, which shows the cursor.
+    fn body(&mut self, ed: &mut Editor, layer: &mut Layer, focused: bool) {
+        let m = self.metrics(ed);
+        self.focus = ed.config.focus.then(|| ed.focus_lines());
+        self.normalize(ed, &m);
+        if focused {
+            ed.view_rows = ((m.bottom - m.top_pad) / m.line).max(1.0) as usize;
+        }
+        let c = ed.theme.colors;
+        if ed.in_margin() {
+            self.margin_surface(ed, &m, layer, focused);
+        }
+        let clip = [m.origin, m.top, m.right, m.bottom];
         // Quads stay inside the text area.
         let clipped = |rect: [f32; 4]| {
             let top = rect[1].max(m.top);
@@ -566,9 +798,8 @@ impl View {
         let selections = ed.selection_ranges();
         let cursor_line = ed.buf.line_of(ed.cursor);
         let bar_width = (2.0 * self.scale).round().max(1.0);
-        let editing = ed.cmdline.is_none() && ed.palette.is_none() && !ed.sidebar.focused;
+        let editing = focused && ed.cmdline.is_none() && ed.palette.is_none() && !ed.sidebar.focused;
 
-        self.cursor_point = None;
         let mut y = m.top_pad - ed.scroll_px;
         let mut line = ed.scroll_line;
         while y < m.bottom && line < ed.buf.line_count() {
@@ -638,7 +869,38 @@ impl View {
                     });
                 }
             }
-            if line == cursor_line {
+            if !ed.in_margin() {
+                // Text a margin note is pinned to carries the stet mark: a
+                // row of dots beneath it.
+                let dot = (m.font * 0.11).round().max(2.0);
+                for (index, pin) in self.pins.iter().enumerate() {
+                    let Some(at) = pin
+                        .at
+                        .clone()
+                        .filter(|at| at.start <= line_end && line_start < at.end.max(at.start + 1))
+                    else {
+                        continue;
+                    };
+                    let chars = at.start.max(line_start) - line_start..at.end.min(line_end) - line_start;
+                    for (row, x0, x1) in layout.ranges(bytes(chars)) {
+                        let row = &layout.rows[row];
+                        if at.start >= line_start && !self.pin_tops.iter().any(|(seen, _)| *seen == index) {
+                            self.pin_tops.push((index, y + row.top));
+                        }
+                        let base = y + row.baseline + m.font * 0.22;
+                        let mut x = left + x0;
+                        while x + dot <= left + x1 {
+                            layer.front.push(Quad {
+                                rect: clipped([x, base, dot, dot]),
+                                color: linear(c.cursor, 1.0),
+                                radius: dot / 2.0,
+                            });
+                            x += dot * 2.4;
+                        }
+                    }
+                }
+            }
+            if line == cursor_line && focused {
                 let byte = layout.byte_of_col(ed.cursor - line_start);
                 let row = layout.row_of_byte(byte);
                 self.cursor_point = Some((left + layout.x_of_byte(row, byte), y + layout.rows[row].top + m.line));
@@ -680,17 +942,6 @@ impl View {
             }
             line += 1;
         }
-
-        self.status(ed, &m, &mut frame.base);
-        self.tabs(ed, &m, &mut frame.base);
-        self.sidebar(ed, &m, &mut frame.base);
-        self.palette(ed, &m, &mut frame.over);
-        self.context_menu(ed, &m, &mut frame.over);
-        if self.layouts.len() > 3000 {
-            let keep = self.frame - 1;
-            self.layouts.retain(|_, layout| layout.last_used >= keep);
-        }
-        frame
     }
 
     fn status(&mut self, ed: &Editor, m: &Metrics, layer: &mut Layer) {
@@ -698,7 +949,7 @@ impl View {
         let pad = (m.advance * 2.0).round();
         let size = m.font * 0.78;
         let middle = (m.bottom + self.height) / 2.0;
-        let clip = [m.origin, m.bottom, self.width, self.height];
+        let clip = [m.chrome, m.bottom, self.width, self.height];
 
         let (left_text, left_color) = if let Some(cmdline) = &ed.cmdline {
             let prefix = match cmdline.kind {
@@ -742,13 +993,13 @@ impl View {
         let mut left_width = 0.0;
         if !left_text.is_empty() || ed.cmdline.is_some() {
             let key = self.label(ed, &left_text, left_color, size, Face::Mono, false);
-            left_width = self.put(layer, key, m.origin + pad, middle, clip, left_color);
+            left_width = self.put(layer, key, m.chrome + pad, middle, clip, left_color);
             if ed.cmdline.is_some() {
                 let height = self.layouts[&key].height;
                 let bar = (2.0 * self.scale).round().max(1.0);
                 layer.front.push(Quad {
                     rect: [
-                        m.origin + pad + left_width + bar,
+                        m.chrome + pad + left_width + bar,
                         (middle - height / 2.0).round(),
                         bar,
                         height,
@@ -785,7 +1036,7 @@ impl View {
         let key = self.label(ed, right_text.trim_start(), c.status, size, Face::Mono, false);
         let width = self.layouts[&key].rows[0].width;
         // Yield to a long message rather than overlap it.
-        if m.origin + pad + left_width + pad < self.width - pad - width {
+        if m.chrome + pad + left_width + pad < self.width - pad - width {
             self.put(layer, key, self.width - pad - width, middle, clip, c.status);
             let hint_width =
                 hint.chars().count() as f32 * width / right_text.trim_start().chars().count().max(1) as f32;
@@ -829,13 +1080,13 @@ impl View {
             .collect();
         let total: f32 = tabs.iter().map(|(_, width, _)| width + pad * 2.0 + gap).sum::<f32>() - gap;
         // Keep clear of the window buttons when nothing else is on the left.
-        let floor = m.origin
-            + if m.origin == 0.0 && self.titlebar > 0.0 {
+        let floor = m.chrome
+            + if m.chrome == 0.0 && self.titlebar > 0.0 {
                 84.0 * self.scale
             } else {
                 pad
             };
-        let mut x = (m.origin + (self.width - m.origin - total) / 2.0).max(floor).round();
+        let mut x = (m.chrome + (self.width - m.chrome - total) / 2.0).max(floor).round();
         for (index, (key, width, active)) in tabs.into_iter().enumerate() {
             let rect = [x, (middle - pill / 2.0).round(), width + pad * 2.0, pill];
             if active {
@@ -865,7 +1116,7 @@ impl View {
             return;
         }
         let c = ed.theme.colors;
-        let width = m.origin;
+        let width = m.chrome;
         layer.back.push(Quad {
             rect: [0.0, 0.0, width, self.height],
             color: linear(c.panel, 1.0),

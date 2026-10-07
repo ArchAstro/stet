@@ -159,6 +159,10 @@ const VIM: &[(&str, &str)] = &[
     ("Tabs", "]t  [t   :tabnew  :q"),
     ("Tasks and suggestions", "gt toggles a task   ]s [s   gsa gsr"),
     (
+        "Margin",
+        "Ctrl-w m opens it   Ctrl-w w switches pane   Ctrl-w y copies over   Ctrl-w d moves over   Ctrl-w a pins a note   Ctrl-w g jumps across",
+    ),
+    (
         "Menus and the assistant",
         "K or gm: actions here   ga: message the assistant",
     ),
@@ -198,6 +202,42 @@ impl Editor {
             command("Back", format!("{}  Ctrl-o", chord(false, "[")), "back"),
             command("Forward", format!("{}  Ctrl-i", chord(false, "]")), "forward"),
             command("Notes linking here…", chord(true, "L"), "backlinks"),
+            command(
+                "Show or hide the margin (research notes)",
+                format!("{}  Ctrl-w m", chord(true, "M")),
+                "margin",
+            ),
+            command(
+                "Switch between document and margin",
+                format!("{}  Ctrl-w w", chord(true, "O")),
+                "pane",
+            ),
+            command(
+                "Copy selection or paragraph to the other pane",
+                format!("{}  Ctrl-w y", chord(true, "↵")),
+                "send",
+            ),
+            command(
+                "Move selection or paragraph to the other pane",
+                "Ctrl-w d".to_string(),
+                "move",
+            ),
+            command("Pin a margin note to this text", "Ctrl-w a".to_string(), "pin"),
+            command(
+                "Jump between a note and what it is pinned to",
+                "Ctrl-w g".to_string(),
+                "note",
+            ),
+            command(
+                "Unpin the margin section under the cursor",
+                ":unpin".to_string(),
+                "unpin",
+            ),
+            command(
+                "Notes beside their pins, or the margin top to bottom",
+                ":pins".to_string(),
+                "pins",
+            ),
             command(
                 "Message the connected assistant…",
                 format!("{}  ga", chord(true, "A")),

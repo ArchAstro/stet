@@ -740,7 +740,12 @@ impl Running {
             Some(Target::SidebarRow(index)) => editor.sidebar_click(index, command),
             Some(Target::Sidebar) => editor.sidebar.focused = true,
             Some(Target::MenuHint) => editor.open_palette(PaletteKind::Help),
+            Some(Target::Note(index)) => editor.open_note(index),
             None => {
+                // A click in the other pane moves the keyboard there first.
+                if session.view.over_other_pane(editor, self.mouse.0) {
+                    editor.switch_pane();
+                }
                 let pos = session.view.hit(editor, self.mouse.0, self.mouse.1);
                 if command && clicks == 1 && editor.follow_link_at(pos) {
                     // Followed; nothing to select.
@@ -765,6 +770,9 @@ impl Running {
             Some(Target::SidebarRow(index)) => editor.sidebar_menu(index, x, y),
             Some(Target::Tab(index)) => editor.tab_menu(index, x, y),
             None if editor.palette.is_none() => {
+                if session.view.over_other_pane(editor, x) {
+                    editor.switch_pane();
+                }
                 let pos = session.view.hit(editor, x, y);
                 editor.context_menu_at(pos, x, y);
             }
@@ -801,6 +809,9 @@ impl Running {
                 &mut session.editor,
                 if rows == 0 { pixels.signum() as isize } else { rows },
             );
+        } else if session.view.over_other_pane(&session.editor, self.mouse.0) {
+            let view = &mut session.view;
+            session.editor.with_other_pane(|other| view.scroll_by(other, pixels));
         } else {
             session.view.scroll_by(&mut session.editor, pixels);
         }
@@ -812,7 +823,17 @@ impl Running {
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()));
-        let effects = if is_image {
+        let editor = &mut self.session.editor;
+        let on_margin =
+            editor.margin_visible() && (self.session.view.over_other_pane(editor, self.mouse.0) != editor.in_margin());
+        let note = path.extension().is_some_and(|ext| ext == "md" || ext == "markdown");
+        let effects = if on_margin && !note {
+            // Dropped on the margin: the file is kept with the research, not in the document.
+            if let Err(err) = editor.attach_to_margin(path) {
+                editor.message = error(err);
+            }
+            self.session.settle()
+        } else if is_image {
             // Prefer a path relative to the document, so the pair stays portable.
             let base = self.session.editor.path.as_deref().and_then(Path::parent);
             let shown = base.and_then(|base| path.strip_prefix(base).ok()).unwrap_or(path);
@@ -966,7 +987,10 @@ impl Running {
                 self.session.settle();
                 self.after_input();
             }
-            WindowEvent::Focused(false) => self.session.editor.write_recovery(),
+            WindowEvent::Focused(false) => {
+                self.session.editor.autosave_margin();
+                self.session.editor.write_recovery();
+            }
             _ => {}
         }
     }
@@ -1043,6 +1067,7 @@ impl ApplicationHandler<Wake> for App {
     fn new_events(&mut self, _: &ActiveEventLoop, cause: StartCause) {
         if let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &mut self.running) {
             running.recovery_due = None;
+            running.session.editor.autosave_margin();
             running.session.editor.write_recovery();
         }
     }

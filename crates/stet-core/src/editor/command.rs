@@ -162,6 +162,30 @@ impl Editor {
                 }
                 self.agent_send(arg);
             }
+            "margin" | "scratch" => self.toggle_margin(),
+            "pane" | "other" => self.switch_pane(),
+            "send" | "copyover" => self.send_to_other_pane(false),
+            "move" | "moveover" => self.send_to_other_pane(true),
+            "pin" | "annotate" => self.pin_here(),
+            "unpin" => self.unpin(),
+            "note" | "gopin" => self.follow_pin(),
+            "pins" => {
+                self.config.pinned_notes = !self.config.pinned_notes;
+                self.info(if self.config.pinned_notes {
+                    "notes shown beside their pins"
+                } else {
+                    "margin shown top to bottom"
+                });
+            }
+            "attach" => {
+                if arg.is_empty() {
+                    return self.error("attach which file?");
+                }
+                match self.attach_to_margin(Path::new(arg)) {
+                    Ok(()) => self.info("attached to the margin"),
+                    Err(err) => self.error(err),
+                }
+            }
             "actions" | "context" => self.open_context_menu(super::MenuAt::Cursor),
             "nextsuggestion" | "prevsuggestion" => {
                 self.refresh();

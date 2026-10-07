@@ -4,9 +4,11 @@
 
 mod command;
 mod links;
+mod margin;
 mod menu;
 mod motion;
 mod palette;
+mod pins;
 mod remote;
 mod sidebar;
 mod suggest;
@@ -16,10 +18,12 @@ mod vim;
 #[cfg(test)]
 mod tests;
 
-pub use links::{Backlink, Link, link_in};
+pub use links::{Backlink, Link, link_in, rewrite_destinations};
+pub use margin::margin_path;
 pub use menu::{ContextMenu, MenuAt, MenuItem};
 pub use motion::Matcher;
 pub use palette::{Act, Item, Palette, PaletteKind};
+pub use pins::Pin;
 pub use remote::{Applied, RemoteEdit, Session, Snapshot, Target};
 pub use sidebar::{Entry, EntryKind, Sidebar};
 pub use tabs::TabInfo;
@@ -210,6 +214,17 @@ pub struct Editor {
     pub scroll_px: f32,
     /// Where crash-recovery snapshots are kept; `None` turns them off.
     pub recovery_dir: Option<PathBuf>,
+    /// The margin pane is shown beside the document.
+    pub margin_open: bool,
+    /// The buffer in the editor's own fields is a margin.
+    margin_active: bool,
+    /// The document, while its margin has the keyboard.
+    margin_parent: Option<tabs::Stash>,
+    /// Margins of open documents that are not in a pane right now, by the
+    /// document's path.
+    margins: HashMap<PathBuf, tabs::Stash>,
+    reveal_other: bool,
+    pin_state: pins::Pins,
     /// Open documents; the active slot is `None` (its state is in `self`).
     tabs: Vec<Option<tabs::Stash>>,
     pub active: usize,
@@ -272,6 +287,12 @@ impl Editor {
             scroll_line: 0,
             scroll_px: 0.0,
             recovery_dir: None,
+            margin_open: false,
+            margin_active: false,
+            margin_parent: None,
+            margins: HashMap::new(),
+            reveal_other: false,
+            pin_state: pins::Pins::default(),
             tabs: vec![None],
             active: 0,
             doc_id: 0,
@@ -410,6 +431,10 @@ impl Editor {
     }
 
     pub fn file_name(&self) -> String {
+        if let Some(parent) = &self.margin_parent {
+            let owner = parent.path.as_ref().and_then(|path| path.file_name());
+            return format!("margin of {}", owner.unwrap_or_default().to_string_lossy());
+        }
         self.path
             .as_ref()
             .and_then(|path| path.file_name())
@@ -434,6 +459,8 @@ impl Editor {
 
     /// Opens `path`. A path that does not exist yet starts an empty document.
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
+        // Files open in the document pane, never over a margin.
+        self.focus_document();
         let text = match std::fs::read(path) {
             Ok(bytes) => String::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8 text", path.display()))?,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -463,6 +490,9 @@ impl Editor {
         let mut contents = self.buf.to_file_string();
         if !contents.is_empty() && !contents.ends_with('\n') {
             contents.push('\n');
+        }
+        if let Some(folder) = path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
+            std::fs::create_dir_all(folder).map_err(|err| format!("{}: {err}", folder.display()))?;
         }
         // Write through symlinks instead of replacing them.
         let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
@@ -496,6 +526,9 @@ impl Editor {
 
     /// Picks up external changes; call when the window regains focus.
     pub fn check_disk(&mut self) {
+        if self.margin_active {
+            return;
+        }
         let Some(path) = self.path.clone() else { return };
         let on_disk = mtime(&path);
         if on_disk.is_none() || on_disk == self.disk_mtime {
@@ -1135,6 +1168,7 @@ impl Editor {
         }
         let c = match event.key {
             Key::Char(c) => c.to_ascii_lowercase(),
+            Key::Enter if mods.shift => return Some(Shortcut::Send),
             Key::Enter => return Some(Shortcut::FollowLink),
             _ => return None,
         };
@@ -1144,7 +1178,7 @@ impl Editor {
             let vim_owns = if self.mode == Mode::Insert {
                 "wuh["
             } else {
-                "rdufbvcnphjleyaxio["
+                "rdufbvcnphjleyaxiow["
             };
             if vim_owns.contains(c) {
                 return None;
@@ -1162,6 +1196,8 @@ impl Editor {
             ('l', true) => Shortcut::Palette(PaletteKind::Backlinks),
             ('.', _) => Shortcut::ContextMenu,
             ('a', true) => Shortcut::Agent,
+            ('m', true) => Shortcut::Margin,
+            ('o', true) => Shortcut::SwitchPane,
             ('\\' | '|', _) => Shortcut::Sidebar,
             ('[', false) => Shortcut::Jump(true),
             (']', false) => Shortcut::Jump(false),
@@ -1211,6 +1247,9 @@ impl Editor {
             Shortcut::Sidebar => self.toggle_sidebar(),
             Shortcut::ContextMenu => self.open_context_menu(MenuAt::Cursor),
             Shortcut::Agent => self.agent_prompt(),
+            Shortcut::Margin => self.toggle_margin(),
+            Shortcut::SwitchPane => self.switch_pane(),
+            Shortcut::Send => self.send_to_other_pane(false),
             Shortcut::Jump(back) => self.jump(back),
             Shortcut::Tab(delta) => self.cycle_tab(delta),
             Shortcut::TabAt(index) => self.switch_tab(index),
@@ -1403,6 +1442,9 @@ enum Shortcut {
     Sidebar,
     ContextMenu,
     Agent,
+    Margin,
+    SwitchPane,
+    Send,
     Jump(bool),
     Tab(isize),
     TabAt(usize),

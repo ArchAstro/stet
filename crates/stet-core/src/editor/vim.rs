@@ -213,6 +213,8 @@ enum Action {
     ToggleTask,
     ContextMenu,
     AgentPrompt,
+    /// `Ctrl-w` and a letter: the margin and its pane.
+    Pane(char),
     RecordMacro(char),
     PlayMacro(char),
     FollowLink,
@@ -306,6 +308,14 @@ fn parse_action(event: KeyEvent, r: &mut Reader, visual: bool) -> Result<Action,
         };
         return Ok(match c {
             'r' => Redo,
+            'w' => {
+                // `Ctrl-w w` and `Ctrl-w Ctrl-w` are the same.
+                let next = r.next()?;
+                match next.key {
+                    Key::Char(c) => Pane(c),
+                    _ => return Err(Parse::Invalid),
+                }
+            }
             'v' => Visual(Mode::VisualBlock),
             'o' => Jump { back: true },
             'i' => Jump { back: false },
@@ -814,6 +824,21 @@ impl Editor {
             Action::ToggleTask => self.toggle_task(),
             Action::ContextMenu => self.open_context_menu(super::MenuAt::Cursor),
             Action::AgentPrompt => self.agent_prompt(),
+            Action::Pane(key) => match key {
+                'w' | 'p' => self.switch_pane(),
+                'h' => self.focus_document(),
+                'l' => self.focus_margin(),
+                'm' => self.toggle_margin(),
+                'y' => self.send_to_other_pane(false),
+                'a' => self.pin_here(),
+                'g' => self.follow_pin(),
+                'd' | 'x' => self.send_to_other_pane(true),
+                'c' | 'q' => {
+                    self.focus_document();
+                    self.margin_open = false;
+                }
+                _ => {}
+            },
             Action::RecordMacro(register) => self.vim.macro_rec = Some((register, Vec::new())),
             Action::PlayMacro(register) => self.play_macro(register, n),
             Action::FollowLink => self.follow_link(),

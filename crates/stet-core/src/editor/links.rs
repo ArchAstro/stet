@@ -95,8 +95,28 @@ pub fn link_in(line: &str, at: usize) -> Option<Link> {
     ))
 }
 
+/// Rewrites relative link and image destinations in `text` for its move
+/// between a document and its margin, which lives one folder down in
+/// `.stet/`, so they keep pointing at the same files.
+pub fn rewrite_destinations(text: &str, to_margin: bool) -> String {
+    static DEST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\]\(\s*<?)([^)\s>]+)").unwrap());
+    DEST.replace_all(text, |found: &regex::Captures| {
+        let dest = &found[2];
+        let fixed = ["/", "#", "http://", "https://", "mailto:", "data:", "file:"];
+        let moved = if fixed.iter().any(|prefix| dest.starts_with(prefix)) {
+            dest.to_string()
+        } else if to_margin {
+            dest.strip_prefix(".stet/").map_or(format!("../{dest}"), str::to_string)
+        } else {
+            dest.strip_prefix("../").map_or(format!(".stet/{dest}"), str::to_string)
+        };
+        format!("{}{moved}", &found[1])
+    })
+    .into_owned()
+}
+
 /// GitHub-style heading anchor.
-fn slug(text: &str) -> String {
+pub(super) fn slug(text: &str) -> String {
     text.trim()
         .chars()
         .filter_map(|c| match c {

@@ -108,6 +108,50 @@ The menu bar has every command with its shortcut (a shortcut you rebind in
 documents. Build it from a checkout with `make app`, or `make install-app` to
 put it in `/Applications`.
 
+## The margin
+
+Every document has a margin: a scratch pane beside it for research notes,
+quotes, data and paragraphs you have cut but are not ready to lose. Nothing
+in it touches the document.
+
+1. **Open it** with Cmd/Ctrl-Shift-M, `Ctrl-w m` or `:margin`. The same key hides it again.
+2. **It is a normal markdown buffer** (same keys, links, images, code colours) that saves itself; there is no save step and no unsaved state.
+3. **Move between panes** with Cmd/Ctrl-Shift-O, `Ctrl-w w` (or `Ctrl-w h` / `Ctrl-w l`), or a click.
+4. **Copy across** with Cmd/Ctrl-Shift-Enter or `Ctrl-w y`: the selection, or the paragraph under the cursor, is copied to the other pane. `Ctrl-w d` or `:move` moves it instead. Text sent to the margin is appended; text sent to the document lands after the paragraph its cursor is in. Relative links and images are rewritten so they still resolve.
+5. **Drop files on it** (a CSV, a PDF, a screenshot): they are copied into the margin's own folder and linked from it, so data travels with the document without sitting in it.
+6. **Assistants use it too**: `stet ctl edit --margin …` puts research there instead of in your text.
+
+### Pinning notes to the text
+
+A margin section (a heading and what follows it) can be pinned to a place in
+the document. While you write, pinned notes are shown beside the text they
+belong to and move with it, and that text carries a row of dots beneath it
+(the stet mark).
+
+1. **Pin a new note:** select some words, or put the cursor on a heading or line, and press `Ctrl-w a` (`:pin`, or right-click → Pin a margin note here). A section is started in the margin and the cursor is in it.
+2. **Cross over:** `Ctrl-w g` (`:note`) jumps from anchored text to its note and from a note to its text. Clicking a note opens it.
+3. **Re-pin or unpin** from the margin: `Ctrl-w a` pins the section under the cursor to wherever the document's cursor is; `:unpin` removes the pin.
+4. **Editing the margin** shows it top to bottom as plain text; `:pins` keeps it that way while writing too.
+
+The pin is one line under the section's heading, in the margin file:
+
+```markdown
+## Sample size
+@ We asked forty people
+
+Too small for the subgroup claims.
+```
+
+`@ # Method` pins to a heading; anything else pins to the first place those
+words appear. The document itself is never marked. If you edit the anchored
+words while Stet is open, the pin follows them; if they are deleted, or
+changed in another program, the note becomes unpinned rather than lost.
+
+A document `notes.md` keeps its margin in `.stet/notes.md.margin.md` and its
+attached files in `.stet/notes.md.files/`, in the same folder. The folder is
+hidden from the file browser and from note links; commit it or ignore it as
+you prefer.
+
 ## Right-click and the actions menu
 
 Right-click anything, or press `K` (also `gm`, Cmd/Ctrl-`.`, Shift-F10 or the
@@ -160,6 +204,7 @@ included skill (`skill/stet/SKILL.md`) teaches Claude Code to use it.
 | `stet ctl read [--doc D] [--lines A-B]` | the live text, cursor, selection, suggestions |
 | `stet ctl suggest --old T --new T` | proposes a change as a suggestion you accept or reject |
 | `stet ctl edit ...` | changes the text directly (one undo step) |
+| `... --margin` | reads or writes the document's margin instead of its text |
 | `stet ctl wait --name Claude` | connects an assistant and waits for your message |
 | `stet ctl say --text T` | shows a line in the status bar |
 | `stet ctl command C`, `keys K`, `type T`, `click X Y` | operates the window like the keyboard and mouse would |

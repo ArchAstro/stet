@@ -108,6 +108,47 @@ revision REV (use the `revision` and offsets from a read or from a message).
 Whatever the user typed since is accounted for; if they changed that very
 text, you get an error instead of a wrong edit.
 
+## The margin: where research goes
+
+Every document has a **margin**: a scratch pane beside it for research
+notes, sources, quotes, data and drafts-in-progress. It is stored apart from
+the document (in `.stet/` next to it), saves itself, and is the right place
+for anything that supports the writing but is not the writing.
+
+```sh
+stet ctl read --margin                                  # what is in the margin now
+stet ctl edit --margin --at end --text $'\n## Sources\n- Smith 2019, p. 12: ...\n'
+stet ctl edit --margin --old "TODO check date" --new "Confirmed: March 2021"
+```
+
+- A margin section (a heading and what follows) can be **pinned** to a
+  place in the document, and is then shown beside it. Pin by putting a line
+  starting with `@ ` directly under the heading: `@ # Method` pins to that
+  heading, `@ outline first finish` pins to the first place those words
+  appear in the document (case and line breaks do not matter). Pin your
+  notes to the passage they are about whenever there is one:
+
+  ```sh
+  stet ctl edit --margin --at end --text $'\n## Sample size\n@ We asked forty people\n\nToo small for the subgroup claims.\n'
+  ```
+
+  `stet ctl read --margin` shows existing sections and their `@` lines.
+  Leave general material (reading lists, outlines) unpinned.
+- When asked to research, gather sources, pull quotes, outline options or
+  collect data for a document, write it to the margin with `--margin`, not
+  into the document. Use `edit` (direct): the margin is scratch space, so
+  there is nothing to approve.
+- Keep it organised: headings per topic, one finding per bullet, each with
+  where it came from. Append to what is there rather than rewriting it.
+- The user moves material from the margin into the document themselves.
+  Only put text into the document when they ask for that, and then as a
+  suggestion (`stet ctl suggest`, without `--margin`).
+- Files that belong with the research (a CSV, a chart, a PDF) go in the
+  folder `.stet/<document file name>.files/` beside the document, linked
+  from the margin as `[name](<document file name>.files/name.csv)`.
+- A message from the editor carries `"in_margin": true` when the user wrote
+  it from the margin pane.
+
 ## 4. Direct edits (only when asked)
 
 ```sh

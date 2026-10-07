@@ -128,6 +128,23 @@ impl Editor {
         } else {
             menu.add("Paste", "pv", Do::Paste);
         }
+        if self.path.is_some() || self.in_margin() {
+            menu.group();
+            if self.in_margin() {
+                menu.add("Go to where this is pinned", "g", Do::Command("note"));
+                menu.add("Pin this section to the document's cursor", "P", Do::Command("pin"));
+                menu.add("Unpin this section", "U", Do::Command("unpin"));
+            } else {
+                menu.add("Pin a margin note here", "P", Do::Command("pin"));
+                menu.add("Go to the note pinned here", "g", Do::Command("note"));
+            }
+        }
+        if self.margin_visible() {
+            menu.group();
+            let other = if self.in_margin() { "document" } else { "margin" };
+            menu.add(&format!("Copy to the {other}"), ">e", Do::Command("send"));
+            menu.add(&format!("Move to the {other}"), "M", Do::Command("move"));
+        }
         menu.group();
         if !self.doc.suggestions.is_empty() {
             if suggestion.is_none() {
@@ -148,6 +165,9 @@ impl Editor {
         menu.group();
         if self.path.is_some() {
             menu.add("Notes linking here…", "b", Do::Palette(PaletteKind::Backlinks));
+            if !self.margin_visible() {
+                menu.add("Open the margin", "o", Do::Command("margin"));
+            }
         }
         menu.add("All commands…", "m", Do::Palette(PaletteKind::Help));
         self.context_menu = Some(ContextMenu {

@@ -94,16 +94,13 @@ impl Editor {
         let active = self.active;
         (0..self.tab_count())
             .map(|index| {
-                let mut session = self.with_doc(index, |ed| ed.session(index));
+                let mut session = self
+                    .with_pane(index, false, |ed| ed.session(index))
+                    .expect("a tab has a document");
                 session.active = index == active;
                 session
             })
             .collect()
-    }
-
-    /// Runs `work` on document `index` without bringing it to the front.
-    pub fn with_session<R>(&mut self, index: usize, work: impl FnOnce(&mut Editor) -> R) -> R {
-        self.with_doc(index, work)
     }
 
     /// Finds a document by `active` (or nothing), tab number from 1, full
@@ -141,17 +138,19 @@ impl Editor {
         }
     }
 
-    /// The document as it is now, unsaved changes included.
-    pub fn snapshot(&mut self, index: usize) -> Snapshot {
+    /// The document as it is now, unsaved changes included; or its margin.
+    /// `None` only for the margin of a document that has never been saved.
+    pub fn snapshot(&mut self, index: usize, margin: bool) -> Option<Snapshot> {
         let active = self.active;
-        self.with_doc(index, |ed| {
+        let focused = margin == self.margin_active;
+        self.with_pane(index, margin, |ed| {
             let mut session = ed.session(index);
             session.active = index == active;
             Snapshot {
                 session,
                 text: ed.buf.text(),
                 cursor: ed.cursor,
-                selection: (index == active)
+                selection: (index == active && focused)
                     .then(|| ed.selection())
                     .flatten()
                     .map(|range| (range.clone(), ed.buf.slice(range))),
@@ -207,11 +206,21 @@ impl Editor {
         }
     }
 
-    /// Applies an edit from outside to document `index`.
-    pub fn remote_edit(&mut self, index: usize, edit: &RemoteEdit) -> Result<Applied, String> {
+    /// Applies an edit from outside to document `index`, or to its margin.
+    pub fn remote_edit(&mut self, index: usize, margin: bool, edit: &RemoteEdit) -> Result<Applied, String> {
         let visible = index == self.active;
-        let applied = self.with_doc(index, |ed| ed.apply_remote(edit))?;
-        let verb = if edit.suggest { "suggested an edit" } else { "edited" };
+        let applied = self
+            .with_pane(index, margin, |ed| ed.apply_remote(edit))
+            .ok_or("that document has no margin until it is saved")??;
+        if margin && visible {
+            self.margin_open = true;
+            self.reveal_other = true;
+        }
+        let verb = match (edit.suggest, margin) {
+            (_, true) => "added to the margin",
+            (true, false) => "suggested an edit",
+            (false, false) => "edited",
+        };
         let place = if visible {
             String::new()
         } else {

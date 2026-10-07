@@ -1284,12 +1284,12 @@ fn other_programs_edit_without_disturbing_the_writer() {
     // The writer is mid-word in insert mode; an edit elsewhere leaves them there.
     keys(&mut ed, "wwiX");
     assert_eq!(show(&ed), "alpha beta X|gamma\nsecond line\n");
-    let read = ed.snapshot(0);
+    let read = ed.snapshot(0, false).unwrap();
     assert_eq!(
         (read.text.as_str(), read.cursor),
         ("alpha beta Xgamma\nsecond line\n", 12)
     );
-    let applied = ed.remote_edit(0, &suggest(old("alpha"), "ALPHA")).unwrap();
+    let applied = ed.remote_edit(0, false, &suggest(old("alpha"), "ALPHA")).unwrap();
     assert_eq!(applied.line, 0);
     assert_eq!(ed.mode, Mode::Insert);
     keys(&mut ed, "Y");
@@ -1307,31 +1307,36 @@ fn other_programs_edit_without_disturbing_the_writer() {
     assert_eq!(ed.buf.text(), "alpha beta Xgamma\nsecond line\n");
 
     // A range read earlier follows what was typed since.
-    let read = ed.snapshot(0);
+    let read = ed.snapshot(0, false).unwrap();
     let second = read.text.find("second").unwrap();
     keys(&mut ed, "ggI>> <Esc>");
     let range = Target::Range {
         revision: read.session.revision,
         range: second..second + 6,
     };
-    ed.remote_edit(0, &direct(range.clone(), "2nd")).unwrap();
+    ed.remote_edit(0, false, &direct(range.clone(), "2nd")).unwrap();
     assert_eq!(ed.buf.text(), ">> alpha beta Xgamma\n2nd line\n");
     assert!(
-        ed.remote_edit(0, &direct(range, "again"))
+        ed.remote_edit(0, false, &direct(range, "again"))
             .unwrap_err()
             .contains("changed"),
         "the same range is now stale"
     );
 
     // Text targets must be unambiguous and present.
-    assert!(ed.remote_edit(0, &direct(old("a"), "b")).unwrap_err().contains("times"));
     assert!(
-        ed.remote_edit(0, &direct(old("nowhere"), "b"))
+        ed.remote_edit(0, false, &direct(old("a"), "b"))
+            .unwrap_err()
+            .contains("times")
+    );
+    assert!(
+        ed.remote_edit(0, false, &direct(old("nowhere"), "b"))
             .unwrap_err()
             .contains("not in the document")
     );
     ed.remote_edit(
         0,
+        false,
         &direct(
             Target::Text {
                 old: "a".into(),
@@ -1346,25 +1351,27 @@ fn other_programs_edit_without_disturbing_the_writer() {
     // A background tab is edited in place; the visible one does not flicker.
     keys(&mut ed, ":");
     let cursor = ed.cursor;
-    ed.remote_edit(1, &direct(Target::End, "added\n")).unwrap();
+    ed.remote_edit(1, false, &direct(Target::End, "added\n")).unwrap();
     assert_eq!((ed.active, ed.cursor, ed.cmdline.is_some()), (0, cursor, true));
-    assert_eq!(ed.snapshot(1).text, "bee\nadded\n");
+    assert_eq!(ed.snapshot(1, false).unwrap().text, "bee\nadded\n");
     assert!(ed.tabs()[1].dirty);
     assert!(ed.message.as_ref().unwrap().text.contains("in b.md"));
     keys(&mut ed, "<Esc>");
 
     // Inserting at the cursor leaves the writer before the new text.
     keys(&mut ed, "G");
-    ed.remote_edit(0, &direct(Target::Cursor, "here ")).unwrap();
+    ed.remote_edit(0, false, &direct(Target::Cursor, "here ")).unwrap();
     assert_eq!(ed.buf.line_of(ed.cursor), ed.buf.line_count() - 1);
-    ed.remote_edit(0, &direct(Target::Line(0), "# Title\n\n")).unwrap();
+    ed.remote_edit(0, false, &direct(Target::Line(0), "# Title\n\n"))
+        .unwrap();
     assert!(ed.buf.text().starts_with("# Title\n\n>> alphA"));
     // What a suggestion cannot hold is refused, and nothing changes.
     let before = ed.buf.text();
-    assert!(ed.remote_edit(0, &suggest(old("beta"), "x {++ y")).is_err());
+    assert!(ed.remote_edit(0, false, &suggest(old("beta"), "x {++ y")).is_err());
     assert!(
         ed.remote_edit(
             0,
+            false,
             &RemoteEdit {
                 author: "a<<}b".into(),
                 ..suggest(old("beta"), "x")
@@ -1373,5 +1380,219 @@ fn other_programs_edit_without_disturbing_the_writer() {
         .is_err()
     );
     assert_eq!(ed.buf.text(), before);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_margin_holds_research_beside_a_document() {
+    let dir = temp_dir("margin");
+    let file = dir.join("essay.md");
+    std::fs::write(&file, "# Essay\n\nFirst paragraph.\n\nSecond paragraph.\n").unwrap();
+    std::fs::write(dir.join("data.csv"), "a,b\n1,2\n").unwrap();
+    std::fs::write(dir.join("chart.png"), "png").unwrap();
+    let margin_file = dir.join(".stet/essay.md.margin.md");
+    assert_eq!(margin_path(&file), margin_file);
+
+    let mut ed = editor("");
+    // An untitled document has nowhere to keep one.
+    keys(&mut ed, "<C-w>m");
+    assert!(!ed.margin_visible() && ed.message.as_ref().unwrap().error);
+    ed.open(&file).unwrap();
+    keys(&mut ed, "<C-w>m");
+    assert!(ed.margin_visible() && ed.in_margin());
+    assert_eq!(
+        (ed.buf.text().as_str(), ed.file_name().as_str()),
+        ("", "margin of essay.md")
+    );
+
+    // Notes typed here never touch the document, and save themselves.
+    keys(&mut ed, "iSource: a 2019 survey<CR>Quote: \"numbers matter\"<Esc>");
+    assert!(!margin_file.exists());
+    keys(&mut ed, "<C-w>w");
+    assert!(!ed.in_margin() && ed.margin_visible());
+    assert_eq!(ed.buf.text(), "# Essay\n\nFirst paragraph.\n\nSecond paragraph.\n");
+    assert!(!ed.buf.is_dirty());
+    assert_eq!(
+        std::fs::read_to_string(&margin_file).unwrap(),
+        "Source: a 2019 survey\nQuote: \"numbers matter\"\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "# Essay\n\nFirst paragraph.\n\nSecond paragraph.\n"
+    );
+    assert_eq!(ed.tabs().len(), 1, "the margin is not a tab");
+
+    // Copy a paragraph out to the margin; move another.
+    keys(&mut ed, "3G<C-w>y");
+    assert_eq!(ed.buf.text(), "# Essay\n\nFirst paragraph.\n\nSecond paragraph.\n");
+    keys(&mut ed, "5G<C-w>d");
+    assert_eq!(ed.buf.text(), "# Essay\n\nFirst paragraph.\n\n\n");
+    keys(&mut ed, "u<C-w>l");
+    assert_eq!(
+        ed.buf.text(),
+        "Source: a 2019 survey\nQuote: \"numbers matter\"\n\nFirst paragraph.\n\nSecond paragraph.\n"
+    );
+    // And bring a line back: it lands after the paragraph the document's cursor is in.
+    keys(&mut ed, "ggjV<C-w>y<C-w>h");
+    assert_eq!(
+        ed.buf.text(),
+        "# Essay\n\nFirst paragraph.\n\nSecond paragraph.\n\nQuote: \"numbers matter\"\n"
+    );
+    assert!(ed.buf.is_dirty(), "the document is yours to save");
+    keys(&mut ed, "u");
+
+    // Attached files are copied beside the margin and linked from it.
+    ed.attach_to_margin(&dir.join("data.csv")).unwrap();
+    ed.attach_to_margin(&dir.join("chart.png")).unwrap();
+    assert!(dir.join(".stet/essay.md.files/data.csv").exists());
+    keys(&mut ed, "<C-w>l");
+    let text = ed.buf.text();
+    assert!(
+        text.ends_with("[data](essay.md.files/data.csv)\n\n![chart](essay.md.files/chart.png)\n"),
+        "{text}"
+    );
+    ed.refresh();
+    assert_eq!(ed.doc().images.len(), 1);
+    // A picture copied into the document still points at the same file.
+    keys(&mut ed, "G<C-w>y<C-w>h");
+    assert!(ed.buf.text().ends_with("![chart](.stet/essay.md.files/chart.png)\n"));
+    assert_eq!(
+        rewrite_destinations("[a](x.md) ![b](.stet/c.png) [d](https://e.f)", true),
+        "[a](../x.md) ![b](c.png) [d](https://e.f)"
+    );
+
+    // Other programs put research in the margin without it being in front.
+    keys(&mut ed, "u");
+    let note = RemoteEdit {
+        target: Target::End,
+        text: "From Claude: three sources\n".into(),
+        suggest: false,
+        author: "Claude".into(),
+    };
+    ed.remote_edit(0, true, &note).unwrap();
+    assert!(!ed.in_margin() && !ed.buf.text().contains("Claude"));
+    assert!(
+        ed.snapshot(0, true)
+            .unwrap()
+            .text
+            .ends_with("From Claude: three sources\n")
+    );
+    assert!(std::fs::read_to_string(&margin_file).unwrap().contains("From Claude"));
+    assert_eq!(
+        ed.snapshot(0, false).unwrap().text,
+        "# Essay\n\nFirst paragraph.\n\nSecond paragraph.\n"
+    );
+
+    // Each tab has its own margin; closing the pane keeps the document.
+    std::fs::write(dir.join("other.md"), "other\n").unwrap();
+    ed.open_in_tab(&dir.join("other.md")).unwrap();
+    keys(&mut ed, "<C-w>l");
+    assert_eq!((ed.buf.text().as_str(), ed.in_margin()), ("", true));
+    keys(&mut ed, ":q<CR>");
+    assert_eq!(
+        (
+            ed.tab_count(),
+            ed.in_margin(),
+            ed.margin_visible(),
+            ed.buf.text().as_str()
+        ),
+        (2, false, false, "other\n")
+    );
+    keys(&mut ed, "[t<C-w>l");
+    assert!(ed.buf.text().starts_with("Source: a 2019 survey"));
+    // A fresh editor finds the margin again.
+    let mut again = editor("");
+    again.open(&file).unwrap();
+    again.toggle_margin();
+    assert!(again.buf.text().contains("From Claude"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn margin_notes_pin_to_places_in_the_document() {
+    let dir = temp_dir("pins");
+    let file = dir.join("essay.md");
+    let text = "# Essay\n\nWriters who outline first finish sooner, the survey found.\n\n## Method\n\nWe asked forty people.\n";
+    std::fs::write(&file, text).unwrap();
+    let mut ed = editor("");
+    ed.open(&file).unwrap();
+
+    // Select words and pin a note to them: the keyboard lands in a new margin section.
+    keys(&mut ed, "3Gwwveee<C-w>a");
+    assert!(ed.in_margin() && ed.mode == Mode::Insert);
+    assert_eq!(ed.buf.text(), "## outline first finish\n@ outline first finish\n\n");
+    keys(&mut ed, "Source: 2019 survey, n=412<Esc>");
+    // Pin another to a heading.
+    keys(&mut ed, "<C-w>h5G<C-w>aSmall sample!<Esc><C-w>h");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        text,
+        "the document carries no trace of its pins"
+    );
+    assert!(!ed.buf.is_dirty());
+
+    let pins = ed.pins();
+    assert_eq!(
+        pins.iter()
+            .map(|pin| (pin.title.as_str(), pin.anchor.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("outline first finish", "outline first finish"), ("Method", "# Method"),]
+    );
+    let found: Vec<String> = pins.iter().map(|pin| ed.buf.slice(pin.at.clone().unwrap())).collect();
+    assert_eq!(found, vec!["outline first finish", "## Method"]);
+    assert_eq!(pins[0].lines, 0..5);
+
+    // Crossing over: from the anchored words to the note and back.
+    keys(&mut ed, "3G0<C-w>g");
+    assert!(ed.in_margin());
+    assert_eq!(ed.buf.line_of(ed.cursor), 0);
+    keys(&mut ed, "Gk<C-w>g");
+    assert!(!ed.in_margin());
+    assert_eq!(ed.buf.line_text(ed.buf.line_of(ed.cursor)), "## Method");
+
+    // Text typed above moves the pin; nothing in the margin changes.
+    keys(&mut ed, "ggOA new opening line.<Esc>");
+    let pins = ed.pins();
+    assert_eq!(ed.buf.slice(pins[0].at.clone().unwrap()), "outline first finish");
+    assert_eq!(ed.buf.line_of(pins[0].at.clone().unwrap().start), 3);
+    // Editing the anchored words themselves: the pin follows what they became.
+    keys(&mut ed, "4G/first<CR>cwearly<Esc>");
+    let pins = ed.pins();
+    assert_eq!(pins[0].anchor, "outline early finish");
+    assert_eq!(ed.buf.slice(pins[0].at.clone().unwrap()), "outline early finish");
+    keys(&mut ed, "<C-w>l");
+    assert!(
+        ed.buf
+            .text()
+            .starts_with("## outline first finish\n@ outline early finish\n")
+    );
+    // A hand-written pin, loosely matched; and one that points nowhere.
+    keys(
+        &mut ed,
+        "Go<CR>## Sample<CR>@ we ASKED   forty<CR>too few<CR><CR>## Lost<CR>@ words that are not there<CR><CR>## Loose<CR>no pin<Esc><C-w>h",
+    );
+    let pins = ed.pins();
+    assert_eq!(pins.len(), 5);
+    assert_eq!(ed.buf.slice(pins[2].at.clone().unwrap()), "We asked forty");
+    assert_eq!(
+        (pins[3].pinned(), pins[3].anchor.as_str()),
+        (false, "words that are not there")
+    );
+    assert_eq!((pins[4].pinned(), pins[4].anchor.as_str()), (false, ""));
+
+    // Re-pin and unpin from the margin.
+    keys(&mut ed, "Gk<C-w>lG<C-w>a");
+    keys(&mut ed, "<C-w>h");
+    let pins = ed.pins();
+    assert_eq!(ed.buf.slice(pins[4].at.clone().unwrap()), "We asked forty people.");
+    keys(&mut ed, "<C-w>lG:unpin<CR><C-w>h");
+    assert!(!ed.pins()[4].pinned());
+
+    // Long selections are stored by their ends.
+    let long = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty";
+    keys(&mut ed, &format!("Go<CR>{long}<Esc>V<C-w>anote<Esc><C-w>h"));
+    let last = ed.pins().pop().unwrap();
+    assert!(last.anchor.contains(" … ") && last.anchor.chars().count() < long.len());
+    assert_eq!(ed.buf.slice(last.at.unwrap()), long);
     let _ = std::fs::remove_dir_all(dir);
 }
