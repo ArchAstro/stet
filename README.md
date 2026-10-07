@@ -162,6 +162,8 @@ included skill (`skill/stet/SKILL.md`) teaches Claude Code to use it.
 | `stet ctl edit ...` | changes the text directly (one undo step) |
 | `stet ctl wait --name Claude` | connects an assistant and waits for your message |
 | `stet ctl say --text T` | shows a line in the status bar |
+| `stet ctl command C`, `keys K`, `type T`, `click X Y` | operates the window like the keyboard and mouse would |
+| `stet ctl shot file.png` | saves a picture of what the window shows |
 
 1. **Your flow is left alone.** An edit never moves your cursor, changes mode, steals focus or saves; it lands as its own undo step, in background tabs too.
 2. **Edits follow your typing.** A target is either the exact text to replace, or a range read at an earlier revision that is carried forward through everything typed since (the transform half of operational transformation, with the window as the single authority). If you changed that same text, the edit is refused rather than misplaced.

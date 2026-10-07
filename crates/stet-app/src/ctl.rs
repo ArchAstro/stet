@@ -19,6 +19,11 @@ pub const USAGE: &str = "stet ctl <command>   control the running stet (replies 
                                  stet (Cmd/Ctrl-Shift-A or ga), prints it with their selection, and exits
   say --text TEXT                show one line in stet's status bar
   open <file>...                 open files as tabs
+  command <command>              run an editor command, as typed after `:` (theme nord, sidebar, w)
+  keys <notation>                press keys, in vim notation (ggVG, <D-/>, <Esc>)
+  type <text>                    type text as the keyboard would
+  click X Y [right]              click at a point in the window (points from the top left)
+  shot <file.png>                save a picture of what the window shows
   call                           send one JSON request read from stdin
 
 targets (one of):
@@ -265,12 +270,35 @@ fn build(args: &[String]) -> Result<Value, String> {
                 request.insert("start".into(), json!(start));
                 request.insert("end".into(), json!(end));
             }
+            "right" if command == "click" => {
+                request.insert("button".into(), json!("right"));
+            }
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
             file => files.push(file.to_string()),
         }
     }
     let cmd = match command.as_str() {
         "sessions" | "read" | "wait" | "say" => command.as_str(),
+        "command" | "keys" | "type" => {
+            let field = if command == "type" { "text" } else { command.as_str() };
+            request.insert(field.into(), json!(files.join(" ")));
+            command.as_str()
+        }
+        "click" => {
+            let point: Vec<f64> = files.iter().filter_map(|value| value.parse().ok()).collect();
+            let [x, y] = point[..] else {
+                return Err("click expects X Y".to_string());
+            };
+            request.insert("x".into(), json!(x));
+            request.insert("y".into(), json!(y));
+            "click"
+        }
+        "shot" => {
+            let path = files.first().ok_or("shot expects a file to write")?;
+            let path = std::path::absolute(path).map_or(path.clone(), |path| path.to_string_lossy().into_owned());
+            request.insert("path".into(), json!(path));
+            "shot"
+        }
         "suggest" | "edit" => {
             request.insert(
                 "mode".into(),

@@ -596,6 +596,53 @@ impl Running {
         event_loop: &ActiveEventLoop,
     ) {
         let parsed: serde_json::Value = serde_json::from_str(request).unwrap_or_default();
+        // Operating the window itself: keys, commands, clicks, and a picture
+        // of what it shows. These go through the same handlers as real input.
+        let text = |key: &str| parsed[key].as_str().unwrap_or("").to_string();
+        let number = |key: &str| parsed[key].as_f64().unwrap_or(0.0);
+        let line = match parsed["cmd"].as_str().unwrap_or("") {
+            "keys" => Some(format!("keys {}", text("keys"))),
+            "type" => Some(format!("text {}", text("text"))),
+            "click" => Some(format!("click {} {} {}", number("x"), number("y"), text("button")).replace(" right", "")),
+            "shot" => Some(format!("shot {}", text("path"))),
+            _ => None,
+        };
+        if let Some(mut line) = line {
+            if parsed["cmd"] == "click" && parsed["button"] == "right" {
+                line = line.replacen("click", "rclick", 1);
+            }
+            if parsed["cmd"] == "shot" && text("path").is_empty() {
+                let _ = reply.send(r#"{"ok":false,"error":"`path` is missing"}"#.to_string());
+                return;
+            }
+            self.drive(&line, event_loop);
+            let editor = &mut self.session.editor;
+            let answer = serde_json::json!({
+                "ok": true,
+                "mode": format!("{:?}", editor.mode).to_lowercase(),
+                "message": editor.message.as_ref().map(|message| message.text.clone()),
+                "menu": editor.palette.is_some() || editor.context_menu.is_some(),
+                "prompt": editor.cmdline.as_ref().map(|cmdline| cmdline.text.clone()),
+                "tab": editor.active + 1,
+                "title": editor.file_name(),
+            });
+            let _ = reply.send(answer.to_string());
+            return;
+        }
+        if parsed["cmd"] == "command" {
+            self.session.editor.run_command(&text("command"));
+            let effects = self.session.settle();
+            self.effects(effects, event_loop);
+            let editor = &self.session.editor;
+            let failed = editor.message.as_ref().is_some_and(|message| message.error);
+            let answer = serde_json::json!({
+                "ok": !failed,
+                "message": editor.message.as_ref().map(|message| message.text.clone()),
+                "error": failed.then(|| editor.message.as_ref().map(|message| message.text.clone())).flatten(),
+            });
+            let _ = reply.send(answer.to_string());
+            return;
+        }
         if parsed["cmd"] == "wait" {
             let name = parsed["name"]
                 .as_str()

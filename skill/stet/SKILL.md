@@ -151,6 +151,26 @@ stet ctl wait --name Claude
 - Then run `stet ctl wait` again to stay connected. Stop when the user tells
   you to, or when Stet is no longer running.
 
+## 6. Operating the window
+
+For the rare request that is about the editor rather than the text ("switch
+to the dark theme", "open the file browser", "show me what you see"):
+
+```sh
+stet ctl command "theme stet-ink"     # any editor command, as typed after `:`
+stet ctl keys "<D-/>"                 # keys in vim notation; <D-…> is Cmd, <C-…> Ctrl
+stet ctl type "some text"             # typed as the keyboard would
+stet ctl click 320 200                # a click at a point in the window; add `right` for the menu
+stet ctl shot /tmp/stet.png           # a picture of what the window shows right now
+```
+
+- Each reply says what state the editor is in (`mode`, whether a `menu` or
+  `prompt` is open, the status `message`). Use `shot` when you need to see it.
+- These act exactly like the user's own keyboard and mouse, so they do move
+  the cursor and change modes. Use them only when asked, never to edit text
+  (that is what `suggest` and `edit` are for), and leave the editor as you
+  found it: close menus you opened, return to the tab they were on.
+
 ## Rules
 
 1. Suggest by default; edit directly only on request.
