@@ -298,22 +298,31 @@ impl Gpu {
         self.viewport.update(&self.queue, Resolution { width, height });
         let mut prepared = [false; 2];
         for (index, layer) in layers.iter().enumerate() {
-            let areas = layer.texts.iter().filter_map(|item| {
-                let layout = layouts.get(&item.key)?;
-                Some(TextArea {
-                    buffer: &layout.buffer,
-                    left: item.left,
-                    top: item.top,
+            let areas = layer
+                .texts
+                .iter()
+                .filter_map(|item| layouts.get(&item.key).map(|layout| (item, layout)));
+            let areas = areas.flat_map(|(item, layout)| {
+                let bounds = TextBounds {
+                    left: item.clip[0] as i32,
+                    top: item.clip[1] as i32,
+                    right: item.clip[2] as i32,
+                    bottom: item.clip[3] as i32,
+                };
+                let area = move |buffer, x: f32, y: f32| TextArea {
+                    buffer,
+                    left: item.left + x,
+                    top: item.top + y,
                     scale: 1.0,
-                    bounds: TextBounds {
-                        left: item.clip[0] as i32,
-                        top: item.clip[1] as i32,
-                        right: item.clip[2] as i32,
-                        bottom: item.clip[3] as i32,
-                    },
+                    bounds,
                     default_color: item.color,
                     custom_glyphs: &[],
-                })
+                };
+                // A table row is its cells; any other line is one buffer.
+                let whole = layout.cells.is_empty().then(|| area(&layout.buffer, 0.0, 0.0));
+                whole
+                    .into_iter()
+                    .chain(layout.cells.iter().map(move |cell| area(&cell.buffer, cell.x, cell.y)))
             });
             prepared[index] = self.text[index]
                 .prepare(

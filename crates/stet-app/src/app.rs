@@ -21,7 +21,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
-const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
 /// Unsaved text is snapshotted this long after the last keystroke.
 const RECOVERY_DELAY: Duration = Duration::from_millis(800);
 
@@ -109,6 +108,7 @@ pub fn prepare(args: &Args) -> Prepared {
                         dim: false,
                         face,
                         bold: false,
+                        table: None,
                     },
                 );
             };
@@ -741,6 +741,27 @@ impl Running {
             Some(Target::Sidebar) => editor.sidebar.focused = true,
             Some(Target::MenuHint) => editor.open_palette(PaletteKind::Help),
             Some(Target::Note(index)) => editor.open_note(index),
+            Some(
+                target @ (Target::TableColumn(..)
+                | Target::TableRow(_)
+                | Target::TableAddColumn(_)
+                | Target::TableAddRow(_)),
+            ) => {
+                if session.view.hover_in_other_pane() {
+                    editor.switch_pane();
+                }
+                let (x, y) = self.mouse;
+                match target {
+                    Target::TableColumn(line, column) => editor.table_handle(line, Some(column), x, y),
+                    Target::TableRow(line) => editor.table_handle(line, None, x, y),
+                    Target::TableAddColumn(line) => editor.table_extend(line, true),
+                    _ => {
+                        if let Target::TableAddRow(line) = target {
+                            editor.table_extend(line, false)
+                        }
+                    }
+                }
+            }
             None => {
                 // A click in the other pane moves the keyboard there first.
                 if session.view.over_other_pane(editor, self.mouse.0) {
@@ -769,6 +790,8 @@ impl Running {
         match session.view.target_at(x, y) {
             Some(Target::SidebarRow(index)) => editor.sidebar_menu(index, x, y),
             Some(Target::Tab(index)) => editor.tab_menu(index, x, y),
+            Some(Target::TableColumn(line, column)) => editor.table_handle(line, Some(column), x, y),
+            Some(Target::TableRow(line)) => editor.table_handle(line, None, x, y),
             None if editor.palette.is_none() => {
                 if session.view.over_other_pane(editor, x) {
                     editor.switch_pane();
@@ -784,6 +807,9 @@ impl Running {
 
     fn mouse_move(&mut self, x: f32, y: f32) {
         self.mouse = (x, y);
+        if self.session.view.pointer_moved(x, y) {
+            self.window.request_redraw();
+        }
         if self.dragging {
             let session = &mut self.session;
             let pos = session.view.hit(&mut session.editor, x, y);
@@ -819,10 +845,6 @@ impl Running {
     }
 
     fn drop_file(&mut self, path: &Path, event_loop: &ActiveEventLoop) {
-        let is_image = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()));
         let editor = &mut self.session.editor;
         let on_margin =
             editor.margin_visible() && (self.session.view.over_other_pane(editor, self.mouse.0) != editor.in_margin());
@@ -833,12 +855,15 @@ impl Running {
                 editor.message = error(err);
             }
             self.session.settle()
-        } else if is_image {
-            // Prefer a path relative to the document, so the pair stays portable.
-            let base = self.session.editor.path.as_deref().and_then(Path::parent);
-            let shown = base.and_then(|base| path.strip_prefix(base).ok()).unwrap_or(path);
-            let target = shown.to_string_lossy().replace(' ', "%20");
-            self.session.text(&format!("![]({target})"))
+        } else if !note && stet_core::editor::is_picture(path) {
+            // A picture from elsewhere is copied in beside the document.
+            match self.session.editor.file_link(path) {
+                Ok(link) => self.session.text(&link),
+                Err(err) => {
+                    self.session.editor.message = error(err);
+                    self.session.settle()
+                }
+            }
         } else {
             self.open(path);
             self.session.settle()
@@ -881,6 +906,10 @@ impl Running {
                     self.mouse_release();
                 }
                 self.mods = ModifiersState::empty();
+            }
+            "move" => {
+                let (x, y) = point(0);
+                self.mouse_move(x, y);
             }
             "rclick" => {
                 let (x, y) = point(0);

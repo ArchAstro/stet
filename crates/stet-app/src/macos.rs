@@ -105,6 +105,7 @@ const MENUS: &[(&str, &[(&str, &str)])] = &[
             ("Cut", "<D-x>"),
             ("Copy", "<D-c>"),
             ("Paste", "<D-v>"),
+            ("Paste as Plain Text", "<D-S-v>"),
             ("Select All", "<D-a>"),
             ("", ""),
             ("Find…", "<D-f>"),

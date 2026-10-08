@@ -2,6 +2,7 @@
 //! dot-repeat and search.
 
 use super::motion::{self, Matcher};
+use super::paste::Pasted;
 use super::{CmdKind, CmdLine, Editor, Effect, Input, Mode, ScrollTo};
 use crate::input::{Key, KeyEvent};
 use std::collections::HashMap;
@@ -11,6 +12,8 @@ use std::ops::Range;
 pub(super) struct Register {
     text: String,
     linewise: bool,
+    /// Block content from another program, kept apart by blank lines.
+    block: bool,
 }
 
 pub(super) struct Search {
@@ -1373,10 +1376,14 @@ impl Editor {
     }
 
     fn yank(&mut self, register: Option<char>, text: String, linewise: bool, is_yank: bool) {
-        let entry = Register { text, linewise };
+        let entry = Register {
+            text,
+            linewise,
+            block: false,
+        };
         match register {
             Some('_') => return,
-            Some('+' | '*') => self.clipboard.set(&entry.text),
+            Some('+' | '*') => self.copy_out(&entry.text),
             Some(name) if name.is_ascii_uppercase() => {
                 let existing = self.vim.registers.entry(name.to_ascii_lowercase()).or_default();
                 existing.text.push_str(&entry.text);
@@ -1385,7 +1392,7 @@ impl Editor {
             Some(name) => {
                 self.vim.registers.insert(name, entry.clone());
             }
-            None if self.config.system_clipboard => self.clipboard.set(&entry.text),
+            None if self.config.system_clipboard => self.copy_out(&entry.text),
             None => {}
         }
         if is_yank {
@@ -1397,15 +1404,25 @@ impl Editor {
     fn register(&mut self, register: Option<char>) -> Option<Register> {
         let unnamed = self.vim.registers.get(&'"').cloned();
         // Text copied elsewhere is charwise; our own yank keeps its shape.
-        let from_clipboard = |text: String, unnamed: Option<Register>| match unnamed {
-            Some(ours) if ours.text == text => ours,
-            _ => Register { text, linewise: false },
+        let from_clipboard = |pasted: Pasted, unnamed: Option<Register>| match unnamed {
+            Some(ours) if ours.text == pasted.text => ours,
+            // A table or a list from elsewhere goes on lines of its own.
+            _ if pasted.block => Register {
+                text: format!("{}\n", pasted.text),
+                linewise: true,
+                block: true,
+            },
+            _ => Register {
+                text: pasted.text,
+                linewise: false,
+                block: false,
+            },
         };
         match register {
-            Some('+' | '*') => self.clipboard.get().map(|text| from_clipboard(text, unnamed)),
+            Some('+' | '*') => self.pasted(false).map(|pasted| from_clipboard(pasted, unnamed)),
             Some(name) => self.vim.registers.get(&name.to_ascii_lowercase()).cloned(),
-            None if self.config.system_clipboard => match self.clipboard.get() {
-                Some(text) => Some(from_clipboard(text, unnamed)),
+            None if self.config.system_clipboard => match self.pasted(false) {
+                Some(pasted) => Some(from_clipboard(pasted, unnamed)),
                 None => unnamed,
             },
             None => unnamed,
@@ -1421,6 +1438,7 @@ impl Editor {
             let replaced = Register {
                 text: self.buf.slice(selection.clone()),
                 linewise: self.mode == Mode::VisualLine,
+                block: false,
             };
             let text = match (self.mode == Mode::VisualLine, entry.linewise) {
                 (true, false) => format!("{text}\n"),
@@ -1436,6 +1454,21 @@ impl Editor {
         let line = self.buf.line_of(self.cursor);
         if entry.linewise {
             let is_last = line + 1 >= self.buf.line_count();
+            let text = if entry.block {
+                let (above, below) = if before {
+                    (line.checked_sub(1), Some(line))
+                } else {
+                    (Some(line), Some(line + 1))
+                };
+                let filled = |line: Option<usize>| {
+                    line.is_some_and(|line| line < self.buf.line_count() && !self.buf.line_is_blank(line))
+                };
+                let lead = if filled(above) { "\n" } else { "" };
+                let trail = if filled(below) { "\n" } else { "" };
+                format!("{lead}{text}{trail}")
+            } else {
+                text
+            };
             let pos = if before {
                 let start = self.buf.line_start(line);
                 self.edit(start..start, &text)
@@ -1448,7 +1481,8 @@ impl Editor {
                 let start = self.buf.line_start(line + 1);
                 self.edit(start..start, &text)
             };
-            self.cursor = motion::first_non_blank(&self.buf, self.buf.line_of(pos.start)).max(pos.start);
+            let landed = pos.start + (entry.block && text.starts_with('\n')) as usize;
+            self.cursor = motion::first_non_blank(&self.buf, self.buf.line_of(landed)).max(landed);
         } else {
             let end = self.buf.line_end(line);
             let at = if before || self.cursor >= end {

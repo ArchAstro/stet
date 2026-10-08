@@ -46,6 +46,18 @@ pub struct Config {
     /// While writing, show margin notes beside the text they are pinned to
     /// (false lists the margin from top to bottom at all times).
     pub pinned_notes: bool,
+    /// Pasting turns what other programs copy (a web page's HTML, a
+    /// picture, files) into Markdown. Off pastes the plain text.
+    pub smart_paste: bool,
+    /// Copying offers an HTML rendering beside the Markdown, so it arrives
+    /// formatted in programs that take rich text.
+    pub copy_html: bool,
+    /// Folder beside the document where pasted pictures are kept. Empty
+    /// keeps them next to the document itself.
+    pub image_dir: String,
+    /// Draw tables as a grid, with long cells wrapped inside their column
+    /// (false shows the source as it is).
+    pub table_grid: bool,
     /// Your own key bindings; they win over the built-in ones.
     pub keys: Keys,
 }
@@ -107,6 +119,10 @@ impl Default for Config {
             link_completion: true,
             sidebar: false,
             pinned_notes: true,
+            smart_paste: true,
+            copy_html: true,
+            image_dir: "assets".to_string(),
+            table_grid: true,
             keys: Keys::default(),
         }
     }

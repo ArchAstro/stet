@@ -108,6 +108,12 @@ revision REV (use the `revision` and offsets from a read or from a message).
 Whatever the user typed since is accounted for; if they changed that very
 text, you get an error instead of a wrong edit.
 
+## Tables
+
+Write tables as ordinary pipe tables; Stet draws them as a grid and wraps
+long cells, so do not pad or shorten cells to make them fit. After changing
+one, `stet ctl command "table"` (cursor in the table) tidies its source.
+
 ## The margin: where research goes
 
 Every document has a **margin**: a scratch pane beside it for research

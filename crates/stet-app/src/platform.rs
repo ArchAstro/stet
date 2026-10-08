@@ -1,7 +1,7 @@
 //! The few things that differ per OS: clipboard, config location, dialogs.
 
 use std::path::PathBuf;
-use stet_core::Clipboard;
+use stet_core::{Clip, Clipboard};
 
 /// The system clipboard. Opened lazily: some platforms block on first use.
 #[derive(Default)]
@@ -23,6 +23,37 @@ impl Clipboard for SystemClipboard {
     fn set(&mut self, text: &str) {
         if let Some(clipboard) = self.handle() {
             let _ = clipboard.set_text(text.to_string());
+        }
+    }
+    fn contents(&mut self) -> Clip {
+        let Some(clipboard) = self.handle() else {
+            return Clip::default();
+        };
+        Clip {
+            text: clipboard.get_text().ok(),
+            html: clipboard.get().html().ok(),
+            files: clipboard.get().file_list().unwrap_or_default(),
+        }
+    }
+    fn image(&mut self) -> Option<Vec<u8>> {
+        use image::ImageEncoder;
+        use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+        let picture = self.handle()?.get_image().ok()?;
+        let mut png = Vec::new();
+        // Fast, not small: a full-screen capture should paste without a pause.
+        PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Adaptive)
+            .write_image(
+                &picture.bytes,
+                picture.width as u32,
+                picture.height as u32,
+                image::ExtendedColorType::Rgba8,
+            )
+            .ok()?;
+        Some(png)
+    }
+    fn set_rich(&mut self, text: &str, html: &str) {
+        if let Some(clipboard) = self.handle() {
+            let _ = clipboard.set_html(html.to_string(), Some(text.to_string()));
         }
     }
 }

@@ -23,7 +23,7 @@ pub fn margin_path(path: &Path) -> PathBuf {
     path.with_file_name(MARGIN_DIR).join(format!("{name}.margin.md"))
 }
 
-fn files_dir(path: &Path) -> PathBuf {
+pub(super) fn files_dir(path: &Path) -> PathBuf {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     path.with_file_name(MARGIN_DIR).join(format!("{name}.files"))
 }
@@ -293,6 +293,21 @@ impl Editor {
     /// margin, so research material travels with the document without
     /// sitting in it.
     pub fn attach_to_margin(&mut self, file: &Path) -> Result<(), String> {
+        let link = self.keep_in_margin(file)?;
+        let insert = |ed: &mut Editor| ed.receive(&link, true);
+        if self.margin_active {
+            insert(self);
+        } else {
+            self.with_other_pane(insert);
+            self.reveal_other = true;
+        }
+        self.margin_open = true;
+        Ok(())
+    }
+
+    /// Copies a file into the margin's folder and returns the Markdown that
+    /// refers to it from the margin.
+    pub(super) fn keep_in_margin(&mut self, file: &Path) -> Result<String, String> {
         let owner = self
             .margin_owner()
             .ok_or("save the document first; its margin is kept beside it")?;
@@ -331,15 +346,9 @@ impl Editor {
             extension.to_ascii_lowercase().as_str(),
             ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp" | ".bmp" | ".svg"
         );
-        let link = format!("{}[{stem}]({folder_name}/{kept})", if image { "!" } else { "" });
-        let insert = |ed: &mut Editor| ed.receive(&link, true);
-        if self.margin_active {
-            insert(self);
-        } else {
-            self.with_other_pane(insert);
-            self.reveal_other = true;
-        }
-        self.margin_open = true;
-        Ok(())
+        Ok(format!(
+            "{}[{stem}]({folder_name}/{kept})",
+            if image { "!" } else { "" }
+        ))
     }
 }

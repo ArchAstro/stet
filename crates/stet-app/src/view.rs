@@ -3,7 +3,7 @@
 
 use crate::gpu::linear;
 use crate::images::{self, Images};
-use crate::text::{Face, Fonts, Layer as Depth, LineLayout, LineSpec, color, layout_line};
+use crate::text::{Face, Fonts, Layer as Depth, LineLayout, LineSpec, RowKind, TableRow, color, layout_line};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
@@ -58,6 +58,13 @@ pub enum Target {
     ContextMenu,
     /// A margin note shown beside its pin.
     Note(usize),
+    /// The handle above a table's column: `(a line of the table, column)`.
+    TableColumn(usize, usize),
+    /// The handle beside a table's row, by its line.
+    TableRow(usize),
+    /// The strips that add a column or a row at the end of the table on this line.
+    TableAddColumn(usize),
+    TableAddRow(usize),
     /// The dimmed area around the menu.
     Scrim,
     MenuHint,
@@ -99,6 +106,8 @@ pub struct View {
     pub goal_x: Option<f32>,
     frame: u64,
     advance: Option<(u32, f32)>,
+    /// Width of a monospace character, for table columns.
+    mono_advance: Option<(u32, f32)>,
     focus: Option<Range<usize>>,
     targets: Vec<([f32; 4], Target)>,
     sidebar_selected: usize,
@@ -109,6 +118,35 @@ pub struct View {
     pins: Vec<stet_core::editor::Pin>,
     /// Window y of each pin's anchor, for the pins on screen this frame.
     pin_tops: Vec<(usize, f32)>,
+    /// Where the mouse is, for what only shows under it.
+    pointer: (f32, f32),
+    /// Tables drawn this frame.
+    tables: Vec<TableBox>,
+    /// What of a table the pointer is over: `(first line, row line, column, part)`.
+    hover: Option<(usize, usize, usize, Part)>,
+}
+
+/// A table on screen, in window coordinates.
+struct TableBox {
+    first: usize,
+    /// Column edges, left to right.
+    edges: Vec<f32>,
+    /// `(line, top, bottom)` of each row on screen.
+    rows: Vec<(usize, f32, f32)>,
+    /// The pane's text area: left, top, right, bottom.
+    clip: [f32; 4],
+    /// Drawn in the pane that does not have the keyboard.
+    other: bool,
+}
+
+/// The part of a table's controls the pointer is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Part {
+    Cells,
+    Column,
+    Row,
+    AddColumn,
+    AddRow,
 }
 
 impl View {
@@ -125,6 +163,7 @@ impl View {
             goal_x: None,
             frame: 0,
             advance: None,
+            mono_advance: None,
             focus: None,
             targets: Vec::new(),
             sidebar_selected: usize::MAX,
@@ -132,6 +171,158 @@ impl View {
             cursor_point: None,
             pins: Vec::new(),
             pin_tops: Vec::new(),
+            pointer: (-1.0, -1.0),
+            tables: Vec::new(),
+            hover: None,
+        }
+    }
+
+    /// Notes where the mouse is. True if what it is over in a table
+    /// changed, so the frame needs drawing again.
+    pub fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
+        self.pointer = (x, y);
+        let hover = self.table_hover();
+        std::mem::replace(&mut self.hover, hover) != hover
+    }
+
+    /// True if the table under the pointer is in the pane without the keyboard.
+    pub fn hover_in_other_pane(&self) -> bool {
+        self.hover
+            .and_then(|(first, ..)| self.tables.iter().find(|table| table.first == first))
+            .is_some_and(|table| table.other)
+    }
+
+    fn table_hover(&self) -> Option<(usize, usize, usize, Part)> {
+        let (x, y) = self.pointer;
+        let reach = 22.0 * self.scale;
+        self.tables.iter().find_map(|table| {
+            let (left, right) = (*table.edges.first()?, *table.edges.last()?);
+            let (top, bottom) = (table.rows.first()?.1, table.rows.last()?.2);
+            if x < left - reach || x > right + reach || y < top - reach || y > bottom + reach {
+                return None;
+            }
+            let row = table
+                .rows
+                .iter()
+                .find(|(_, _, bottom)| y < *bottom)
+                .or(table.rows.last())
+                .map(|(line, ..)| *line)?;
+            let column = table
+                .edges
+                .windows(2)
+                .position(|edge| x < edge[1])
+                .unwrap_or(table.edges.len().saturating_sub(2));
+            let part = if x > right {
+                Part::AddColumn
+            } else if y > bottom {
+                Part::AddRow
+            } else if y < top {
+                Part::Column
+            } else if x < left {
+                Part::Row
+            } else {
+                Part::Cells
+            };
+            Some((table.first, row, column, part))
+        })
+    }
+
+    /// The controls of the table under the pointer: a handle on its column
+    /// and its row, and a strip on each open side that adds one more.
+    fn table_controls(&mut self, ed: &Editor, layer: &mut Layer) {
+        let Some((first, row, column, part)) = self.table_hover() else {
+            self.hover = None;
+            return;
+        };
+        self.hover = Some((first, row, column, part));
+        if ed.palette.is_some() || ed.context_menu.is_some() {
+            return;
+        }
+        let Some(table) = self.tables.iter().find(|table| table.first == first) else {
+            return;
+        };
+        let (c, s) = (ed.theme.colors, self.scale);
+        let (left, right) = (table.edges[0], table.edges[table.edges.len() - 1]);
+        let (top, bottom) = (table.rows[0].1, table.rows[table.rows.len() - 1].2);
+        let clip = table.clip;
+        let Some(&(line, row_top, row_bottom)) = table.rows.iter().find(|(line, ..)| *line == row) else {
+            return;
+        };
+        let (column_left, column_right) = (table.edges[column], table.edges[column + 1]);
+        let first_on_screen = table.rows[0].0 == first;
+        let mut targets = Vec::new();
+        let mut plus = Vec::new();
+        let mut pill = |rect: [f32; 4], hit: [f32; 4], on: bool, target: Target, sign: bool| {
+            // Nothing pokes out of the pane's text area.
+            if hit[1] < clip[1] || hit[1] + hit[3] > clip[3] || hit[0] < clip[0] || hit[0] + hit[2] > clip[2] {
+                return;
+            }
+            // A strip is a quiet surface with a sign on it; a handle is a solid grip.
+            let color = match (sign, on) {
+                (true, true) => c.cursor.mix(c.background, 0.75),
+                (true, false) => c.rule.mix(c.background, 0.45),
+                (false, true) => c.cursor,
+                (false, false) => c.rule.mix(c.text, 0.25),
+            };
+            layer.back.push(Quad {
+                rect,
+                color: linear(color, 1.0),
+                radius: rect[2].min(rect[3]) / 2.0,
+            });
+            targets.push((hit, target));
+            if sign {
+                plus.push((rect, on));
+            }
+        };
+        let thick = (5.0 * s).round();
+        if first_on_screen {
+            pill(
+                [
+                    column_left + 4.0 * s,
+                    top - 10.0 * s,
+                    column_right - column_left - 8.0 * s,
+                    thick,
+                ],
+                [column_left, top - 16.0 * s, column_right - column_left, 16.0 * s],
+                part == Part::Column,
+                Target::TableColumn(first, column),
+                false,
+            );
+        }
+        pill(
+            [
+                left - 10.0 * s,
+                row_top + 4.0 * s,
+                thick,
+                row_bottom - row_top - 8.0 * s,
+            ],
+            [left - 16.0 * s, row_top, 16.0 * s, row_bottom - row_top],
+            part == Part::Row,
+            Target::TableRow(line),
+            false,
+        );
+        let strip = (14.0 * s).round();
+        pill(
+            [right + 5.0 * s, top, strip, bottom - top],
+            [right + 2.0 * s, top, strip + 6.0 * s, bottom - top],
+            part == Part::AddColumn,
+            Target::TableAddColumn(first),
+            true,
+        );
+        pill(
+            [left, bottom + 5.0 * s, right - left, strip],
+            [left, bottom + 2.0 * s, right - left, strip + 6.0 * s],
+            part == Part::AddRow,
+            Target::TableAddRow(first),
+            true,
+        );
+        self.targets.extend(targets);
+        for (rect, on) in plus {
+            let rgb = if on { c.cursor } else { c.status };
+            let key = self.label(ed, "+", rgb, 13.0 * s, Face::Ui, true);
+            let width = self.layouts[&key].rows[0].width;
+            let middle = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
+            self.put(layer, key, middle.0 - width / 2.0, middle.1, clip, rgb);
         }
     }
 
@@ -139,6 +330,7 @@ impl View {
     pub fn invalidate(&mut self) {
         self.layouts.clear();
         self.advance = None;
+        self.mono_advance = None;
     }
 
     pub fn set_zoom(&mut self, step: i32) {
@@ -191,6 +383,7 @@ impl View {
                         dim: false,
                         face: None,
                         bold: false,
+                        table: None,
                     },
                 );
                 let advance = (layout.rows[0].width / 10.0).max(1.0);
@@ -237,6 +430,33 @@ impl View {
         }
     }
 
+    fn mono_advance(&mut self, ed: &Editor, m: &Metrics) -> f32 {
+        match self.mono_advance {
+            Some((size, advance)) if size == m.font.to_bits() => advance,
+            _ => {
+                let layout = layout_line(
+                    &mut self.fonts,
+                    &LineSpec {
+                        text: "0000000000",
+                        spans: &[],
+                        block: Block::Code,
+                        font: m.font,
+                        line: m.line,
+                        width: m.font * 100.0,
+                        colors: &ed.theme.colors,
+                        dim: false,
+                        face: None,
+                        bold: false,
+                        table: None,
+                    },
+                );
+                let advance = (layout.rows[0].width / 10.0).max(1.0);
+                self.mono_advance = Some((m.font.to_bits(), advance));
+                advance
+            }
+        }
+    }
+
     /// Lays out `line` if needed and returns its cache key.
     fn line(&mut self, ed: &Editor, line: usize, m: &Metrics) -> u64 {
         let text = ed.buf.line_text(line);
@@ -256,8 +476,41 @@ impl View {
             None => doc.spans(line),
         };
         let dim = self.focus.as_ref().is_some_and(|focus| !focus.contains(&line));
+        // A table row is laid out on the columns its table settled on.
+        let grid = match block {
+            Block::Table if code.is_none() => ed.table_at(line),
+            _ => None,
+        }
+        .map(|(lines, shape)| {
+            let advance = self.mono_advance(ed, m);
+            let pad = advance.round();
+            let count = shape.columns.len() as f32;
+            let natural: usize = shape.columns.iter().map(|column| column.width).sum();
+            let fits = |width: f32| ((width - count * pad * 2.0 - 2.0) / advance).floor().max(0.0) as usize;
+            // A table too wide for the column may use the space beside it.
+            let beside = (m.left - m.origin).min(m.right - m.left - m.column) - advance * 2.0;
+            let room = if natural <= fits(m.column) {
+                fits(m.column)
+            } else {
+                fits(m.column + beside.max(0.0) * 2.0)
+            };
+            let widths: Vec<f32> = shape.fit(room).iter().map(|cells| *cells as f32 * advance).collect();
+            let aligns: Vec<stet_core::table::Align> = shape.columns.iter().map(|column| column.align).collect();
+            let kind = match line - lines.start {
+                0 => RowKind::Header,
+                1 => RowKind::Rule,
+                _ => RowKind::Body,
+            };
+            (widths, aligns, kind, line + 1 == lines.end, pad, advance)
+        });
         let mut hasher = DefaultHasher::new();
         text.hash(&mut hasher);
+        if let Some((widths, aligns, kind, last, ..)) = &grid {
+            for width in widths {
+                width.to_bits().hash(&mut hasher);
+            }
+            (aligns, kind, last).hash(&mut hasher);
+        }
         for span in spans {
             (span.start, span.end, span.style, span.syntax).hash(&mut hasher);
         }
@@ -281,7 +534,17 @@ impl View {
         let key = hasher.finish();
         let fonts = &mut self.fonts;
         let layout = self.layouts.entry(key).or_insert_with(|| {
-            layout_line(
+            let table = grid
+                .as_ref()
+                .map(|(widths, aligns, kind, last, pad, advance)| TableRow {
+                    widths,
+                    aligns,
+                    kind: *kind,
+                    last: *last,
+                    pad: *pad,
+                    advance: *advance,
+                });
+            let mut layout = layout_line(
                 fonts,
                 &LineSpec {
                     text: &text,
@@ -294,8 +557,15 @@ impl View {
                     dim,
                     face: None,
                     bold: false,
+                    table,
                 },
-            )
+            );
+            if table.is_some() {
+                // Centred on the column when it is wider than it.
+                let width = layout.rows[0].width;
+                layout.hang = ((width - m.column) / 2.0).max(0.0).round();
+            }
+            layout
         });
         layout.last_used = self.frame;
         key
@@ -335,6 +605,7 @@ impl View {
                     dim: false,
                     face: Some(face),
                     bold,
+                    table: None,
                 },
             )
         });
@@ -591,6 +862,7 @@ impl View {
             ..Frame::default()
         };
         self.cursor_point = None;
+        self.tables.clear();
         self.pin_tops.clear();
         self.pins = if ed.margin_visible() { ed.pins() } else { Vec::new() };
         // The document first: where its lines fall decides where pinned
@@ -628,6 +900,7 @@ impl View {
         }
         let m = self.metrics(ed);
         frame.base.image_clip = [m.chrome, m.top, self.width - m.chrome, m.bottom - m.top];
+        self.table_controls(ed, &mut frame.base);
 
         self.status(ed, &m, &mut frame.base);
         self.tabs(ed, &m, &mut frame.base);
@@ -810,6 +1083,25 @@ impl View {
             let (line_start, line_end) = (ed.buf.line_start(line), ed.buf.line_end(line));
             let bytes = |chars: Range<usize>| layout.byte_of_col(chars.start)..layout.byte_of_col(chars.end);
 
+            if !layout.edges.is_empty()
+                && let Some((lines, _)) = ed.table_at(line)
+            {
+                let row = (line, y.max(m.top), (y + layout.height).min(m.bottom));
+                match self
+                    .tables
+                    .last_mut()
+                    .filter(|table| table.first == lines.start && table.other != focused)
+                {
+                    Some(table) => table.rows.push(row),
+                    None => self.tables.push(TableBox {
+                        first: lines.start,
+                        edges: layout.edges.iter().map(|edge| left + edge).collect(),
+                        rows: vec![row],
+                        clip,
+                        other: !focused,
+                    }),
+                }
+            }
             if ed.doc().block(line) == Block::Code {
                 let pad = (m.advance * 0.8).round();
                 layer.back.push(Quad {

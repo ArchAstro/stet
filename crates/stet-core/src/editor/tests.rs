@@ -941,7 +941,7 @@ fn the_menu_lists_runs_and_inserts() {
     keys(&mut ed, "<CR>");
     assert_eq!(
         ed.buf.text(),
-        "text\n| Column | Column |\n|--------|--------|\n|        |        |"
+        "text\n| Column | Column |\n| ------ | ------ |\n|        |        |"
     );
     // Themes preview as the selection moves and revert on Esc.
     let before = ed.theme.name.clone();
@@ -1595,4 +1595,430 @@ fn margin_notes_pin_to_places_in_the_document() {
     assert!(last.anchor.contains(" … ") && last.anchor.chars().count() < long.len());
     assert_eq!(ed.buf.slice(last.at.unwrap()), long);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+// ----- the clipboard beyond text, and tables --------------------------------
+
+type Taken = std::rc::Rc<std::cell::RefCell<(Option<String>, Option<String>)>>;
+
+/// A clipboard another program filled; `taken` records what the editor puts on it.
+#[derive(Default)]
+struct Offered {
+    clip: Clip,
+    image: Option<Vec<u8>>,
+    taken: Taken,
+}
+
+impl Clipboard for Offered {
+    fn get(&mut self) -> Option<String> {
+        self.clip.text.clone()
+    }
+    fn set(&mut self, text: &str) {
+        self.clip.text = Some(text.to_string());
+        *self.taken.borrow_mut() = (Some(text.to_string()), None);
+    }
+    fn contents(&mut self) -> Clip {
+        self.clip.clone()
+    }
+    fn image(&mut self) -> Option<Vec<u8>> {
+        self.image.clone()
+    }
+    fn set_rich(&mut self, text: &str, html: &str) {
+        self.clip.text = Some(text.to_string());
+        *self.taken.borrow_mut() = (Some(text.to_string()), Some(html.to_string()));
+    }
+}
+
+fn offered(text: &str, clipboard: Offered) -> Editor {
+    let mut ed = editor(text);
+    let (cursor, buffer) = (ed.cursor, ed.buf.text());
+    ed = Editor::new(ed.config.clone(), Box::new(clipboard));
+    ed.primary = Primary::Super;
+    ed.set_text(&buffer);
+    ed.cursor = cursor;
+    ed
+}
+
+fn web(html: &str, text: &str) -> Offered {
+    Offered {
+        clip: Clip {
+            text: Some(text.to_string()),
+            html: Some(html.to_string()),
+            files: Vec::new(),
+        },
+        ..Offered::default()
+    }
+}
+
+const TABLE_HTML: &str =
+    "<meta charset='utf-8'><table><tr><th>Name</th><th>Qty</th></tr><tr><td>Fig</td><td>12</td></tr></table>";
+const TABLE_MD: &str = "| Name | Qty |\n| ---- | --- |\n| Fig  | 12  |";
+
+#[test]
+fn pasting_html_gives_markdown_on_lines_of_its_own() {
+    // Mid-sentence: the table stands apart from the words around it.
+    let mut ed = offered("Before |after", web(TABLE_HTML, "Name\tQty\nFig\t12"));
+    keys(&mut ed, "i<D-v>");
+    assert_eq!(ed.buf.text(), format!("Before \n\n{TABLE_MD}\n\nafter"));
+    assert!(
+        ed.message
+            .as_ref()
+            .is_some_and(|message| message.text.contains("plain text"))
+    );
+    // One undo takes the whole paste back.
+    keys(&mut ed, "<Esc>u");
+    assert_eq!(ed.buf.text(), "Before after");
+
+    // On an empty line under a paragraph: one blank line is enough.
+    let mut ed = offered("Intro\n|\nOutro", web(TABLE_HTML, "x"));
+    keys(&mut ed, "i<D-v>");
+    assert_eq!(ed.buf.text(), format!("Intro\n\n{TABLE_MD}\n\nOutro"));
+
+    // Shift pastes the text as it is; so does switching the feature off.
+    let mut ed = offered("|", web(TABLE_HTML, "Name\tQty"));
+    keys(&mut ed, "i<D-S-v>");
+    assert_eq!(ed.buf.text(), "Name\tQty");
+    let mut ed = offered("|", web(TABLE_HTML, "Name\tQty"));
+    ed.config.smart_paste = false;
+    keys(&mut ed, "i<D-v>");
+    assert_eq!(ed.buf.text(), "Name\tQty");
+
+    // Inline formatting stays in the sentence.
+    let mut ed = offered("See | now", web("<a href=\"https://a.b\"><b>this</b></a>", "this"));
+    keys(&mut ed, "i<D-v>");
+    assert_eq!(ed.buf.text(), "See [**this**](https://a.b) now");
+
+    // HTML that only colours text (a code editor's) pastes as its text.
+    let mut ed = offered(
+        "|",
+        web("<div style=\"color:#fff\"><span>a  *b*</span></div>", "a  *b*"),
+    );
+    keys(&mut ed, "i<D-v>");
+    assert_eq!(ed.buf.text(), "a  *b*");
+}
+
+#[test]
+fn vim_put_places_a_pasted_block_below_the_line() {
+    let mut ed = offered("In|tro\nOutro", web(TABLE_HTML, "x"));
+    keys(&mut ed, "p");
+    assert_eq!(ed.buf.text(), format!("Intro\n\n{TABLE_MD}\n\nOutro"));
+    assert_eq!(ed.buf.line_of(ed.cursor), 2);
+    let mut ed = offered("Intro\n\nOut|ro", web(TABLE_HTML, "x"));
+    keys(&mut ed, "P");
+    assert_eq!(ed.buf.text(), format!("Intro\n\n{TABLE_MD}\n\nOutro"));
+    // Inline content is put like any other text.
+    let mut ed = offered("a| b", web("<b>x</b>", "x"));
+    keys(&mut ed, "p");
+    assert_eq!(ed.buf.text(), "a **x**b");
+}
+
+#[test]
+fn what_stet_copied_comes_back_unchanged_and_goes_out_with_html() {
+    let taken = Taken::default();
+    let clipboard = Offered {
+        taken: taken.clone(),
+        ..Offered::default()
+    };
+    let mut ed = offered("|A **bold** move\n\nplain words", clipboard);
+    keys(&mut ed, "yy");
+    let (text, html) = taken.borrow().clone();
+    assert_eq!(text.as_deref(), Some("A **bold** move\n"));
+    assert_eq!(html.as_deref(), Some("<p>A <strong>bold</strong> move</p>\n"));
+    // Even with HTML beside it, our own text is pasted as it was.
+    keys(&mut ed, "p");
+    assert_eq!(ed.buf.text(), "A **bold** move\nA **bold** move\n\nplain words");
+    // Plain words carry no HTML: nothing to add.
+    keys(&mut ed, "Gyy");
+    assert_eq!(taken.borrow().clone(), (Some("plain words\n".to_string()), None));
+    ed.config.copy_html = false;
+    keys(&mut ed, "ggyy");
+    assert_eq!(taken.borrow().1, None);
+}
+
+#[test]
+fn a_link_pasted_over_words_links_them() {
+    let clipboard = || Offered {
+        clip: Clip {
+            text: Some("https://stet.example/a_b".to_string()),
+            ..Clip::default()
+        },
+        ..Offered::default()
+    };
+    let mut ed = offered("read |the docs now", clipboard());
+    keys(&mut ed, "vee<D-v>");
+    assert_eq!(ed.buf.text(), "read [the docs](https://stet.example/a_b) now");
+    // With nothing selected it is just the address.
+    let mut ed = offered("|", clipboard());
+    keys(&mut ed, "i<D-v>");
+    assert_eq!(ed.buf.text(), "https://stet.example/a_b");
+}
+
+#[test]
+fn pasted_pictures_are_kept_beside_the_document() {
+    let dir = temp_dir("paste-image");
+    let path = dir.join("My notes.md");
+    std::fs::write(&path, "Look:\n").unwrap();
+    let picture = b"\x89PNG not really a picture, but long enough to be kept as one .....".to_vec();
+    let clipboard = || Offered {
+        image: Some(picture.clone()),
+        ..Offered::default()
+    };
+    let mut ed = offered("", clipboard());
+    ed.open(&path).unwrap();
+    keys(&mut ed, "Go<D-v><Esc>");
+    assert_eq!(ed.buf.text(), "Look:\n\n![](assets/My-notes-1.png)");
+    assert_eq!(std::fs::read(dir.join("assets/My-notes-1.png")).unwrap(), picture);
+    // The same picture again is the same file.
+    keys(&mut ed, "Go<D-v><Esc>");
+    assert!(
+        ed.buf
+            .text()
+            .ends_with("![](assets/My-notes-1.png)\n![](assets/My-notes-1.png)"),
+        "{}",
+        ed.buf.text()
+    );
+    assert_eq!(std::fs::read_dir(dir.join("assets")).unwrap().count(), 1);
+
+    // A picture inside pasted HTML is kept too; "copy image" prefers the picture itself.
+    let mut copied = web("<img src=\"https://x.example/remote.png\" alt=\"remote\">", "");
+    copied.image = Some(b"another picture entirely, also long enough to be worth keeping ....".to_vec());
+    let mut ed = offered("", copied);
+    ed.open(&path).unwrap();
+    keys(&mut ed, "Go<D-v><Esc>");
+    assert!(
+        ed.buf.text().ends_with("![](assets/My-notes-2.png)"),
+        "{}",
+        ed.buf.text()
+    );
+
+    // `image_dir = ""` keeps pictures next to the document.
+    let mut ed = offered("", clipboard());
+    ed.config.image_dir = String::new();
+    ed.open(&path).unwrap();
+    keys(&mut ed, "Go<D-v><Esc>");
+    assert!(ed.buf.text().ends_with("![](My-notes-1.png)"), "{}", ed.buf.text());
+    assert!(dir.join("My-notes-1.png").exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn pictures_pasted_before_the_first_save_move_in_with_the_document() {
+    let dir = temp_dir("paste-unsaved");
+    let picture = b"a picture pasted into a document that has no folder to live in yet ...".to_vec();
+    let mut ed = offered(
+        "|",
+        Offered {
+            image: Some(picture.clone()),
+            ..Offered::default()
+        },
+    );
+    // Nowhere to keep it: say so, paste nothing.
+    keys(&mut ed, "i<D-v>");
+    assert_eq!(ed.buf.text(), "");
+    assert!(ed.message.as_ref().is_some_and(|message| message.error));
+    keys(&mut ed, "<Esc>");
+
+    ed.recovery_dir = Some(dir.join("recovery"));
+    keys(&mut ed, "i<D-v><Esc>");
+    let held = dir.join("recovery/pasted/pasted-1.png");
+    assert!(held.exists(), "{}", ed.buf.text());
+    assert!(ed.buf.text().contains("recovery/pasted/pasted-1.png"));
+    ed.save(Some(&dir.join("essay.md")), false).unwrap();
+    assert_eq!(ed.buf.text(), "![](assets/essay-1.png)");
+    assert_eq!(std::fs::read(dir.join("assets/essay-1.png")).unwrap(), picture);
+    assert!(!held.exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("essay.md")).unwrap(),
+        "![](assets/essay-1.png)\n"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn copied_files_become_links_and_outside_pictures_are_copied_in() {
+    let dir = temp_dir("paste-files");
+    let outside = temp_dir("paste-files-outside");
+    std::fs::create_dir_all(dir.join("figures")).unwrap();
+    std::fs::write(dir.join("figures/chart one.png"), "chart").unwrap();
+    std::fs::write(dir.join("data.csv"), "a,b").unwrap();
+    std::fs::write(outside.join("Screen Shot.png"), "shot").unwrap();
+    let path = dir.join("doc.md");
+    std::fs::write(&path, "").unwrap();
+    let files = vec![
+        dir.join("figures/chart one.png"),
+        outside.join("Screen Shot.png"),
+        dir.join("data.csv"),
+    ];
+    let mut ed = offered(
+        "",
+        Offered {
+            clip: Clip {
+                text: Some("chart one.png".to_string()),
+                html: None,
+                files,
+            },
+            ..Offered::default()
+        },
+    );
+    ed.open(&path).unwrap();
+    keys(&mut ed, "i<D-v><Esc>");
+    assert_eq!(
+        ed.buf.text(),
+        "![](figures/chart%20one.png)\n![](assets/Screen-Shot.png)\n[data](data.csv)"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("assets/Screen-Shot.png")).unwrap(),
+        "shot"
+    );
+    // Dropping a file uses the same rule.
+    assert_eq!(
+        ed.file_link(&outside.join("Screen Shot.png")).unwrap(),
+        "![](assets/Screen-Shot.png)"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+    std::fs::remove_dir_all(outside).unwrap();
+}
+
+/// A table has pipes of its own, so the cursor is given as `(line, column)`.
+fn in_table(text: &str, line: usize, column: usize) -> Editor {
+    let mut ed = editor("");
+    ed.set_text(text);
+    ed.cursor = ed.buf.line_start(line) + column;
+    ed
+}
+
+fn place(ed: &Editor) -> (usize, usize) {
+    let line = ed.buf.line_of(ed.cursor);
+    (line, ed.cursor - ed.buf.line_start(line))
+}
+
+#[test]
+fn tables_are_tidied_and_tab_moves_between_cells() {
+    let mut ed = in_table("|Name|Qty|\n|-|-:|\n|Fig|12|", 2, 6);
+    keys(&mut ed, ":table<CR>");
+    assert_eq!(ed.buf.text(), "| Name | Qty |\n| ---- | --: |\n| Fig  |  12 |");
+    assert_eq!(place(&ed), (2, 11), "the cursor stays on the character it was on");
+
+    // Tab: next cell, then a new row after the last one.
+    let mut ed = in_table("| Name | Qty |\n| --- | --- |\n| Fig | 12 |", 0, 4);
+    keys(&mut ed, "i<Tab>");
+    assert_eq!(ed.buf.text(), "| Name | Qty |\n| ---- | --- |\n| Fig  | 12  |");
+    assert_eq!(place(&ed), (0, 12));
+    keys(&mut ed, "<Tab>");
+    assert_eq!(place(&ed), (2, 5), "the delimiter row is skipped");
+    keys(&mut ed, "<Tab><Tab>Plum<Tab>7<S-Tab>");
+    assert_eq!(
+        ed.buf.text(),
+        "| Name | Qty |\n| ---- | --- |\n| Fig  | 12  |\n| Plum | 7   |"
+    );
+    assert_eq!(place(&ed), (3, 6));
+    keys(&mut ed, "<S-Tab><S-Tab>");
+    assert_eq!(place(&ed), (2, 5));
+    keys(&mut ed, "<S-Tab><S-Tab>");
+    assert_eq!(place(&ed), (0, 6));
+
+    // Rows and columns.
+    let mut ed = in_table("| a | b |\n| - | - |\n| 1 | 2 |", 2, 6);
+    keys(&mut ed, ":table column<CR>");
+    assert_eq!(
+        ed.buf.text(),
+        "| a   | b   |     |\n| --- | --- | --- |\n| 1   | 2   |     |"
+    );
+    assert_eq!(place(&ed), (2, 14));
+    keys(&mut ed, ":table delcolumn<CR>:table row<CR>");
+    assert_eq!(
+        ed.buf.text(),
+        "| a   | b   |\n| --- | --- |\n| 1   | 2   |\n|     |     |"
+    );
+    keys(&mut ed, ":table delrow<CR>:table right<CR>");
+    assert_eq!(ed.buf.text(), "|   a | b   |\n| --: | --- |\n|   1 | 2   |");
+    // Outside a table the command makes one.
+    let mut ed = editor("Text|");
+    keys(&mut ed, ":table 2 1<CR>");
+    assert_eq!(ed.buf.text(), "Text\n\n|     |     |\n| --- | --- |\n|     |     |");
+    // Tab elsewhere is still a tab.
+    assert_eq!(run("|x", "i<Tab>"), "    |x");
+}
+
+#[test]
+fn the_shell_can_ask_for_a_tables_shape() {
+    let mut ed = editor("Intro\n\n| Name | Qty |\n|:--|--:|\n| Apple pie | 3 |\n\n> | a |\n> | - |\n");
+    ed.refresh();
+    let (lines, shape) = ed.table_at(4).unwrap();
+    assert_eq!(lines, 2..5);
+    assert_eq!(
+        shape.columns.iter().map(|column| column.width).collect::<Vec<_>>(),
+        [9, 3]
+    );
+    assert!(ed.table_at(0).is_none());
+    assert!(ed.table_at(6).is_none(), "a quoted table is shown as source");
+    ed.config.table_grid = false;
+    assert!(ed.table_at(4).is_none());
+}
+
+#[test]
+fn table_rows_and_columns_insert_move_and_answer_to_the_mouse() {
+    let table = "| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |";
+    let mut ed = in_table(table, 3, 2);
+    keys(&mut ed, ":table moveup<CR>");
+    assert_eq!(
+        ed.buf.text(),
+        "| a   | b   |\n| --- | --- |\n| 3   | 4   |\n| 1   | 2   |"
+    );
+    assert_eq!(place(&ed).0, 2, "the cursor goes with its row");
+    keys(&mut ed, ":table moveup<CR>");
+    assert!(
+        ed.message.as_ref().is_some_and(|message| message.error),
+        "not above the heading"
+    );
+    keys(&mut ed, ":table moveright<CR>:table row above<CR>");
+    assert_eq!(
+        ed.buf.text(),
+        "| b   | a   |\n| --- | --- |\n|     |     |\n| 4   | 3   |\n| 1   | 2   |"
+            .replace("| 1   | 2   |", "| 2   | 1   |")
+    );
+    keys(&mut ed, ":table column left<CR>");
+    assert!(
+        ed.buf.text().starts_with("|     | b   | a   |\n| --- | --- | --- |"),
+        "{}",
+        ed.buf.text()
+    );
+
+    // A column handle puts the cursor in that column and opens its menu.
+    let mut ed = in_table(table, 0, 0);
+    ed.table_handle(2, Some(1), 10.0, 10.0);
+    assert_eq!(place(&ed), (0, 6));
+    let labels: Vec<String> = ed
+        .context_menu
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(labels.contains(&"Delete column".to_string()) && !labels.contains(&"Delete row".to_string()));
+    keys(&mut ed, "X");
+    assert_eq!(ed.buf.text(), "| a   |\n| --- |\n| 1   |\n| 3   |");
+    // A row handle does the same for its row.
+    ed.table_handle(3, None, 10.0, 10.0);
+    keys(&mut ed, "D");
+    assert_eq!(ed.buf.text(), "| a   |\n| --- |\n| 1   |");
+    // The strips add at the end, wherever the cursor was.
+    ed.table_extend(0, true);
+    ed.table_extend(0, false);
+    assert_eq!(
+        ed.buf.text(),
+        "| a   |     |\n| --- | --- |\n| 1   |     |\n|     |     |"
+    );
+    // A right-click inside a table offers both.
+    ed.context_menu_at(ed.buf.line_start(2) + 2, 5.0, 5.0);
+    let labels: Vec<String> = ed
+        .context_menu
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(labels.contains(&"Delete row".to_string()) && labels.contains(&"Align right".to_string()));
 }

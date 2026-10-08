@@ -279,7 +279,46 @@ Every installed font is available.
 Shown under the line that references them: local files, `data:` URIs and
 `http(s)` URLs (PNG, JPEG, GIF, WebP, BMP). Remote images are fetched in the
 background and cached; `remote_images = false` keeps a document from
-contacting servers. Dropping an image on the window inserts a link to it.
+contacting servers.
+
+## Copy and paste
+
+Paste takes the richest thing on the clipboard and turns it into Markdown.
+
+1. **From a web page, a document or a spreadsheet** — headings, emphasis, links, lists, code and tables arrive as Markdown. A table becomes a pipe table with its alignment kept. Block content goes on lines of its own, wherever the cursor was.
+2. **A picture** (a screenshot, "Copy image") — saved as a PNG in `assets/` beside the document and linked. The same picture is saved once. In the margin it goes with the margin's files.
+3. **Files copied in Finder, or dropped on the window** — a picture from outside the document's folder is copied into `assets/`; anything else is linked where it is.
+4. **A link over a selection** — the selected words become the link's text.
+5. **Before the first save** — pictures wait in Stet's own folder and move in beside the document when you save it.
+6. `⇧⌘V` (`Ctrl+Shift+V`), or `:pasteplain`, pastes the plain text untouched. Vim's `p` and `P` paste the same way `⌘V` does.
+7. **Copying** puts the Markdown on the clipboard with an HTML rendering beside it, so it lands formatted in a mail or a document and stays Markdown in a text field. What Stet copied always pastes back exactly as it was.
+
+`smart_paste = false`, `copy_html = false` and `image_dir = "…"` change any of this.
+
+## Tables
+
+A table is drawn as a grid: the pipes become rules, columns line up whatever
+the source looks like, and a long cell wraps inside its column. A table too
+wide for the text column uses the space beside it. The source is still what
+you edit: every character is under the cursor where you would expect it.
+
+| Key or command | Does |
+| --- | --- |
+| `Tab` / `Shift-Tab` (insert mode) | Next / previous cell; a new row after the last |
+| `:table` | Tidy the source: one space of padding, pipes lined up |
+| `:table 3 2` | Insert an empty table, three columns by two rows |
+| `:table row` / `:table column` | Add one after the cursor's (`row above`, `column left` for before) |
+| `:table moveup` / `movedown` / `moveleft` / `moveright` | Move the cursor's row or column |
+| `:table delrow` / `:table delcolumn` | Remove the cursor's |
+| `:table left` / `center` / `right` | Align the cursor's column |
+
+With the mouse:
+
+1. **Hover** a table: a grip appears above the column and beside the row under the pointer, and a `+` strip on the right and below.
+2. **Click a grip** for that column's or row's menu: insert, move, align, delete.
+3. **Click a `+` strip** to add a column or a row at the end.
+4. **Right-click** any cell for all of it in one menu; each item has a letter, so `K` or `gm` then the letter works from the keyboard. `table_grid = false` shows the
+source as it is.
 
 ## Never losing text
 
@@ -308,6 +347,10 @@ regex_search = true
 highlight = true
 link_completion = true
 remote_images = true
+smart_paste = true     # paste HTML, pictures and files as Markdown
+copy_html = true       # copy with an HTML rendering beside the Markdown
+image_dir = "assets"   # where pasted pictures go, beside the document
+table_grid = true      # draw tables as a grid
 sidebar = false
 focus = false
 typewriter = false

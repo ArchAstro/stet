@@ -19,7 +19,7 @@ wgpu = "30"
 glyphon = "0.12"
 pollster = "1"
 bytemuck = { version = "1", features = ["derive"] }
-arboard = { version = "3", default-features = false }
+arboard = { version = "3", default-features = false, features = ["image-data"] }
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "pollster"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 directories = "6"

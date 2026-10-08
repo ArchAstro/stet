@@ -8,10 +8,12 @@ mod margin;
 mod menu;
 mod motion;
 mod palette;
+mod paste;
 mod pins;
 mod remote;
 mod sidebar;
 mod suggest;
+mod tables;
 mod tabs;
 mod vim;
 
@@ -23,6 +25,7 @@ pub use margin::margin_path;
 pub use menu::{ContextMenu, MenuAt, MenuItem};
 pub use motion::Matcher;
 pub use palette::{Act, Item, Palette, PaletteKind};
+pub use paste::{Clip, is_picture};
 pub use pins::Pin;
 pub use remote::{Applied, RemoteEdit, Session, Snapshot, Target};
 pub use sidebar::{Entry, EntryKind, Sidebar};
@@ -47,6 +50,21 @@ type CodeCache = (Option<u64>, HashMap<usize, Option<Lines>>);
 pub trait Clipboard {
     fn get(&mut self) -> Option<String>;
     fn set(&mut self, text: &str);
+    /// Everything on offer: text, HTML, copied files.
+    fn contents(&mut self) -> Clip {
+        Clip {
+            text: self.get(),
+            ..Clip::default()
+        }
+    }
+    /// The picture on the clipboard, as a PNG file's bytes.
+    fn image(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+    /// Text, with an HTML rendering for programs that prefer one.
+    fn set_rich(&mut self, text: &str, _html: &str) {
+        self.set(text)
+    }
 }
 
 #[derive(Default)]
@@ -182,6 +200,8 @@ pub struct Editor {
     /// Visible text rows, kept current by the shell for page motions.
     pub view_rows: usize,
     clipboard: Box<dyn Clipboard>,
+    /// The text this editor last put on the clipboard.
+    copied: Option<String>,
     effects: Vec<Effect>,
     doc: Doc,
     doc_revision: Option<u64>,
@@ -238,6 +258,8 @@ pub struct Editor {
     highlighter: RefCell<Highlighter>,
     /// Highlighted code blocks of the current analysis, by block index.
     code_cache: RefCell<CodeCache>,
+    /// Tables of the current analysis.
+    table_cache: RefCell<tables::TableCache>,
 }
 
 impl Editor {
@@ -265,6 +287,7 @@ impl Editor {
             },
             view_rows: 30,
             clipboard,
+            copied: None,
             effects: Vec::new(),
             doc: Doc::default(),
             doc_revision: None,
@@ -303,6 +326,7 @@ impl Editor {
             forward: Vec::new(),
             highlighter: RefCell::new(Highlighter::default()),
             code_cache: RefCell::new((None, HashMap::new())),
+            table_cache: RefCell::new((None, Vec::new())),
             config,
         }
     }
@@ -484,6 +508,9 @@ impl Editor {
             self.effects.push(Effect::SaveAsDialog);
             return Ok(());
         };
+        if self.path.is_none() && !self.margin_active {
+            self.adopt_images(&std::path::absolute(&path).unwrap_or(path.clone()));
+        }
         if same_file && !force && self.disk_mtime != mtime(&path) && self.disk_mtime.is_some() {
             return Err("file changed on disk; :w! to overwrite, :e! to reload".to_string());
         }
@@ -931,7 +958,11 @@ impl Editor {
                 self.anchor = None;
                 self.cursor = self.edit(range, "").end;
             }
-            Key::Tab => self.tab(mods.shift),
+            Key::Tab => {
+                if !self.table_tab(mods.shift) {
+                    self.tab(mods.shift)
+                }
+            }
             _ => {
                 self.close_group();
                 self.navigate(key, mods, word, line_wise);
@@ -1204,7 +1235,7 @@ impl Editor {
             ('[' | '{', true) => Shortcut::Tab(-1),
             (']' | '}', true) => Shortcut::Tab(1),
             ('1'..='9', false) => Shortcut::TabAt(c as usize - '1' as usize),
-            ('v', true) => Shortcut::Paste,
+            ('v', true) => Shortcut::PastePlain,
             ('z', false) => Shortcut::Undo,
             ('z', true) | ('y', false) => Shortcut::Redo,
             ('x', false) => Shortcut::Cut,
@@ -1258,7 +1289,8 @@ impl Editor {
             Shortcut::Redo => self.redo(1),
             Shortcut::Copy | Shortcut::Cut => {
                 let Some(range) = self.selection() else { return };
-                self.clipboard.set(&self.buf.slice(range.clone()));
+                let text = self.buf.slice(range.clone());
+                self.copy_out(&text);
                 if matches!(action, Shortcut::Cut) {
                     self.anchor = None;
                     if self.mode != Mode::Insert {
@@ -1267,11 +1299,8 @@ impl Editor {
                     self.cursor = self.edit(range, "").start;
                 }
             }
-            Shortcut::Paste => {
-                if let Some(text) = self.clipboard.get() {
-                    self.insert_text(&text);
-                }
-            }
+            Shortcut::Paste => self.paste(false),
+            Shortcut::PastePlain => self.paste(true),
             Shortcut::SelectAll => {
                 if self.buf.is_empty() {
                     return;
@@ -1454,6 +1483,7 @@ enum Shortcut {
     Cut,
     Copy,
     Paste,
+    PastePlain,
     SelectAll,
     Find,
     FindNext(bool),

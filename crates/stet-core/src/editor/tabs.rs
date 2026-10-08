@@ -139,6 +139,7 @@ impl Editor {
         self.cmdline = None;
         self.anchor = None;
         self.code_cache.borrow_mut().0 = None;
+        self.table_cache.borrow_mut().0 = None;
         Stash {
             buf: std::mem::take(&mut self.buf),
             cursor: self.cursor,
@@ -167,6 +168,7 @@ impl Editor {
         self.anchor = None;
         self.group_open = false;
         self.code_cache.borrow_mut().0 = None;
+        self.table_cache.borrow_mut().0 = None;
         self.mode = if self.config.vim { Mode::Normal } else { Mode::Insert };
         self.clamp_cursor();
     }
@@ -204,6 +206,7 @@ impl Editor {
         swap(&mut self.doc_id, &mut other.doc_id);
         swap(&mut self.snapshot, &mut other.snapshot);
         self.code_cache.borrow_mut().0 = None;
+        self.table_cache.borrow_mut().0 = None;
     }
 
     /// Resets the active slot to an empty, untitled document.

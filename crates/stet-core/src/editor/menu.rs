@@ -17,6 +17,7 @@ enum Do {
     CopySelection,
     Cut,
     Paste,
+    PastePlain,
     Command(&'static str),
     Palette(PaletteKind),
     CloseTab(usize),
@@ -122,11 +123,27 @@ impl Editor {
             menu.add("Cut", "dx", Do::Cut);
             menu.add("Copy", "yc", Do::CopySelection);
             menu.add("Paste", "pv", Do::Paste);
+            menu.add("Paste as plain text", "V", Do::PastePlain);
             menu.add("Bold", "b", Do::Command("bold"));
             menu.add("Italic", "i", Do::Command("italic"));
             menu.add("Make a link", "n", Do::Command("link"));
         } else {
             menu.add("Paste", "pv", Do::Paste);
+            menu.add("Paste as plain text", "V", Do::PastePlain);
+        }
+        if self.doc.block(line) == crate::markdown::Block::Table {
+            let body = self.table_lines(line).is_some_and(|lines| line >= lines.start + 2);
+            menu.group();
+            Self::table_items(&mut menu, true, true, body);
+            // In a table the menu is about the table.
+            menu.group();
+            menu.add("All commands…", "m", Do::Palette(PaletteKind::Help));
+            self.context_menu = Some(ContextMenu {
+                items: menu.items,
+                selected: 0,
+                at,
+            });
+            return;
         }
         if self.path.is_some() || self.in_margin() {
             menu.group();
@@ -192,6 +209,47 @@ impl Editor {
         self.palette = None;
         self.sidebar.focused = false;
         self.open_context_menu(MenuAt::Point(x, y));
+    }
+
+    /// What can be done to the row and the column the cursor is in.
+    fn table_items(menu: &mut Builder, rows: bool, columns: bool, body: bool) {
+        if rows {
+            menu.add("Insert row above", "O", Do::Command("table row above"));
+            menu.add("Insert row below", "o", Do::Command("table row"));
+            if body {
+                menu.add("Move row up", "K", Do::Command("table moveup"));
+                menu.add("Move row down", "J", Do::Command("table movedown"));
+                menu.add("Delete row", "D", Do::Command("table delrow"));
+            }
+            menu.group();
+        }
+        if columns {
+            menu.add("Insert column left", "I", Do::Command("table column left"));
+            menu.add("Insert column right", "a", Do::Command("table column"));
+            menu.add("Move column left", "H", Do::Command("table moveleft"));
+            menu.add("Move column right", "L", Do::Command("table moveright"));
+            menu.group();
+            menu.add("Align left", "[", Do::Command("table left"));
+            menu.add("Align centre", "=", Do::Command("table center"));
+            menu.add("Align right", "]", Do::Command("table right"));
+            menu.group();
+            menu.add("Delete column", "X", Do::Command("table delcolumn"));
+            menu.group();
+        }
+        menu.add("Tidy the table's source", "T", Do::Command("table"));
+    }
+
+    /// The menu of a table's row or column handle.
+    pub(super) fn table_menu(&mut self, column: bool, body: bool, x: f32, y: f32) {
+        let mut menu = Builder::default();
+        Self::table_items(&mut menu, !column, column, body);
+        self.palette = None;
+        self.sidebar.focused = false;
+        self.context_menu = Some(ContextMenu {
+            items: menu.items,
+            selected: 0,
+            at: MenuAt::Point(x, y),
+        });
     }
 
     /// A right-click on a file browser row.
@@ -304,7 +362,8 @@ impl Editor {
             }
             Do::CopySelection | Do::Cut => {
                 let Some(range) = self.selection() else { return };
-                self.clipboard.set(&self.buf.slice(range.clone()));
+                let text = self.buf.slice(range.clone());
+                self.copy_out(&text);
                 if item.action == Do::Cut {
                     self.anchor = None;
                     if self.mode != Mode::Insert {
@@ -314,11 +373,9 @@ impl Editor {
                     self.close_group();
                 }
             }
-            Do::Paste => {
-                if let Some(text) = self.clipboard.get() {
-                    self.insert_text(&text);
-                    self.close_group();
-                }
+            Do::Paste | Do::PastePlain => {
+                self.paste(item.action == Do::PastePlain);
+                self.close_group();
             }
             Do::Command(line) => self.run_command(line),
             Do::Palette(kind) => self.open_palette(kind),

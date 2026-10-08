@@ -28,7 +28,7 @@ const USAGE: &str = "stet [options] [file]
   --fonts                 list the installed font families and exit
   -n, --new-window        open a separate window even if stet is already running
   -f, --foreground        stay attached to the terminal until the window closes (also --wait)
-  --drive                 read scripted input from stdin (keys, click, drag, scroll, resize, drop, quit)
+  --drive                 read scripted input from stdin (keys, click, move, drag, scroll, resize, drop, quit)
   -V, --version           print the version
   -h, --help              this text
 

@@ -8,6 +8,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use stet_core::Config;
 use stet_core::markdown::{Block, Span, style};
+use stet_core::table;
 use stet_core::theme::{EditorColors, Rgb};
 
 /// Which configured family a piece of text uses.
@@ -185,8 +186,20 @@ pub struct Decoration {
     pub radius: f32,
 }
 
+/// The text of one table cell, placed inside its row.
+pub struct CellText {
+    pub buffer: Buffer,
+    pub x: f32,
+    pub y: f32,
+}
+
 pub struct LineLayout {
     pub buffer: Buffer,
+    /// A table row is drawn cell by cell instead.
+    pub cells: Vec<CellText>,
+    grid: bool,
+    /// A table row's column edges, left to right.
+    pub edges: Vec<f32>,
     pub text: String,
     pub rows: Vec<Row>,
     clusters: Vec<Cluster>,
@@ -210,6 +223,31 @@ pub struct LineSpec<'a> {
     /// Overrides the family the block would use (interface labels).
     pub face: Option<Face>,
     pub bold: bool,
+    /// The line is a row of a table drawn as a grid.
+    pub table: Option<TableRow<'a>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RowKind {
+    Header,
+    /// The `| --- | :-: |` row.
+    Rule,
+    Body,
+}
+
+/// Where a table row's columns are.
+#[derive(Clone, Copy)]
+pub struct TableRow<'a> {
+    /// Width of each column's text, in pixels.
+    pub widths: &'a [f32],
+    pub aligns: &'a [table::Align],
+    pub kind: RowKind,
+    /// The last row closes the table.
+    pub last: bool,
+    /// Space between a column's rule and its text.
+    pub pad: f32,
+    /// Width of one monospace character.
+    pub advance: f32,
 }
 
 fn span_color(span: &Span, base: Rgb, c: &EditorColors) -> Rgb {
@@ -245,71 +283,152 @@ fn span_color(span: &Span, base: Rgb, c: &EditorColors) -> Rgb {
     }
 }
 
-pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
-    let c = spec.colors;
-    let dim = |rgb: Rgb| if spec.dim { rgb.mix(c.background, 0.3) } else { rgb };
-    let block_mono = matches!(spec.block, Block::Code | Block::Table | Block::Frontmatter);
-    let base_color = match spec.block {
-        Block::Heading(_) => c.heading,
-        Block::Frontmatter => c.muted,
-        Block::Rule => c.marker,
-        _ => c.text,
-    };
-    let heading = matches!(spec.block, Block::Heading(_));
-    let base_weight = if heading || spec.bold {
-        Weight::BOLD
-    } else {
-        Weight::NORMAL
-    };
-    let plain = Span {
-        start: 0,
-        end: 0,
-        style: 0,
-        syntax: 0,
-    };
+/// How the spans of a line are drawn.
+struct Styler<'a> {
+    spec: &'a LineSpec<'a>,
+    block_mono: bool,
+    base_color: Rgb,
+    base_weight: Weight,
+}
 
-    let mut buffer = Buffer::new(&mut fonts.system, Metrics::new(spec.font, spec.line));
-    buffer.set_wrap(Wrap::WordOrGlyph);
-    buffer.set_tab_width(4);
-    buffer.set_size(Some(spec.width.max(spec.font * 4.0)), None);
-    {
-        let attrs = |span: &Span| {
-            let bits = span.style;
-            let mono = block_mono || bits & (style::CODE | style::MATH) != 0;
-            let face = spec.face.unwrap_or(if mono { Face::Mono } else { Face::Prose });
-            let mut attrs = Attrs::new()
-                .family(fonts.family(face))
-                .weight(if bits & style::BOLD != 0 {
-                    Weight::BOLD
-                } else {
-                    base_weight
-                })
-                .color(color(dim(span_color(span, base_color, c))));
-            if span.syntax == stet_core::markdown::syntax::COMMENT {
-                attrs = attrs.style(Style::Italic);
-            }
-            if bits & style::ITALIC != 0 {
-                attrs = attrs.style(Style::Italic);
-            }
-            attrs
-        };
-        let mut pieces: Vec<(&str, Attrs)> = Vec::with_capacity(spec.spans.len() * 2 + 1);
-        let mut at = 0;
-        for span in spec.spans {
-            let (start, end) = (span.start as usize, span.end as usize);
-            if start > at {
-                pieces.push((&spec.text[at..start], attrs(&plain)));
-            }
-            pieces.push((&spec.text[start..end], attrs(span)));
-            at = end;
+impl<'a> Styler<'a> {
+    fn new(spec: &'a LineSpec<'a>) -> Styler<'a> {
+        let c = spec.colors;
+        let heading = matches!(spec.block, Block::Heading(_));
+        let header = spec.table.is_some_and(|table| table.kind == RowKind::Header);
+        Styler {
+            spec,
+            block_mono: matches!(spec.block, Block::Code | Block::Table | Block::Frontmatter),
+            base_color: match spec.block {
+                Block::Heading(_) => c.heading,
+                Block::Frontmatter => c.muted,
+                Block::Rule => c.marker,
+                Block::Table if spec.table.is_some_and(|table| table.kind == RowKind::Rule) => c.marker,
+                _ => c.text,
+            },
+            base_weight: if heading || spec.bold || header {
+                Weight::BOLD
+            } else {
+                Weight::NORMAL
+            },
         }
-        if at < spec.text.len() || pieces.is_empty() {
-            pieces.push((&spec.text[at..], attrs(&plain)));
-        }
-        let default = attrs(&plain);
-        buffer.set_rich_text(pieces, &default, Shaping::Advanced, None::<Align>);
     }
-    buffer.shape_until_scroll(&mut fonts.system, false);
+
+    fn dim(&self, rgb: Rgb) -> Rgb {
+        if self.spec.dim {
+            rgb.mix(self.spec.colors.background, 0.3)
+        } else {
+            rgb
+        }
+    }
+
+    /// Shapes `text`, whose `spans` are relative to it, wrapped to `width`.
+    fn shape(&self, fonts: &mut Fonts, text: &str, spans: &[Span], width: f32, align: Option<Align>) -> Buffer {
+        let spec = self.spec;
+        let plain = Span {
+            start: 0,
+            end: 0,
+            style: 0,
+            syntax: 0,
+        };
+        let mut buffer = Buffer::new(&mut fonts.system, Metrics::new(spec.font, spec.line));
+        buffer.set_wrap(Wrap::WordOrGlyph);
+        buffer.set_tab_width(4);
+        buffer.set_size(Some(width), None);
+        {
+            let attrs = |span: &Span| {
+                let bits = span.style;
+                let mono = self.block_mono || bits & (style::CODE | style::MATH) != 0;
+                let face = spec.face.unwrap_or(if mono { Face::Mono } else { Face::Prose });
+                let mut attrs = Attrs::new()
+                    .family(fonts.family(face))
+                    .weight(if bits & style::BOLD != 0 {
+                        Weight::BOLD
+                    } else {
+                        self.base_weight
+                    })
+                    .color(color(self.dim(span_color(span, self.base_color, spec.colors))));
+                if span.syntax == stet_core::markdown::syntax::COMMENT {
+                    attrs = attrs.style(Style::Italic);
+                }
+                if bits & style::ITALIC != 0 {
+                    attrs = attrs.style(Style::Italic);
+                }
+                attrs
+            };
+            let mut pieces: Vec<(&str, Attrs)> = Vec::with_capacity(spans.len() * 2 + 1);
+            let mut at = 0;
+            for span in spans {
+                let (start, end) = (span.start as usize, span.end as usize);
+                if start > at {
+                    pieces.push((&text[at..start], attrs(&plain)));
+                }
+                pieces.push((&text[start..end], attrs(span)));
+                at = end;
+            }
+            if at < text.len() || pieces.is_empty() {
+                pieces.push((&text[at..], attrs(&plain)));
+            }
+            let default = attrs(&plain);
+            buffer.set_rich_text(pieces, &default, Shaping::Advanced, align);
+        }
+        buffer.shape_until_scroll(&mut fonts.system, false);
+        buffer
+    }
+
+    /// Backgrounds and strokes of the spans, once the layout knows where
+    /// every byte is.
+    fn decorate(&self, layout: &mut LineLayout) {
+        let (spec, c) = (self.spec, self.spec.colors);
+        let thickness = (spec.font / 14.0).round().max(1.0);
+        for span in spec.spans {
+            let bits = span.style;
+            let range = span.start as usize..span.end as usize;
+            let background = if bits & style::INS != 0 {
+                Some(c.insert_background)
+            } else if bits & style::DEL != 0 {
+                Some(c.delete_background)
+            } else if bits & style::CODE != 0 && !self.block_mono {
+                Some(c.code_background)
+            } else {
+                None
+            };
+            let line_color = self.dim(span_color(span, self.base_color, c));
+            for (row, x0, x1) in layout.ranges(range) {
+                let row = &layout.rows[row];
+                if let Some(background) = background {
+                    layout.decorations.push(Decoration {
+                        rect: [x0, row.top + spec.line * 0.08, x1 - x0, row.height - spec.line * 0.16],
+                        color: self.dim(background),
+                        layer: Layer::Back,
+                        radius: spec.font * 0.18,
+                    });
+                }
+                let mut rule = |y: f32| {
+                    layout.decorations.push(Decoration {
+                        rect: [x0, (row.baseline + y).round(), x1 - x0, thickness],
+                        color: line_color,
+                        layer: Layer::Front,
+                        radius: 0.0,
+                    });
+                };
+                if bits & (style::STRIKE | style::DEL) != 0 && bits & style::MARKER == 0 {
+                    rule(-spec.font * 0.3);
+                }
+                if bits & style::INS != 0 {
+                    rule(spec.font * 0.16);
+                }
+            }
+        }
+    }
+}
+
+pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
+    let styler = Styler::new(spec);
+    if let Some(table) = &spec.table {
+        return layout_row(fonts, spec, &styler, table);
+    }
+    let buffer = styler.shape(fonts, spec.text, spec.spans, spec.width.max(spec.font * 4.0), None);
 
     let mut rows = Vec::new();
     let mut clusters = Vec::new();
@@ -341,6 +460,9 @@ pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
     let height = rows.last().map_or(spec.line, |row| row.top + row.height);
     let mut layout = LineLayout {
         buffer,
+        cells: Vec::new(),
+        grid: false,
+        edges: Vec::new(),
         text: spec.text.to_string(),
         rows,
         clusters,
@@ -358,46 +480,210 @@ pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
         layout.hang = layout.x_of_byte(0, first.end as usize);
     }
 
-    let thickness = (spec.font / 14.0).round().max(1.0);
-    for span in spec.spans {
-        let bits = span.style;
-        let range = span.start as usize..span.end as usize;
-        let background = if bits & style::INS != 0 {
-            Some(c.insert_background)
-        } else if bits & style::DEL != 0 {
-            Some(c.delete_background)
-        } else if bits & style::CODE != 0 && !block_mono {
-            Some(c.code_background)
+    styler.decorate(&mut layout);
+    layout
+}
+
+/// A table row: every cell shaped on its own and wrapped inside its column,
+/// with a cluster for each byte of the source, so cursors, selections and
+/// clicks work on the grid as they do on a line of text.
+fn layout_row(fonts: &mut Fonts, spec: &LineSpec, styler: &Styler, table: &TableRow) -> LineLayout {
+    let c = spec.colors;
+    let row = table::Row::parse(spec.text);
+    let columns = table.widths.len().max(row.cells.len());
+    let width_of = |column: usize| table.widths.get(column).copied().unwrap_or(table.advance * 3.0);
+    // Left edge of each column, and the right edge of the last.
+    let mut edges = Vec::with_capacity(columns + 1);
+    let mut x = 0.0;
+    for column in 0..columns {
+        edges.push(x);
+        x += width_of(column) + table.pad * 2.0;
+    }
+    edges.push(x);
+    let total = x;
+    let pipe = table.pad.min(table.advance);
+
+    let mut cells = Vec::new();
+    // Clusters by visual row; cells come in order, so each stays sorted.
+    let mut lines: Vec<Vec<Cluster>> = vec![Vec::new()];
+    let mut baseline = spec.line * 0.75;
+    for (index, cell) in row.cells.iter().enumerate() {
+        let (left, right) = (edges[index], edges[index + 1]);
+        let (origin, width) = (left + table.pad, width_of(index));
+        if row.leading || index > 0 {
+            lines[0].push(Cluster {
+                start: cell.outer.start as u32 - 1,
+                end: cell.outer.start as u32,
+                x: left,
+                w: pipe,
+            });
+        }
+        let align = table.aligns.get(index).copied().unwrap_or_default();
+        let content = &spec.text[cell.text.clone()];
+        // The rule row never wraps: what does not fit is not drawn.
+        let shown = if table.kind == RowKind::Rule {
+            let fits = (width / table.advance).floor().max(1.0) as usize;
+            &content[..content.char_indices().nth(fits).map_or(content.len(), |(byte, _)| byte)]
         } else {
-            None
+            content
         };
-        let line_color = dim(span_color(span, base_color, c));
-        for (row, x0, x1) in layout.ranges(range) {
-            let row = &layout.rows[row];
-            if let Some(background) = background {
-                layout.decorations.push(Decoration {
-                    rect: [x0, row.top + spec.line * 0.08, x1 - x0, row.height - spec.line * 0.16],
-                    color: dim(background),
-                    layer: Layer::Back,
-                    radius: spec.font * 0.18,
-                });
-            }
-            let mut rule = |y: f32| {
-                layout.decorations.push(Decoration {
-                    rect: [x0, (row.baseline + y).round(), x1 - x0, thickness],
-                    color: line_color,
-                    layer: Layer::Front,
-                    radius: 0.0,
-                });
+        // Where the text starts and ends: first row's left, last row's right.
+        let anchor = match align {
+            table::Align::Right => origin + width,
+            table::Align::Center => origin + width / 2.0,
+            _ => origin,
+        };
+        let (mut first_x, mut last_x, mut last_row) = (anchor, anchor, 0);
+        let mut drawn: Vec<Vec<Cluster>> = Vec::new();
+        if !shown.is_empty() {
+            let spans: Vec<Span> = spec
+                .spans
+                .iter()
+                .filter(|span| {
+                    (span.start as usize) < cell.text.start + shown.len() && cell.text.start < span.end as usize
+                })
+                .map(|span| Span {
+                    start: (span.start as usize).max(cell.text.start) as u32 - cell.text.start as u32,
+                    end: ((span.end as usize).min(cell.text.start + shown.len()) - cell.text.start) as u32,
+                    ..*span
+                })
+                .collect();
+            let aligned = match align {
+                table::Align::Right => Some(Align::Right),
+                table::Align::Center => Some(Align::Center),
+                _ => None,
             };
-            if bits & (style::STRIKE | style::DEL) != 0 && bits & style::MARKER == 0 {
-                rule(-spec.font * 0.3);
+            // A little slack, so a cell exactly as wide as its column stays on one line.
+            let buffer = styler.shape(fonts, shown, &spans, width + table.advance * 0.3, aligned);
+            let shift = cell.text.start as u32;
+            for (at, run) in buffer.layout_runs().enumerate() {
+                baseline = run.line_y - run.line_top;
+                let start = run.glyphs.first().map_or(anchor, |glyph| origin + glyph.x);
+                let end = run.glyphs.last().map_or(anchor, |glyph| origin + glyph.x + glyph.w);
+                if at == 0 {
+                    first_x = start;
+                }
+                (last_x, last_row) = (end, at);
+                let clusters = run.glyphs.iter().map(|glyph| Cluster {
+                    start: glyph.start as u32 + shift,
+                    end: glyph.end as u32 + shift,
+                    x: origin + glyph.x,
+                    w: glyph.w,
+                });
+                drawn.push(clusters.collect());
             }
-            if bits & style::INS != 0 {
-                rule(spec.font * 0.16);
+            if !drawn.is_empty() {
+                cells.push(CellText {
+                    buffer,
+                    x: origin,
+                    y: 0.0,
+                });
             }
         }
+        // What is not drawn still has a place: the padding around the
+        // text shares the gap it sits in.
+        let squeeze = |bytes: Range<usize>, from: f32, to: f32| -> Vec<Cluster> {
+            let count = spec.text[bytes.clone()].chars().count().max(1);
+            let step = ((to - from) / count as f32).clamp(0.0, table.advance);
+            let made = spec.text[bytes.clone()]
+                .char_indices()
+                .enumerate()
+                .map(|(nth, (byte, c))| Cluster {
+                    start: (bytes.start + byte) as u32,
+                    end: (bytes.start + byte + c.len_utf8()) as u32,
+                    x: from + step * nth as f32,
+                    w: step,
+                });
+            made.collect()
+        };
+        let lead = cell.outer.start..cell.text.start;
+        let lead_width = table.advance * spec.text[lead.clone()].chars().count() as f32;
+        lines[0].extend(squeeze(lead, (first_x - lead_width).max(left + pipe), first_x));
+        for (at, clusters) in drawn.into_iter().enumerate() {
+            if lines.len() <= at {
+                lines.push(Vec::new());
+            }
+            lines[at].extend(clusters);
+        }
+        let hidden = cell.text.start + shown.len()..cell.outer.end;
+        lines[last_row].extend(squeeze(hidden, last_x, right));
     }
+    // The closing pipe, and anything after it.
+    if let Some(&last) = row
+        .pipes
+        .last()
+        .filter(|last| row.cells.last().is_none_or(|cell| **last >= cell.outer.end))
+    {
+        let at = edges[row.cells.len().min(columns)];
+        lines[0].push(Cluster {
+            start: last as u32,
+            end: last as u32 + 1,
+            x: at,
+            w: pipe,
+        });
+    }
+
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut clusters = Vec::new();
+    for (at, line) in lines.into_iter().enumerate() {
+        let first = clusters.len();
+        clusters.extend(line);
+        rows.push(Row {
+            top: at as f32 * spec.line,
+            height: spec.line,
+            baseline: at as f32 * spec.line + baseline,
+            width: total,
+            clusters: first..clusters.len(),
+        });
+    }
+    let height = rows.len() as f32 * spec.line;
+    let mut layout = LineLayout {
+        buffer: Buffer::new(&mut fonts.system, Metrics::new(spec.font, spec.line)),
+        cells,
+        grid: true,
+        edges: edges.clone(),
+        text: spec.text.to_string(),
+        rows,
+        clusters,
+        height,
+        hang: 0.0,
+        decorations: Vec::new(),
+        last_used: 0,
+    };
+
+    let hair = (spec.font / 16.0).round().max(1.0);
+    let rule = styler.dim(c.rule);
+    let mut line = |rect: [f32; 4], color: Rgb, layer: Layer| {
+        layout.decorations.push(Decoration {
+            rect,
+            color,
+            layer,
+            radius: 0.0,
+        })
+    };
+    if table.kind != RowKind::Body {
+        line([0.0, 0.0, total, height], styler.dim(c.code_background), Layer::Back);
+    }
+    // Rules: around the table, under its heading, faintly between rows.
+    match table.kind {
+        RowKind::Header => line([0.0, 0.0, total + hair, hair], rule, Layer::Front),
+        RowKind::Rule => line([0.0, height - hair, total + hair, hair], rule, Layer::Front),
+        RowKind::Body => {}
+    }
+    if table.kind == RowKind::Body && !table.last {
+        line(
+            [0.0, height - hair, total, hair],
+            rule.mix(c.background, 0.55),
+            Layer::Front,
+        );
+    }
+    if table.last {
+        line([0.0, height - hair, total + hair, hair], rule, Layer::Front);
+    }
+    for edge in &edges {
+        line([*edge, 0.0, hair, height], rule, Layer::Front);
+    }
+    styler.decorate(&mut layout);
     layout
 }
 
@@ -419,6 +705,25 @@ impl LineLayout {
 
     /// The row a byte offset is drawn on. A wrap point belongs to the row it starts.
     pub fn row_of_byte(&self, byte: usize) -> usize {
+        if self.grid {
+            // Cells wrap side by side, so rows do not hold consecutive bytes.
+            let holds = |row: &usize| {
+                self.row_clusters(*row)
+                    .iter()
+                    .any(|cluster| (cluster.start as usize..cluster.end as usize).contains(&byte))
+            };
+            return (0..self.rows.len()).find(holds).unwrap_or_else(|| {
+                // Past the last character: stay with what comes before it.
+                (0..self.rows.len())
+                    .rev()
+                    .find(|row| {
+                        self.row_clusters(*row)
+                            .iter()
+                            .any(|cluster| cluster.end as usize == byte)
+                    })
+                    .unwrap_or(0)
+            });
+        }
         (0..self.rows.len())
             .rev()
             .find(|&row| {

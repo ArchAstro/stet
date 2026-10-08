@@ -162,6 +162,8 @@ impl Editor {
                 }
                 self.agent_send(arg);
             }
+            "table" | "tableformat" | "tf" => self.table_command(arg),
+            "pasteplain" => self.paste(true),
             "margin" | "scratch" => self.toggle_margin(),
             "pane" | "other" => self.switch_pane(),
             "send" | "copyover" => self.send_to_other_pane(false),
