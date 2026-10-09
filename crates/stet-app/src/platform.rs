@@ -124,6 +124,8 @@ pub struct State {
     pub mono_font: Option<String>,
     /// Window size in points.
     pub window: Option<(f32, f32)>,
+    /// The Substack publication last published to.
+    pub substack: Option<String>,
 }
 
 impl State {

@@ -28,6 +28,7 @@ toml = "1"
 serde_json = "1"
 open = "5"
 ureq = { version = "3", optional = true }
+stet-substack = { path = "../stet-substack", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }
@@ -35,6 +36,8 @@ objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = ["NSArray", "NSString", "NSURL"] }
 
 [features]
-default = ["remote-images"]
+default = ["remote-images", "substack"]
+# Publish a document to Substack as a draft.
+substack = ["dep:stet-substack"]
 # Fetch images referenced by http(s) URLs.
 remote-images = ["dep:ureq"]

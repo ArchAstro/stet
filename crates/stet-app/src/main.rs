@@ -8,6 +8,9 @@ mod images;
 #[cfg(target_os = "macos")]
 mod macos;
 mod platform;
+#[cfg(feature = "substack")]
+mod publish;
+mod retouch;
 mod session;
 mod text;
 mod view;

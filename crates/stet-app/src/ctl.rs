@@ -4,12 +4,13 @@
 //! The client half turns a command line into a request; the server half
 //! runs a request against the live editor on the UI thread.
 
-use crate::platform;
+use crate::session::Session as Window;
+use crate::{images, platform, retouch};
 use serde_json::{Value, json};
 use stet_core::Editor;
 use stet_core::editor::{RemoteEdit, Session, Target};
 
-pub const USAGE: &str = "stet ctl <command>   control the running stet (replies are JSON)
+pub const USAGE: &str = r#"stet ctl <command>   control the running stet (replies are JSON)
 
   sessions                       list the open documents
   read [--doc D] [--lines A-B]   the live text (unsaved changes included), cursor, selection, suggestions
@@ -23,7 +24,13 @@ pub const USAGE: &str = "stet ctl <command>   control the running stet (replies 
   keys <notation>                press keys, in vim notation (ggVG, <D-/>, <Esc>)
   type <text>                    type text as the keyboard would
   click X Y [right]              click at a point in the window (points from the top left)
+  drag X Y TO_X TO_Y             press at one point, move to another, and let go
   shot <file.png>                save a picture of what the window shows
+  images [--doc D]               list the document's pictures: where each file is, and its size in pixels
+  annotate [--doc D] [--image N] --ops JSON
+                                 draw on a picture, crop it, or hide part of it; the result is kept
+                                 beside the original and the text refers to it (undo brings it back).
+                                 --preview FILE writes the result there and leaves the document alone
   call                           send one JSON request read from stdin
 
 targets (one of):
@@ -33,10 +40,18 @@ targets (one of):
   --range REV:START-END --text TEXT
                                  replace chars START..END as they were at revision REV; typing since is followed
 
+marks for --ops, a JSON list; positions are in the picture's own pixels, from its top left:
+  {"tool":"arrow","from":[x,y],"to":[x,y]}       {"tool":"rect","x":..,"y":..,"w":..,"h":..}
+  {"tool":"ellipse","x":..,"y":..,"w":..,"h":..}  {"tool":"text","at":[x,y],"text":"..."}
+  {"tool":"highlight","x":..,"y":..,"w":..,"h":..} {"tool":"pen","points":[[x,y],...]}
+  {"tool":"redact","x":..,"y":..,"w":..,"h":..}   {"tool":"crop","x":..,"y":..,"w":..,"h":..}
+  each takes "color" (red, yellow, green, blue, black, white, #rrggbb) and "size"
+  (stroke width, or the height of text, in pixels); both have defaults that suit the picture
+
   --doc D        tab number, file name or path (default: the document in front)
   --margin       read or write the document's margin (its scratch pane for research) instead of its text
   --author NAME  whose suggestion it is (default: Claude)
-  A value of @FILE is read from FILE, and - from stdin.";
+  A value of @FILE is read from FILE, and - from stdin."#;
 
 fn session_json(session: &Session) -> Value {
     json!({
@@ -205,6 +220,120 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
     }
 }
 
+/// `images` and `annotate`: the document's pictures, and drawing on one.
+/// These need the window's fonts and its cache of downloads, so they run
+/// against the session rather than the editor alone.
+pub fn pictures(window: &mut Window, request: &Value) -> Value {
+    let editor = &mut window.editor;
+    let doc = match request.get("doc") {
+        None | Some(Value::Null) => Ok(editor.active),
+        Some(Value::Number(tab)) => editor.find_session(&tab.to_string()),
+        Some(Value::String(spec)) => editor.find_session(spec),
+        Some(_) => Err("`doc` is a tab number, file name or path".to_string()),
+    };
+    let index = match doc {
+        Ok(index) => index,
+        Err(err) => return fail(err),
+    };
+    let margin = request.get("margin").and_then(Value::as_bool).unwrap_or(false);
+    let listed = editor.with_pane(index, margin, |ed| {
+        ed.refresh();
+        (ed.doc().images.clone(), ed.path.clone(), ed.config.remote_images)
+    });
+    let Some((found, path, remote)) = listed else {
+        return fail("that document has no margin until it is saved");
+    };
+    let source = |url: &str| images::resolve(url, path.as_deref(), remote);
+    let file = |url: &str| match source(url) {
+        Some(images::Source::File(file)) => Some(file),
+        _ => None,
+    };
+    if request["cmd"] == "images" {
+        let list: Vec<Value> = found
+            .iter()
+            .enumerate()
+            .map(|(at, picture)| {
+                let file = file(&picture.url);
+                let video = source(&picture.url).is_some_and(|source| source.video().is_some());
+                let size = file
+                    .as_ref()
+                    .filter(|_| !video)
+                    .and_then(|file| image::image_dimensions(file).ok());
+                json!({
+                    "image": at + 1,
+                    "line": picture.line + 1,
+                    "url": picture.url,
+                    "path": file.map(|file| file.to_string_lossy().into_owned()),
+                    "width": size.map(|size| size.0),
+                    "height": size.map(|size| size.1),
+                    "video": video,
+                })
+            })
+            .collect();
+        return json!({ "ok": true, "images": list });
+    }
+
+    // Which picture: its number in the list, or how the text refers to it.
+    let wanted = match &request["image"] {
+        Value::Null if found.len() == 1 => Some(0),
+        Value::Number(number) => number.as_u64().and_then(|number| (number as usize).checked_sub(1)),
+        Value::String(name) => found
+            .iter()
+            .position(|picture| picture.url == *name)
+            .or_else(|| found.iter().position(|picture| picture.url.ends_with(name.as_str()))),
+        _ => None,
+    };
+    let Some(picture) = wanted.and_then(|at| found.get(at)) else {
+        return fail(format!(
+            "name the picture with `image`: its number (1 to {}) from `stet ctl images`, or its url",
+            found.len()
+        ));
+    };
+    let ops = match &request["ops"] {
+        Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+        other => other.clone(),
+    };
+    let drawn = source(&picture.url)
+        .filter(|source| source.video().is_none())
+        .and_then(|source| window.view.images.bytes(&source))
+        .ok_or(format!("{} cannot be read as a picture", picture.url))
+        .and_then(|bytes| retouch::decode(&bytes))
+        .and_then(|base| {
+            let marks = retouch::parse(&ops, base.width(), base.height())?;
+            if marks == retouch::Marks::default() {
+                return Err("`ops` has no marks in it".to_string());
+            }
+            let result = retouch::render(&base, &marks, true, &mut window.view.fonts);
+            Ok((retouch::encode(&result)?, result.width(), result.height()))
+        });
+    let (png, width, height) = match drawn {
+        Ok(drawn) => drawn,
+        Err(err) => return fail(err),
+    };
+    if let Some(preview) = request["preview"].as_str() {
+        return match std::fs::write(preview, &png) {
+            Ok(()) => json!({ "ok": true, "preview": preview, "width": width, "height": height }),
+            Err(err) => fail(format!("{preview}: {err}")),
+        };
+    }
+    let kept = window
+        .editor
+        .with_pane(index, margin, |ed| ed.replace_image(picture.line, &picture.url, &png));
+    match kept {
+        Some(Ok(link)) => json!({
+            "ok": true,
+            "link": link,
+            "path": file(&link).map(|file| file.to_string_lossy().into_owned()),
+            "was": picture.url,
+            "line": picture.line + 1,
+            "width": width,
+            "height": height,
+        }),
+        Some(Err(err)) => fail(err),
+        None => fail("that document has no margin until it is saved"),
+    }
+}
+
 /// What an assistant receives when the writer sends it a message: the
 /// request, and where they were when they wrote it.
 pub fn message(editor: &mut Editor, text: &str, selection: Option<(std::ops::Range<usize>, String)>) -> Value {
@@ -258,6 +387,20 @@ fn build(args: &[String]) -> Result<Value, String> {
             "--old" | "--new" | "--text" | "--author" | "--at" | "--name" => {
                 request.insert(arg[2..].to_string(), json!(value(next(arg)?)?));
             }
+            "--ops" => {
+                let ops: Value =
+                    serde_json::from_str(&value(next(arg)?)?).map_err(|err| format!("--ops is not JSON: {err}"))?;
+                request.insert("ops".into(), ops);
+            }
+            "--image" => {
+                let image = next(arg)?;
+                request.insert("image".into(), image.parse::<u64>().map_or(json!(image), |n| json!(n)));
+            }
+            "--preview" => {
+                let file = next(arg)?;
+                let file = std::path::absolute(file).map_or(file.clone(), |path| path.to_string_lossy().into_owned());
+                request.insert("preview".into(), json!(file));
+            }
             "--occurrence" | "--line" => {
                 let number: u64 = next(arg)?.parse().map_err(|_| format!("{arg} expects a number"))?;
                 request.insert(arg[2..].to_string(), json!(number));
@@ -292,7 +435,7 @@ fn build(args: &[String]) -> Result<Value, String> {
         }
     }
     let cmd = match command.as_str() {
-        "sessions" | "read" | "wait" | "say" => command.as_str(),
+        "sessions" | "read" | "wait" | "say" | "images" | "annotate" => command.as_str(),
         "command" | "keys" | "type" => {
             let field = if command == "type" { "text" } else { command.as_str() };
             request.insert(field.into(), json!(files.join(" ")));
@@ -306,6 +449,16 @@ fn build(args: &[String]) -> Result<Value, String> {
             request.insert("x".into(), json!(x));
             request.insert("y".into(), json!(y));
             "click"
+        }
+        "drag" => {
+            let points: Vec<f64> = files.iter().filter_map(|value| value.parse().ok()).collect();
+            let [x, y, to_x, to_y] = points[..] else {
+                return Err("drag expects X Y TO_X TO_Y".to_string());
+            };
+            for (key, value) in [("x", x), ("y", y), ("to_x", to_x), ("to_y", to_y)] {
+                request.insert(key.into(), json!(value));
+            }
+            "drag"
         }
         "shot" => {
             let path = files.first().ok_or("shot expects a file to write")?;

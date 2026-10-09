@@ -423,6 +423,17 @@ impl<'a> Styler<'a> {
     }
 }
 
+/// One unwrapped line of bold interface type, for drawing into a picture.
+pub fn shape_label(fonts: &mut Fonts, text: &str, size: f32) -> Buffer {
+    let size = size.max(1.0);
+    let mut buffer = Buffer::new(&mut fonts.system, Metrics::new(size, (size * 1.25).round()));
+    buffer.set_size(None, None);
+    let attrs = Attrs::new().family(fonts.family(Face::Ui)).weight(Weight::BOLD);
+    buffer.set_text(text, &attrs, Shaping::Advanced, None);
+    buffer.shape_until_scroll(&mut fonts.system, false);
+    buffer
+}
+
 pub fn layout_line(fonts: &mut Fonts, spec: &LineSpec) -> LineLayout {
     let styler = Styler::new(spec);
     if let Some(table) = &spec.table {

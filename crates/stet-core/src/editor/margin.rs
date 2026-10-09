@@ -345,7 +345,7 @@ impl Editor {
         let image = matches!(
             extension.to_ascii_lowercase().as_str(),
             ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp" | ".bmp" | ".svg"
-        );
+        ) || super::is_video(file);
         Ok(format!(
             "{}[{stem}]({folder_name}/{kept})",
             if image { "!" } else { "" }

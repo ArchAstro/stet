@@ -207,7 +207,9 @@ included skill (`skill/stet/SKILL.md`) teaches Claude Code to use it.
 | `... --margin` | reads or writes the document's margin instead of its text |
 | `stet ctl wait --name Claude` | connects an assistant and waits for your message |
 | `stet ctl say --text T` | shows a line in the status bar |
-| `stet ctl command C`, `keys K`, `type T`, `click X Y` | operates the window like the keyboard and mouse would |
+| `stet ctl images` | lists the document's pictures: file, line, size in pixels |
+| `stet ctl annotate --image N --ops JSON` | draws on a picture, crops it or hides part of it (arrow, rect, ellipse, text, highlight, pen, redact, crop); `--preview FILE` tries it without touching the document |
+| `stet ctl command C`, `keys K`, `type T`, `click X Y`, `drag X Y X Y` | operates the window like the keyboard and mouse would |
 | `stet ctl shot file.png` | saves a picture of what the window shows |
 
 1. **Your flow is left alone.** An edit never moves your cursor, changes mode, steals focus or saves; it lands as its own undo step, in background tabs too.
@@ -281,13 +283,55 @@ Shown under the line that references them: local files, `data:` URIs and
 background and cached; `remote_images = false` keeps a document from
 contacting servers.
 
+A video (`![](demo.mp4)`: MP4, MOV, M4V, WebM, MKV, AVI) is shown as one frame
+of itself with a play button; a click plays it in the system's player. The
+frame comes from Quick Look on macOS and from `ffmpeg` elsewhere, if it is
+installed. Without one, and for a video at a URL, the button sits on a blank
+screen. Nothing plays inside the window.
+
+## Retouching a picture
+
+Right-click a picture, or run `:image` on its line: the page dims, the
+picture comes forward, and a few tools appear.
+
+| Tool | Key | What it does |
+|---|---|---|
+| Select | `V` | click a mark to select it; drag moves it, Delete removes it |
+| Crop | `C` | drag out what to keep, Enter takes it; Delete brings the whole picture back |
+| Pen | `B` | freehand |
+| Marker | `H` | a wide, see-through stroke |
+| Arrow | `A` | drag from tail to point |
+| Box, Oval | `R`, `O` | outlines |
+| Text | `T` | click, type, Enter |
+| Redact | `X` | drag over what should not be read; it becomes a mosaic |
+
+1. `1`–`6` pick the colour, `[` and `]` the stroke; with a mark selected they change that mark.
+2. `⌘Z` or `u` undoes, `⇧⌘Z` redoes.
+3. Enter, Esc or **Done** puts the picture back. If you changed it, the result is saved beside the original as `name-edit.png` and the text points at that; the original is never written over, and one undo in the document restores the reference.
+4. Assistants have the same tools: `stet ctl annotate` (below).
+
+## Publishing to Substack
+
+`:publish` (File → Publish to Substack…) raises a card from the bottom of the
+window: the publication, the title and subtitle (from the front matter, or the
+first heading), and who it is for. **Create draft** uploads the document's
+local pictures and makes a draft on Substack; **Open in Substack** takes you
+to it. Nothing is ever sent to readers from here: publishing stays a button
+you press on Substack.
+
+1. **Signing in.** Substack has no publishing API, so Stet uses the one its own editor does, with your session cookie. The first time, the card asks for it: in your browser, on substack.com, DevTools → Application → Cookies → `substack.sid`. It is kept in the macOS login keychain and nowhere else, never shown, and sent only to Substack over HTTPS (to a custom domain only once Substack says the domain is yours).
+2. **What carries over.** Headings, emphasis, links, lists, quotes, code, pictures with captions, footnotes. A table goes up as preformatted text, and a local video as a link, because Substack's editor has neither; the card says so before you send.
+3. **It may break.** This is Substack's private interface, undocumented and theirs to change.
+
+Cards like this one are how Stet asks for settings: Tab moves between fields, the arrows change a choice, Enter presses the filled button, Esc puts the card away.
+
 ## Copy and paste
 
 Paste takes the richest thing on the clipboard and turns it into Markdown.
 
 1. **From a web page, a document or a spreadsheet** — headings, emphasis, links, lists, code and tables arrive as Markdown. A table becomes a pipe table with its alignment kept. Block content goes on lines of its own, wherever the cursor was.
 2. **A picture** (a screenshot, "Copy image") — saved as a PNG in `assets/` beside the document and linked. The same picture is saved once. In the margin it goes with the margin's files.
-3. **Files copied in Finder, or dropped on the window** — a picture from outside the document's folder is copied into `assets/`; anything else is linked where it is.
+3. **Files copied in Finder, or dropped on the window** — a picture or a video from outside the document's folder is copied into `assets/`; anything else is linked where it is.
 4. **A link over a selection** — the selected words become the link's text.
 5. **Before the first save** — pictures wait in Stet's own folder and move in beside the document when you save it.
 6. `⇧⌘V` (`Ctrl+Shift+V`), or `:pasteplain`, pastes the plain text untouched. Vim's `p` and `P` paste the same way `⌘V` does.
@@ -427,5 +471,6 @@ shot /tmp/frame.png    # what the window shows now
 quit
 ```
 
-Building without HTTPS (`--no-default-features`) drops remote images and the
-only dependency that needs a C compiler for the target.
+Building without HTTPS (`--no-default-features`) drops remote images,
+publishing to Substack, and the only dependency that needs a C compiler for
+the target.

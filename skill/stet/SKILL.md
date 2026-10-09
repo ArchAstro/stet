@@ -173,6 +173,39 @@ the user asked for the change itself: "fix it", "insert it", "just do it".
    `stet ctl edit --at cursor --text "![What it shows](name.png)"`.
    Stet displays it under that line immediately.
 
+### Marking up a picture that is already there
+
+For "point at the button in that screenshot", "circle the number", "blur
+the email address", "crop it to the chart":
+
+```sh
+stet ctl images                       # each picture: its number, line, file path, width and height
+stet ctl annotate --image 1 --preview /tmp/try.png --ops '[
+  {"tool":"rect","x":40,"y":120,"w":620,"h":110},
+  {"tool":"arrow","from":[900,700],"to":[560,560],"color":"blue"},
+  {"tool":"text","at":[640,720],"text":"Look here"}]'
+stet ctl annotate --image 1 --ops @ops.json    # the same, for real
+```
+
+- Look at the picture first (read the `path` from `images`), and work in
+  its own pixels from the top left. `width` and `height` tell you the range.
+- Tools: `arrow` (`from`, `to`), `rect` and `ellipse` (`x`, `y`, `w`, `h`;
+  outlines), `text` (`at`, `text`), `highlight` (`x`, `y`, `w`, `h`, or
+  `points`), `pen` (`points`), `redact` (`x`, `y`, `w`, `h`; a mosaic that
+  hides what is under it), `crop` (`x`, `y`, `w`, `h`; applied last, in the
+  original's pixels). Each takes `color` (red, yellow, green, blue, black,
+  white, or `#rrggbb`) and `size` (stroke width, or text height, in
+  pixels); leave them out for defaults that suit the picture.
+- Always `--preview` first and look at the result: positions are easy to
+  get slightly wrong. The preview leaves the document alone.
+- Without `--preview` the result is saved beside the original as
+  `name-edit.png` and the text is pointed at it; the reply has the new
+  `path`. The original file stays, and one undo by the user restores it.
+  To redo your own marks, annotate the original again (`--image` takes the
+  url as well as the number) rather than marking up the marked-up copy.
+- The user does the same by hand: a right-click on a picture (or `:image`)
+  opens it with the same tools.
+
 ## 5. Taking requests from inside Stet
 
 The user can message you without leaving the editor (Cmd/Ctrl-Shift-A, or
@@ -208,6 +241,7 @@ stet ctl command "theme stet-ink"     # any editor command, as typed after `:`
 stet ctl keys "<D-/>"                 # keys in vim notation; <D-…> is Cmd, <C-…> Ctrl
 stet ctl type "some text"             # typed as the keyboard would
 stet ctl click 320 200                # a click at a point in the window; add `right` for the menu
+stet ctl drag 320 200 480 260         # press, move and let go
 stet ctl shot /tmp/stet.png           # a picture of what the window shows right now
 ```
 

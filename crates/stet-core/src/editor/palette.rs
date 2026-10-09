@@ -260,6 +260,8 @@ impl Editor {
             command("Accept all suggestions", ":acceptall".to_string(), "acceptall"),
             command("Reject all suggestions", ":rejectall".to_string(), "rejectall"),
             command("Paste as plain text", chord(true, "V"), "pasteplain"),
+            command("Retouch the picture on this line", ":image".to_string(), "image"),
+            command("Publish to Substack…", ":publish".to_string(), "publish"),
             command("Tidy the table", ":table".to_string(), "table"),
             command("Add a table row", ":table row".to_string(), "table row"),
             command("Add a table column", ":table column".to_string(), "table column"),

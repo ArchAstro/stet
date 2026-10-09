@@ -1802,6 +1802,105 @@ fn pasted_pictures_are_kept_beside_the_document() {
 }
 
 #[test]
+fn a_sheet_takes_the_keyboard_and_reports_its_buttons() {
+    use super::{Button, Field, Row, Sheet};
+    let mut ed = offered(
+        "unchanged",
+        Offered {
+            clip: Clip {
+                text: Some("  pasted secret\nsecond line".to_string()),
+                ..Clip::default()
+            },
+            ..Offered::default()
+        },
+    );
+    keys(&mut ed, ":publish<CR>");
+    assert_eq!(ed.take_effects(), vec![Effect::Publish]);
+    let rows = vec![
+        Row::note("about", "", "Words to read"),
+        Row::secret("key", "Key", "paste it"),
+        Row::text("title", "Title", "Old", ""),
+        Row::choice("who", "For", &["Everyone", "Paid"], 0),
+    ];
+    let buttons = vec![Button::new("cancel", "Cancel"), Button::new("go", "Go")];
+    ed.open_sheet(Sheet::new("test", "A sheet", rows, buttons));
+    // The first row that takes keys has them; notes are skipped.
+    assert_eq!(ed.sheet.as_ref().unwrap().focus, 1);
+    keys(&mut ed, "<D-v><Tab>er<BS><BS><BS>New<Tab><Right><Right><Tab>");
+    ed.insert_text(" title");
+    let sheet = ed.sheet.as_ref().unwrap();
+    assert_eq!(sheet.text("key"), Some("pasted secret title"));
+    assert_eq!(sheet.text("title"), Some("OlNew"));
+    assert_eq!((sheet.chosen("who"), sheet.focus), (Some(1), 1));
+    // Nothing typed reached the document, and vim saw none of it.
+    assert_eq!((ed.buf.text().as_str(), ed.mode), ("unchanged", Mode::Normal));
+
+    // Enter presses the last button; a click presses any; a busy sheet neither.
+    keys(&mut ed, "<CR>");
+    ed.sheet_press(0);
+    let pressed = |button| Effect::Sheet { sheet: "test", button };
+    assert_eq!(ed.take_effects(), vec![pressed("go"), pressed("cancel")]);
+    ed.sheet.as_mut().unwrap().busy = true;
+    keys(&mut ed, "<CR>");
+    ed.sheet.as_mut().unwrap().busy = false;
+    ed.sheet.as_mut().unwrap().buttons[1].enabled = false;
+    keys(&mut ed, "<CR>");
+    assert_eq!(ed.take_effects(), vec![]);
+
+    // Rows come and go by id, and the keyboard stays on one that takes it.
+    let sheet = ed.sheet.as_mut().unwrap();
+    sheet.remove("key");
+    sheet.put(0, Row::note("who", "For", "Everyone, always"));
+    assert_eq!((sheet.rows.len(), sheet.focus), (3, 1));
+    assert!(matches!(&sheet.row("who").unwrap().field, Field::Note(words) if words == "Everyone, always"));
+    ed.sheet_choose(1, 0);
+    keys(&mut ed, "<Esc>");
+    assert!(ed.sheet.is_none());
+    keys(&mut ed, "x");
+    assert_eq!(ed.buf.text(), "nchanged");
+}
+
+#[test]
+fn a_retouched_picture_is_kept_beside_the_original() {
+    let dir = temp_dir("retouch");
+    let path = dir.join("doc.md");
+    std::fs::write(&path, "Before\n\n![a chart](figures/Chart%20one.png) and after\n").unwrap();
+    let mut ed = offered("", Offered::default());
+    ed.open(&path).unwrap();
+    keys(&mut ed, "G");
+    let dest = ed
+        .replace_image(2, "figures/Chart%20one.png", b"first version")
+        .unwrap();
+    assert_eq!(dest, "assets/Chart-one-edit.png");
+    assert_eq!(
+        ed.buf.text(),
+        "Before\n\n![a chart](assets/Chart-one-edit.png) and after\n"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("assets/Chart-one-edit.png")).unwrap(),
+        b"first version"
+    );
+    // A later version does not pile mark on mark, or write over the earlier one.
+    let dest = ed.replace_image(2, &dest, b"second version").unwrap();
+    assert_eq!(dest, "assets/Chart-one-edit-2.png");
+    // One undo each, back to the original.
+    keys(&mut ed, "uu");
+    assert_eq!(
+        ed.buf.text(),
+        "Before\n\n![a chart](figures/Chart%20one.png) and after\n"
+    );
+    assert!(
+        ed.replace_image(0, "nowhere.png", b"x")
+            .unwrap_err()
+            .contains("nowhere.png")
+    );
+    ed.take_effects();
+    keys(&mut ed, ":image<CR>");
+    assert_eq!(ed.take_effects(), vec![Effect::EditImage]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn pictures_pasted_before_the_first_save_move_in_with_the_document() {
     let dir = temp_dir("paste-unsaved");
     let picture = b"a picture pasted into a document that has no folder to live in yet ...".to_vec();
@@ -1875,6 +1974,23 @@ fn copied_files_become_links_and_outside_pictures_are_copied_in() {
         ed.file_link(&outside.join("Screen Shot.png")).unwrap(),
         "![](assets/Screen-Shot.png)"
     );
+    // A video is embedded as a picture is, and copied in once.
+    std::fs::write(outside.join("Demo Run.MOV"), "frames").unwrap();
+    std::fs::write(dir.join("clip.mp4"), "frames").unwrap();
+    assert_eq!(
+        ed.file_link(&outside.join("Demo Run.MOV")).unwrap(),
+        "![](assets/Demo-Run.mov)"
+    );
+    assert_eq!(
+        ed.file_link(&outside.join("Demo Run.MOV")).unwrap(),
+        "![](assets/Demo-Run.mov)"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("assets/Demo-Run.mov")).unwrap(),
+        "frames"
+    );
+    assert!(!dir.join("assets/Demo-Run-2.mov").exists());
+    assert_eq!(ed.file_link(&dir.join("clip.mp4")).unwrap(), "![](clip.mp4)");
     std::fs::remove_dir_all(dir).unwrap();
     std::fs::remove_dir_all(outside).unwrap();
 }

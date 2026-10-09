@@ -2,12 +2,14 @@
 //! core cannot: display-line motion, hit testing and scrolling.
 
 use crate::gpu::linear;
-use crate::images::{self, Images};
+use crate::images::{self, Decoded, Images};
+use crate::retouch::{self, Button, Retouch, Tool};
 use crate::text::{Face, Fonts, Layer as Depth, LineLayout, LineSpec, RowKind, TableRow, color, layout_line};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
-use stet_core::editor::{CmdKind, EntryKind, MenuAt, PaletteKind};
+use std::time::{Duration, Instant};
+use stet_core::editor::{CmdKind, EntryKind, Field, MenuAt, PaletteKind, Sheet};
 use stet_core::markdown::{Block, Span};
 use stet_core::theme::Rgb;
 use stet_core::{Editor, Mode, ScrollTo};
@@ -58,6 +60,8 @@ pub enum Target {
     ContextMenu,
     /// A margin note shown beside its pin.
     Note(usize),
+    /// A video's frame; the index is into this frame's videos.
+    Video(usize),
     /// The handle above a table's column: `(a line of the table, column)`.
     TableColumn(usize, usize),
     /// The handle beside a table's row, by its line.
@@ -65,9 +69,48 @@ pub enum Target {
     /// The strips that add a column or a row at the end of the table on this line.
     TableAddColumn(usize),
     TableAddRow(usize),
+    /// The card risen from the bottom of the window, and the dimmed area
+    /// around it; its rows, a choice's options `(row, option)`, its buttons.
+    Sheet,
+    SheetScrim,
+    SheetRow(usize),
+    SheetOption(usize, usize),
+    SheetButton(usize),
     /// The dimmed area around the menu.
     Scrim,
     MenuHint,
+}
+
+const SHEET_RISE: Duration = Duration::from_millis(240);
+const SHEET_FALL: Duration = Duration::from_millis(160);
+
+/// The sheet as last seen, so it can still be drawn sinking away once the
+/// editor has let go of it.
+struct Risen {
+    sheet: Sheet,
+    since: Instant,
+    closed: Option<Instant>,
+}
+
+/// A picture drawn in the text this frame.
+#[derive(Clone)]
+pub struct Picture {
+    /// Where all of it would be, and the part of that on screen.
+    pub rect: [f32; 4],
+    seen: [f32; 4],
+    /// The line that refers to it, and how.
+    pub line: usize,
+    pub url: String,
+}
+
+/// A picture under a line: its texture, its size on screen, and where it
+/// comes from.
+struct Shown {
+    id: u64,
+    width: f32,
+    height: f32,
+    url: String,
+    source: images::Source,
 }
 
 #[derive(Clone, Copy)]
@@ -110,6 +153,13 @@ pub struct View {
     mono_advance: Option<(u32, f32)>,
     focus: Option<Range<usize>>,
     targets: Vec<([f32; 4], Target)>,
+    /// What each video drawn this frame opens.
+    videos: Vec<String>,
+    /// The pictures drawn this frame.
+    pictures: Vec<Picture>,
+    /// The picture taken out of the text to be retouched.
+    pub retouch: Option<Retouch>,
+    risen: Option<Risen>,
     sidebar_selected: usize,
     palette_scroll: usize,
     /// Bottom-left of the text cursor in the last frame, if it was on screen.
@@ -166,6 +216,10 @@ impl View {
             mono_advance: None,
             focus: None,
             targets: Vec::new(),
+            videos: Vec::new(),
+            pictures: Vec::new(),
+            retouch: None,
+            risen: None,
             sidebar_selected: usize::MAX,
             palette_scroll: 0,
             cursor_point: None,
@@ -627,20 +681,26 @@ impl View {
         layout.rows[0].width
     }
 
-    /// Images shown under `line`: `(id, width, height)` in device pixels.
-    fn line_images(&mut self, ed: &Editor, line: usize, m: &Metrics) -> Vec<(u64, f32, f32)> {
+    /// Images shown under `line`, sized in device pixels.
+    fn line_images(&mut self, ed: &Editor, line: usize, m: &Metrics) -> Vec<Shown> {
         if !ed.config.images {
             return Vec::new();
         }
         let max_height = (self.height * 0.6).max(m.line);
         ed.doc()
             .images_on(line)
-            .filter_map(|image| images::resolve(&image.url, ed.path.as_deref(), ed.config.remote_images))
-            .filter_map(|source| self.images.get(&source))
-            .map(|(id, width, height)| {
+            .filter_map(|image| {
+                let source = images::resolve(&image.url, ed.path.as_deref(), ed.config.remote_images)?;
+                let (id, width, height) = self.images.get(&source)?;
                 let (width, height) = (width as f32 * self.scale, height as f32 * self.scale);
                 let fit = (m.column / width).min(max_height / height).min(1.0);
-                (id, (width * fit).round(), (height * fit).round())
+                Some(Shown {
+                    id,
+                    width: (width * fit).round(),
+                    height: (height * fit).round(),
+                    url: image.url.clone(),
+                    source,
+                })
             })
             .collect()
     }
@@ -655,7 +715,7 @@ impl View {
         let images: f32 = self
             .line_images(ed, line, m)
             .iter()
-            .map(|(_, _, height)| height + Self::image_gap(m))
+            .map(|shown| shown.height + Self::image_gap(m))
             .sum();
         self.layouts[&key].height + images
     }
@@ -841,6 +901,47 @@ impl View {
             .map(|(_, target)| *target)
     }
 
+    /// The picture drawn at this point of the window.
+    pub fn picture_at(&self, x: f32, y: f32) -> Option<Picture> {
+        let inside =
+            |[left, top, width, height]: [f32; 4]| x >= left && x < left + width && y >= top && y < top + height;
+        self.pictures.iter().find(|picture| inside(picture.seen)).cloned()
+    }
+
+    /// Where the picture `url` on `line` was drawn, if it is on screen.
+    pub fn picture_rect(&self, line: usize, url: &str) -> Option<[f32; 4]> {
+        let found = self
+            .pictures
+            .iter()
+            .find(|picture| picture.line == line && picture.url == url);
+        found.map(|picture| picture.rect)
+    }
+
+    /// Decoded pictures ready for the renderer: those of the text, and the
+    /// one being retouched whenever it changes.
+    pub fn uploads(&mut self) -> Vec<Decoded> {
+        let mut ready = self.images.poll();
+        if let Some(retouch) = &mut self.retouch {
+            ready.extend(retouch.texture(&mut self.fonts));
+        }
+        ready
+    }
+
+    /// Something is in motion: the next frame differs without any input.
+    pub fn animating(&self) -> bool {
+        let sheet = self
+            .risen
+            .as_ref()
+            .is_some_and(|risen| risen.closed.is_some() || risen.since.elapsed() < SHEET_RISE);
+        let retouch = self.retouch.as_ref();
+        sheet || retouch.is_some_and(|retouch| retouch.animating() || retouch.gone())
+    }
+
+    /// What the video behind `Target::Video(index)` opens.
+    pub fn video(&self, index: usize) -> Option<&str> {
+        self.videos.get(index).map(String::as_str)
+    }
+
     /// Scrolls the file browser by rows.
     pub fn scroll_sidebar(&mut self, ed: &mut Editor, rows: isize) {
         let last = ed.sidebar.entries.len().saturating_sub(1) as isize;
@@ -851,6 +952,11 @@ impl View {
         ed.refresh();
         self.frame += 1;
         self.targets.clear();
+        self.videos.clear();
+        self.pictures.clear();
+        if self.retouch.as_ref().is_some_and(Retouch::gone) {
+            self.retouch = None;
+        }
         let background = linear(ed.theme.colors.background, 1.0);
         let mut frame = Frame {
             clear: wgpu::Color {
@@ -907,6 +1013,8 @@ impl View {
         self.sidebar(ed, &m, &mut frame.base);
         self.palette(ed, &m, &mut frame.over);
         self.context_menu(ed, &m, &mut frame.over);
+        self.retouching(ed, m.ui, &mut frame.over);
+        self.sheet(ed, &m, &mut frame.over);
         if self.layouts.len() > 3000 {
             let keep = self.frame - 1;
             self.layouts.retain(|_, layout| layout.last_used >= keep);
@@ -1225,10 +1333,28 @@ impl View {
                 color: color(c.text),
             });
             y += layout.height;
-            for (id, width, height) in images {
+            for Shown {
+                id,
+                width,
+                height,
+                url,
+                source,
+            } in images
+            {
                 let gap = Self::image_gap(&m);
                 if y < m.bottom {
-                    layer.images.push((id, [m.left, y + gap * 0.5, width, height]));
+                    let rect = [m.left, y + gap * 0.5, width, height];
+                    layer.images.push((id, rect));
+                    let (top, bottom) = (rect[1].max(m.top), (rect[1] + height).min(m.bottom));
+                    let seen = [m.left, top, width, bottom - top];
+                    match source.video() {
+                        _ if bottom <= top => {}
+                        Some(video) => {
+                            self.targets.push((seen, Target::Video(self.videos.len())));
+                            self.videos.push(video);
+                        }
+                        None => self.pictures.push(Picture { rect, seen, line, url }),
+                    }
                 }
                 y += height + gap;
             }
@@ -1587,6 +1713,519 @@ impl View {
                 );
             }
             at += row;
+        }
+    }
+
+    /// The sheet: a card of settings that rises from the bottom of the
+    /// window over a dimmed page, and sinks back when it is put away.
+    fn sheet(&mut self, ed: &Editor, m: &Metrics, layer: &mut Layer) {
+        let now = Instant::now();
+        // A screenshot wants the card where it comes to rest.
+        let still = self.images.blocking;
+        match (&ed.sheet, &mut self.risen) {
+            (Some(sheet), Some(risen)) => {
+                risen.sheet = sheet.clone();
+                if risen.closed.take().is_some() {
+                    risen.since = now;
+                }
+            }
+            (Some(sheet), None) => {
+                self.risen = Some(Risen {
+                    sheet: sheet.clone(),
+                    since: now,
+                    closed: None,
+                })
+            }
+            (None, Some(risen)) => {
+                let closed = *risen.closed.get_or_insert(now);
+                if still || closed.elapsed() >= SHEET_FALL {
+                    self.risen = None;
+                }
+            }
+            (None, None) => {}
+        }
+        let Some(risen) = &self.risen else { return };
+        let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+        let open = match risen.closed {
+            _ if still => 1.0,
+            Some(closed) => 1.0 - ease(closed.elapsed().as_secs_f32() / SHEET_FALL.as_secs_f32()),
+            None => ease(risen.since.elapsed().as_secs_f32() / SHEET_RISE.as_secs_f32()),
+        };
+        let live = risen.closed.is_none();
+        let sheet = risen.sheet.clone();
+
+        let c = ed.theme.colors;
+        let s = self.scale;
+        let (pad, row, gap) = ((22.0 * s).round(), (38.0 * s).round(), (8.0 * s).round());
+        let (title_height, status_height, button_height) = ((28.0 * s).round(), (28.0 * s).round(), (32.0 * s).round());
+        let width = (580.0 * s).min(self.width - 24.0 * s).round();
+        let left = ((self.width - width) / 2.0).round();
+        let status = sheet.status.as_ref().map_or(0.0, |_| status_height);
+        let height =
+            pad + title_height + gap + sheet.rows.len() as f32 * row + status + gap * 2.0 + button_height + pad;
+        let rest = self.height - height - 18.0 * s;
+        let top = (rest + (self.height - rest + 8.0 * s) * (1.0 - open)).round();
+
+        layer.back.push(Quad {
+            rect: [0.0, 0.0, self.width, self.height],
+            color: [0.0, 0.0, 0.0, 0.34 * open],
+            radius: 0.0,
+        });
+        let radius = 16.0 * s;
+        layer.back.push(Quad {
+            rect: [left - s, top - s, width + s * 2.0, height + s * 2.0],
+            color: linear(c.rule, 1.0),
+            radius: radius + s,
+        });
+        layer.back.push(Quad {
+            rect: [left, top, width, height],
+            color: linear(c.panel, 1.0),
+            radius,
+        });
+        if live {
+            self.targets
+                .push(([0.0, 0.0, self.width, self.height], Target::SheetScrim));
+            self.targets.push(([left, top, width, height], Target::Sheet));
+        }
+        let clip = [left, top.max(0.0), left + width, (top + height).min(self.height)];
+        let title = self.label(ed, &sheet.title, c.text, m.ui * 1.12, Face::Ui, true);
+        self.put(layer, title, left + pad, top + pad + title_height / 2.0, clip, c.text);
+
+        let labels: Vec<u64> = sheet
+            .rows
+            .iter()
+            .map(|row| self.label(ed, &row.label, c.status, m.ui, Face::Ui, false))
+            .collect();
+        let widest = labels
+            .iter()
+            .map(|key| self.layouts[key].rows[0].width)
+            .fold(0.0, f32::max);
+        let column = if widest > 0.0 { (widest + 18.0 * s).round() } else { 0.0 };
+        let hairline = s.max(1.0);
+        let mut y = top + pad + title_height + gap;
+        for (index, (item, label)) in sheet.rows.iter().zip(labels).enumerate() {
+            let middle = y + row / 2.0;
+            let focused = live && index == sheet.focus && !sheet.busy;
+            // A row with nothing to call it uses the whole width.
+            let named = !item.label.is_empty();
+            let x = left + pad + if named { column } else { 0.0 };
+            let room = left + width - pad - x;
+            if named {
+                self.put(layer, label, left + pad, middle, clip, c.status);
+            }
+            match &item.field {
+                Field::Note(words) => {
+                    let key = self.label(ed, words, c.status, m.ui * 0.94, Face::Ui, false);
+                    self.put(layer, key, x, middle, [x, clip[1], x + room, clip[3]], c.status);
+                }
+                Field::Text { value, hint, secret } => {
+                    let frame = [x, y + 4.0 * s, room, row - 8.0 * s];
+                    layer.back.push(Quad {
+                        rect: frame,
+                        color: linear(if focused { c.cursor } else { c.rule }, 1.0),
+                        radius: 8.0 * s,
+                    });
+                    layer.back.push(Quad {
+                        rect: [
+                            frame[0] + hairline,
+                            frame[1] + hairline,
+                            room - hairline * 2.0,
+                            frame[3] - hairline * 2.0,
+                        ],
+                        color: linear(c.background, 1.0),
+                        radius: 8.0 * s - hairline,
+                    });
+                    let (shown, rgb) = match (value.is_empty(), secret) {
+                        (true, _) => (hint.clone(), c.status),
+                        // However long it is, it reads the same.
+                        (false, true) => ("•".repeat(value.chars().count().min(24)), c.text),
+                        (false, false) => (value.clone(), c.text),
+                    };
+                    let key = self.label(ed, &shown, rgb, m.ui, Face::Ui, false);
+                    let inset = 10.0 * s;
+                    let typed = if value.is_empty() {
+                        0.0
+                    } else {
+                        self.layouts[&key].rows[0].width
+                    };
+                    // Too long for the field: its end stays in sight.
+                    let start = x + inset - (typed - (room - inset * 2.0)).max(0.0);
+                    let inside = [x + inset, clip[1], x + room - inset, clip[3]];
+                    self.put(layer, key, start, middle, inside, rgb);
+                    if focused {
+                        layer.front.push(Quad {
+                            rect: [
+                                (start + typed + s).round(),
+                                y + 10.0 * s,
+                                (1.5 * s).round().max(1.0),
+                                row - 20.0 * s,
+                            ],
+                            color: linear(c.cursor, 1.0),
+                            radius: 0.0,
+                        });
+                    }
+                    if live {
+                        self.targets.push((frame, Target::SheetRow(index)));
+                    }
+                }
+                Field::Choice { options, chosen } => {
+                    let mut at = x;
+                    for (option, name) in options.iter().enumerate() {
+                        let rgb = if option == *chosen { c.text } else { c.status };
+                        let key = self.label(ed, name, rgb, m.ui, Face::Ui, option == *chosen);
+                        let pill = [
+                            at,
+                            y + 5.0 * s,
+                            self.layouts[&key].rows[0].width + 24.0 * s,
+                            row - 10.0 * s,
+                        ];
+                        if option == *chosen {
+                            layer.back.push(Quad {
+                                rect: pill,
+                                color: linear(if focused { c.cursor } else { c.rule }, 1.0),
+                                radius: pill[3] / 2.0,
+                            });
+                            layer.back.push(Quad {
+                                rect: [
+                                    pill[0] + hairline,
+                                    pill[1] + hairline,
+                                    pill[2] - hairline * 2.0,
+                                    pill[3] - hairline * 2.0,
+                                ],
+                                color: linear(c.panel_active, 1.0),
+                                radius: pill[3] / 2.0 - hairline,
+                            });
+                        }
+                        self.put(layer, key, at + 12.0 * s, middle, clip, rgb);
+                        if live {
+                            self.targets.push((pill, Target::SheetOption(index, option)));
+                        }
+                        at += pill[2] + 4.0 * s;
+                    }
+                }
+            }
+            y += row;
+        }
+        if let Some((words, bad)) = &sheet.status {
+            let rgb = if *bad { c.error } else { c.status };
+            let key = self.label(ed, words, rgb, m.ui * 0.94, Face::Ui, false);
+            let inside = [left + pad, clip[1], left + width - pad, clip[3]];
+            self.put(layer, key, left + pad, y + status_height / 2.0, inside, rgb);
+        }
+
+        // Buttons from the right: the one Enter presses is filled in.
+        let baseline = top + height - pad - button_height;
+        let mut right = left + width - pad;
+        let last = sheet.buttons.len().saturating_sub(1);
+        for (index, button) in sheet.buttons.iter().enumerate().rev() {
+            let ready = button.enabled && !sheet.busy;
+            let chief = index == last;
+            let rgb = match (chief, ready) {
+                (true, _) => c.background,
+                (false, true) => c.text,
+                (false, false) => c.status,
+            };
+            let key = self.label(ed, &button.label, rgb, m.ui, Face::Ui, chief);
+            let wide = self.layouts[&key].rows[0].width + 30.0 * s;
+            let rect = [right - wide, baseline, wide, button_height];
+            let fill = if chief { c.cursor } else { c.panel_active };
+            layer.back.push(Quad {
+                rect,
+                color: linear(fill, if ready { 1.0 } else { 0.4 }),
+                radius: 9.0 * s,
+            });
+            self.put(
+                layer,
+                key,
+                rect[0] + 15.0 * s,
+                baseline + button_height / 2.0,
+                clip,
+                rgb,
+            );
+            if live {
+                self.targets.push((rect, Target::SheetButton(index)));
+            }
+            right -= wide + 8.0 * s;
+        }
+    }
+
+    /// The picture being retouched: the rest of the window dimmed, the
+    /// picture grown out of the text into the middle, the tools above it
+    /// and their settings below.
+    fn retouching(&mut self, ed: &Editor, ui: f32, layer: &mut Layer) {
+        let Some(mut retouch) = self.retouch.take() else { return };
+        let s = self.scale;
+        let open = retouch.openness();
+        let black = |alpha: f32| [0.0, 0.0, 0.0, alpha];
+        layer.back.push(Quad {
+            rect: [0.0, 0.0, self.width, self.height],
+            color: black(0.78 * open),
+            radius: 0.0,
+        });
+        layer.image_clip = [0.0, 0.0, self.width, self.height];
+
+        let bar = (40.0 * s).round();
+        let gap = (14.0 * s).round();
+        let above = (self.titlebar + 10.0 * s).round();
+        let below = (self.height - bar - 14.0 * s).round();
+        let room = [
+            32.0 * s,
+            above + bar + gap,
+            (self.width - 64.0 * s).max(1.0),
+            (below - gap - (above + bar + gap)).max(1.0),
+        ];
+        let (width, height) = (retouch.shown.0.max(1) as f32, retouch.shown.1.max(1) as f32);
+        // A small picture is enlarged, but not into a blur.
+        let fit = (room[2] / width).min(room[3] / height).min(4.0);
+        let size = ((width * fit).round(), (height * fit).round());
+        retouch.place = [
+            (room[0] + (room[2] - size.0) / 2.0).round(),
+            (room[1] + (room[3] - size.1) / 2.0).round(),
+            size.0,
+            size.1,
+        ];
+        if retouch.still {
+            retouch.from = retouch.place;
+        }
+        let (from, place) = (retouch.from, retouch.place);
+        let rect: [f32; 4] = std::array::from_fn(|at| from[at] + (place[at] - from[at]) * open);
+        layer.images.push((retouch::TEXTURE, rect));
+
+        retouch.buttons.clear();
+        // The tools wait until the picture has nearly arrived.
+        if open > 0.85 && !retouch.closing() {
+            self.retouch_marks(ed, &retouch, layer);
+            self.retouch_tools(ed, &mut retouch, layer, [above, bar, ui]);
+            self.retouch_settings(ed, &mut retouch, layer, [below, bar, ui]);
+        }
+        self.retouch = Some(retouch);
+    }
+
+    /// What is drawn over the picture itself: the crop being taken, the
+    /// outline of the selected mark, the caret of a label being typed.
+    fn retouch_marks(&mut self, ed: &Editor, retouch: &Retouch, layer: &mut Layer) {
+        let c = ed.theme.colors;
+        let hairline = (1.5 * self.scale).round().max(1.0);
+        let outline = |layer: &mut Layer, [x, y, w, h]: [f32; 4], color: [f32; 4]| {
+            for rect in [
+                [x - hairline, y - hairline, w + hairline * 2.0, hairline],
+                [x - hairline, y + h, w + hairline * 2.0, hairline],
+                [x - hairline, y, hairline, h],
+                [x + w, y, hairline, h],
+            ] {
+                layer.front.push(Quad {
+                    rect,
+                    color,
+                    radius: 0.0,
+                });
+            }
+        };
+        let crop = retouch
+            .cropping
+            .or(retouch.marks.crop)
+            .filter(|_| retouch.tool == Tool::Crop);
+        if let Some(crop) = crop {
+            let [left, top, width, height] = retouch.place;
+            let [x, y, w, h] = retouch.on_screen(crop);
+            // Kept inside the picture, as the crop itself will be.
+            let (x0, y0) = (x.clamp(left, left + width), y.clamp(top, top + height));
+            let (x1, y1) = ((x + w).clamp(left, left + width), (y + h).clamp(top, top + height));
+            for rect in [
+                [left, top, width, y0 - top],
+                [left, y1, width, top + height - y1],
+                [left, y0, x0 - left, y1 - y0],
+                [x1, y0, left + width - x1, y1 - y0],
+            ] {
+                layer.front.push(Quad {
+                    rect,
+                    color: [0.0, 0.0, 0.0, 0.6],
+                    radius: 0.0,
+                });
+            }
+            outline(layer, [x0, y0, x1 - x0, y1 - y0], [1.0, 1.0, 1.0, 0.9]);
+        }
+        let (selected, caret) = retouch.outlines(&mut self.fonts);
+        if let Some(selected) = selected {
+            // A little clear of the mark, so it is not mistaken for one.
+            let [x, y, w, h] = retouch.on_screen(selected);
+            let clear = hairline * 3.0;
+            let around = [x - clear, y - clear, w + clear * 2.0, h + clear * 2.0];
+            outline(layer, around, [1.0, 1.0, 1.0, 0.95]);
+        }
+        if let Some(caret) = caret {
+            let [x, y, w, h] = retouch.on_screen(caret);
+            layer.front.push(Quad {
+                rect: [x + hairline, y, w.max(hairline), h],
+                color: linear(c.cursor, 1.0),
+                radius: 0.0,
+            });
+        }
+    }
+
+    /// A rounded bar of the interface's own colour, centred on the window.
+    fn retouch_bar(&mut self, ed: &Editor, layer: &mut Layer, top: f32, width: f32, height: f32) -> f32 {
+        let c = ed.theme.colors;
+        let s = self.scale;
+        let left = ((self.width - width) / 2.0).max(4.0 * s).round();
+        let radius = 10.0 * s;
+        layer.back.push(Quad {
+            rect: [left - s, top - s, width + s * 2.0, height + s * 2.0],
+            color: linear(c.rule, 1.0),
+            radius: radius + s,
+        });
+        layer.back.push(Quad {
+            rect: [left, top, width, height],
+            color: linear(c.panel, 1.0),
+            radius,
+        });
+        left
+    }
+
+    /// The tools, each with the key that picks it.
+    fn retouch_tools(&mut self, ed: &Editor, retouch: &mut Retouch, layer: &mut Layer, bar: [f32; 3]) {
+        let [top, bar, size] = bar;
+        let c = ed.theme.colors;
+        let s = self.scale;
+        let (pad, inner, between) = ((11.0 * s).round(), (5.0 * s).round(), (6.0 * s).round());
+        let items: Vec<(Tool, u64, u64)> = retouch::TOOLS
+            .iter()
+            .map(|(tool, name, key)| {
+                let name = self.label(ed, name, c.text, size, Face::Ui, *tool == retouch.tool);
+                let hint = key.to_ascii_uppercase().to_string();
+                (
+                    *tool,
+                    name,
+                    self.label(ed, &hint, c.status, size * 0.8, Face::Ui, false),
+                )
+            })
+            .collect();
+        let widths = |view: &View, hints: bool| -> Vec<f32> {
+            let of = |key: &u64| view.layouts[key].rows[0].width;
+            let item = |(_, name, hint): &(Tool, u64, u64)| {
+                of(name) + pad * 2.0 + if hints { of(hint) + between } else { 0.0 }
+            };
+            items.iter().map(item).collect()
+        };
+        // In a narrow window the keys go, and the names stay.
+        let mut hints = true;
+        let mut each = widths(self, hints);
+        if each.iter().sum::<f32>() + inner * 2.0 > self.width - 16.0 * s {
+            hints = false;
+            each = widths(self, hints);
+        }
+        let width = each.iter().sum::<f32>() + inner * 2.0;
+        let left = self.retouch_bar(ed, layer, top, width, bar);
+        let clip = [left, top, left + width, top + bar];
+        let middle = top + bar / 2.0;
+        let mut x = left + inner;
+        for ((tool, name, hint), item) in items.into_iter().zip(each) {
+            let rect = [x, top + inner, item, bar - inner * 2.0];
+            if tool == retouch.tool {
+                layer.back.push(Quad {
+                    rect,
+                    color: linear(c.panel_active, 1.0),
+                    radius: 6.0 * s,
+                });
+            }
+            retouch.buttons.push((rect, Button::Tool(tool)));
+            let name_width = self.put(layer, name, x + pad, middle, clip, c.text);
+            if hints {
+                self.put(layer, hint, x + pad + name_width + between, middle + s, clip, c.status);
+            }
+            x += item;
+        }
+    }
+
+    /// Colour and stroke, then undo, redo and done.
+    fn retouch_settings(&mut self, ed: &Editor, retouch: &mut Retouch, layer: &mut Layer, bar: [f32; 3]) {
+        let [top, bar, size] = bar;
+        let c = ed.theme.colors;
+        let s = self.scale;
+        let (pad, inner) = ((11.0 * s).round(), (5.0 * s).round());
+        let cell = bar - inner * 2.0;
+        let rule = (13.0 * s).round();
+        let words: Vec<(Button, u64, Rgb)> = [
+            (Button::Undo, "Undo", c.text, false),
+            (Button::Redo, "Redo", c.text, false),
+            (Button::Done, "Done", c.cursor, true),
+        ]
+        .into_iter()
+        .map(|(button, word, rgb, bold)| (button, self.label(ed, word, rgb, size, Face::Ui, bold), rgb))
+        .collect();
+        let word_width = |view: &View, key: &u64| view.layouts[key].rows[0].width + pad * 2.0;
+        let words_width: f32 = words.iter().map(|(_, key, _)| word_width(self, key)).sum();
+        let swatches = retouch::COLORS.len() as f32 * cell;
+        let strokes = 3.0 * cell;
+        let width = inner * 2.0 + swatches + rule + strokes + rule + words_width;
+        let left = self.retouch_bar(ed, layer, top, width, bar);
+        let clip = [left, top, left + width, top + bar];
+        let middle = top + bar / 2.0;
+        let mut x = left + inner;
+        let chosen = |layer: &mut Layer, rect: [f32; 4]| {
+            layer.back.push(Quad {
+                rect,
+                color: linear(c.panel_active, 1.0),
+                radius: 6.0 * s,
+            })
+        };
+        let dot = |layer: &mut Layer, x: f32, diameter: f32, color: [f32; 4]| {
+            layer.back.push(Quad {
+                rect: [
+                    (x - diameter / 2.0).round(),
+                    (middle - diameter / 2.0).round(),
+                    diameter,
+                    diameter,
+                ],
+                color,
+                radius: diameter / 2.0,
+            })
+        };
+        for (index, (_, rgb)) in retouch::COLORS.iter().enumerate() {
+            let rect = [x, top + inner, cell, cell];
+            if index == retouch.color {
+                chosen(layer, rect);
+            }
+            // A ring, so white shows on a light bar and black on a dark one.
+            dot(layer, x + cell / 2.0, (18.0 * s).round(), linear(c.rule, 1.0));
+            dot(
+                layer,
+                x + cell / 2.0,
+                (15.0 * s).round(),
+                linear(Rgb(rgb[0], rgb[1], rgb[2]), 1.0),
+            );
+            retouch.buttons.push((rect, Button::Color(index)));
+            x += cell;
+        }
+        let divider = |layer: &mut Layer, x: f32| {
+            layer.back.push(Quad {
+                rect: [
+                    (x + rule / 2.0).round(),
+                    top + inner * 2.0,
+                    s.max(1.0),
+                    bar - inner * 4.0,
+                ],
+                color: linear(c.rule, 1.0),
+                radius: 0.0,
+            })
+        };
+        divider(layer, x);
+        x += rule;
+        for (index, diameter) in [5.0, 9.0, 14.0].into_iter().enumerate() {
+            let rect = [x, top + inner, cell, cell];
+            if index == retouch.size {
+                chosen(layer, rect);
+            }
+            dot(layer, x + cell / 2.0, (diameter * s).round(), linear(c.text, 1.0));
+            retouch.buttons.push((rect, Button::Size(index)));
+            x += cell;
+        }
+        divider(layer, x);
+        x += rule;
+        for (button, key, rgb) in words {
+            let item = word_width(self, &key);
+            retouch.buttons.push(([x, top + inner, item, cell], button));
+            self.put(layer, key, x + pad, middle, clip, rgb);
+            x += item;
         }
     }
 

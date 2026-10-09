@@ -337,7 +337,7 @@ impl Running {
             editor.toggle_sidebar();
             editor.sidebar.focused = false;
         }
-        let mut view = View::new(fonts, Images::new(wake, platform::cache_dir()));
+        let mut view = View::new(fonts, Images::new(wake.clone(), platform::cache_dir()));
         view.scale = window.scale_factor() as f32;
         view.zoom = state.zoom.unwrap_or(1.0).clamp(0.5, 4.0);
         view.titlebar = if cfg!(target_os = "macos") {
@@ -347,7 +347,12 @@ impl Running {
         };
         (view.width, view.height) = (size.width as f32, size.height as f32);
         let mut running = Running {
-            session: Session { editor, view },
+            session: Session {
+                editor,
+                view,
+                #[cfg(feature = "substack")]
+                publish: crate::publish::Publisher::new(wake),
+            },
             gpu: Gpu::new(device, queue, format),
             surface,
             surface_config,
@@ -402,7 +407,17 @@ impl Running {
             self.title = title;
         }
         // Composition belongs to typing, not to normal-mode commands.
-        let ime = editor.mode == Mode::Insert || editor.cmdline.is_some() || editor.palette.is_some();
+        let labelling = self
+            .session
+            .view
+            .retouch
+            .as_ref()
+            .is_some_and(|retouch| retouch.typing());
+        let ime = editor.mode == Mode::Insert
+            || editor.cmdline.is_some()
+            || editor.palette.is_some()
+            || editor.sheet.is_some()
+            || labelling;
         if ime != self.ime_allowed {
             self.window.set_ime_allowed(ime);
             self.ime_allowed = ime;
@@ -412,9 +427,11 @@ impl Running {
     }
 
     fn redraw(&mut self) {
-        for image in self.session.view.images.poll() {
+        for image in self.session.view.uploads() {
             self.gpu.upload_image(image.id, image.width, image.height, &image.rgba);
         }
+        #[cfg(feature = "substack")]
+        self.session.publish.poll(&mut self.session.editor);
         if !self.drawn {
             crate::timing("first redraw requested");
         }
@@ -448,6 +465,9 @@ impl Running {
         let view = &mut self.session.view;
         self.gpu.render(&target, size, &frame, &view.layouts, &mut view.fonts);
         self.gpu.queue.present(texture);
+        if self.session.view.animating() {
+            self.window.request_redraw();
+        }
         if !std::mem::replace(&mut self.drawn, true) {
             crate::timing("first frame presented");
         }
@@ -516,6 +536,7 @@ impl Running {
             prose_font: editor.config.prose_font.first().cloned(),
             mono_font: editor.config.mono_font.first().cloned(),
             window: self.window.fullscreen().is_none().then_some((size.width, size.height)),
+            substack: platform::State::load().substack,
         }
         .save();
     }
@@ -604,6 +625,13 @@ impl Running {
             "keys" => Some(format!("keys {}", text("keys"))),
             "type" => Some(format!("text {}", text("text"))),
             "click" => Some(format!("click {} {} {}", number("x"), number("y"), text("button")).replace(" right", "")),
+            "drag" => Some(format!(
+                "drag {} {} {} {}",
+                number("x"),
+                number("y"),
+                number("to_x"),
+                number("to_y")
+            )),
             "shot" => Some(format!("shot {}", text("path"))),
             _ => None,
         };
@@ -642,6 +670,12 @@ impl Running {
             });
             let _ = reply.send(answer.to_string());
             return;
+        }
+        if parsed["cmd"] == "images" || parsed["cmd"] == "annotate" {
+            let answer = crate::ctl::pictures(&mut self.session, &parsed);
+            let _ = reply.send(answer.to_string());
+            let effects = self.session.settle();
+            return self.effects(effects, event_loop);
         }
         if parsed["cmd"] == "wait" {
             let name = parsed["name"]
@@ -718,6 +752,10 @@ impl Running {
         };
         self.last_click = Some((now, self.mouse, clicks));
         let session = &mut self.session;
+        if session.view.retouch.is_some() {
+            session.retouch_press(self.mouse.0, self.mouse.1);
+            return self.effects(Vec::new(), event_loop);
+        }
         let command = if cfg!(target_os = "macos") {
             self.mods.super_key()
         } else {
@@ -741,6 +779,19 @@ impl Running {
             Some(Target::Sidebar) => editor.sidebar.focused = true,
             Some(Target::MenuHint) => editor.open_palette(PaletteKind::Help),
             Some(Target::Note(index)) => editor.open_note(index),
+            Some(Target::Sheet) => {}
+            Some(Target::SheetScrim) => editor.close_sheet(),
+            Some(Target::SheetRow(row)) => editor.sheet_focus(row),
+            Some(Target::SheetOption(row, option)) => editor.sheet_choose(row, option),
+            Some(Target::SheetButton(index)) => editor.sheet_press(index),
+            Some(Target::Video(index)) => {
+                // Played by whatever plays videos here.
+                if let Some(video) = session.view.video(index)
+                    && let Err(err) = open::that_detached(video)
+                {
+                    editor.message = error(format!("cannot open {video}: {err}"));
+                }
+            }
             Some(
                 target @ (Target::TableColumn(..)
                 | Target::TableRow(_)
@@ -785,6 +836,9 @@ impl Running {
     fn context_click(&mut self, event_loop: &ActiveEventLoop) {
         let session = &mut self.session;
         let (x, y) = self.mouse;
+        if session.view.retouch.is_some() {
+            return;
+        }
         let editor = &mut session.editor;
         editor.close_context_menu();
         match session.view.target_at(x, y) {
@@ -796,8 +850,14 @@ impl Running {
                 if session.view.over_other_pane(editor, x) {
                     editor.switch_pane();
                 }
-                let pos = session.view.hit(editor, x, y);
-                editor.context_menu_at(pos, x, y);
+                match session.view.picture_at(x, y) {
+                    // A picture comes out of the text to be worked on.
+                    Some(picture) => session.retouch(picture.line, &picture.url, Some(picture.rect)),
+                    None => {
+                        let pos = session.view.hit(editor, x, y);
+                        editor.context_menu_at(pos, x, y);
+                    }
+                }
             }
             _ => {}
         }
@@ -807,6 +867,13 @@ impl Running {
 
     fn mouse_move(&mut self, x: f32, y: f32) {
         self.mouse = (x, y);
+        if let Some(retouch) = &mut self.session.view.retouch {
+            if retouch.dragging() {
+                retouch.drag(x, y);
+                self.window.request_redraw();
+            }
+            return;
+        }
         if self.session.view.pointer_moved(x, y) {
             self.window.request_redraw();
         }
@@ -820,13 +887,16 @@ impl Running {
 
     fn mouse_release(&mut self) {
         self.dragging = false;
+        if let Some(retouch) = &mut self.session.view.retouch {
+            return retouch.release();
+        }
         self.session.editor.mouse_up();
     }
 
     fn wheel(&mut self, pixels: f32) {
         let session = &mut self.session;
         let over = session.view.target_at(self.mouse.0, self.mouse.1);
-        if session.editor.palette.is_some() {
+        if session.editor.palette.is_some() || session.editor.sheet.is_some() || session.view.retouch.is_some() {
             return;
         }
         if matches!(over, Some(Target::Sidebar | Target::SidebarRow(_))) {
@@ -855,8 +925,8 @@ impl Running {
                 editor.message = error(err);
             }
             self.session.settle()
-        } else if !note && stet_core::editor::is_picture(path) {
-            // A picture from elsewhere is copied in beside the document.
+        } else if !note && (stet_core::editor::is_picture(path) || stet_core::editor::is_video(path)) {
+            // A picture or a video from elsewhere is copied in beside the document.
             match self.session.editor.file_link(path) {
                 Ok(link) => self.session.text(&link),
                 Err(err) => {
@@ -1115,7 +1185,18 @@ fn headless_session(args: &Args) -> Session {
     view.scale = args.scale;
     view.width = (args.size.0 as f32 * args.scale).round();
     view.height = (args.size.1 as f32 * args.scale).round();
-    Session { editor, view }
+    #[cfg(feature = "substack")]
+    let publish = {
+        let mut publish = crate::publish::Publisher::new(no_wake());
+        publish.offline = true;
+        publish
+    };
+    Session {
+        editor,
+        view,
+        #[cfg(feature = "substack")]
+        publish,
+    }
 }
 
 /// Renders one frame to a PNG without opening a window.
@@ -1137,7 +1218,7 @@ pub fn screenshot(args: &Args) -> Result<(), String> {
     }
     // The first frame requests images; the second has them.
     session.view.frame(&mut session.editor);
-    for image in session.view.images.poll() {
+    for image in session.view.uploads() {
         gpu.upload_image(image.id, image.width, image.height, &image.rgba);
     }
     session.view.follow_cursor(&mut session.editor);

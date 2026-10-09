@@ -11,6 +11,7 @@ mod palette;
 mod paste;
 mod pins;
 mod remote;
+mod sheet;
 mod sidebar;
 mod suggest;
 mod tables;
@@ -25,9 +26,10 @@ pub use margin::margin_path;
 pub use menu::{ContextMenu, MenuAt, MenuItem};
 pub use motion::Matcher;
 pub use palette::{Act, Item, Palette, PaletteKind};
-pub use paste::{Clip, is_picture};
+pub use paste::{Clip, is_picture, is_video};
 pub use pins::Pin;
 pub use remote::{Applied, RemoteEdit, Session, Snapshot, Target};
+pub use sheet::{Button, Field, Row, Sheet};
 pub use sidebar::{Entry, EntryKind, Sidebar};
 pub use tabs::TabInfo;
 
@@ -128,6 +130,15 @@ pub enum Effect {
         text: String,
         selection: Option<(Range<usize>, String)>,
     },
+    /// Open the picture on the cursor's line for retouching.
+    EditImage,
+    /// Offer to publish the document.
+    Publish,
+    /// A sheet's button was pressed.
+    Sheet {
+        sheet: &'static str,
+        button: &'static str,
+    },
     OpenDialog,
     SaveAsDialog,
     ThemeChanged,
@@ -216,6 +227,8 @@ pub struct Editor {
     pub palette: Option<Palette>,
     /// The right-click menu, when open.
     pub context_menu: Option<ContextMenu>,
+    /// The card of settings risen from the bottom of the window, if any.
+    pub sheet: Option<Sheet>,
     /// The connected assistant, kept current by the shell.
     pub agent: Option<Agent>,
     /// The selection when the message prompt opened.
@@ -300,6 +313,7 @@ impl Editor {
             vim: vim::State::default(),
             palette: None,
             context_menu: None,
+            sheet: None,
             agent: None,
             agent_selection: None,
             keymap: Mapping::compile(&config.keys),
@@ -693,6 +707,7 @@ impl Editor {
         if self.mapping
             || self.palette.is_some()
             || self.context_menu.is_some()
+            || self.sheet.is_some()
             || self.cmdline.is_some()
             || self.sidebar.focused
         {
@@ -819,6 +834,10 @@ impl Editor {
 
     fn builtin_key(&mut self, event: KeyEvent) {
         self.keep_goal = false;
+        // A sheet takes every key until it is put away.
+        if self.sheet.is_some() {
+            return self.sheet_key(event);
+        }
         let shortcut = self.shortcut(&event);
         if self.context_menu.is_some() {
             return self.menu_key(event);
@@ -875,6 +894,9 @@ impl Editor {
         }
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         self.message = None;
+        if self.sheet.is_some() {
+            return self.sheet_text(&text);
+        }
         if self.palette.is_some() {
             return self.palette_text(&text);
         }

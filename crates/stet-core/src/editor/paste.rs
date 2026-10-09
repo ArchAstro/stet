@@ -29,10 +29,21 @@ pub(super) struct Pasted {
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "tif", "tiff"];
 
-pub fn is_picture(path: &Path) -> bool {
+const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "m4v", "webm", "mkv", "avi"];
+
+fn has_extension(path: &Path, extensions: &[&str]) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .is_some_and(|ext| extensions.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+pub fn is_picture(path: &Path) -> bool {
+    has_extension(path, IMAGE_EXTENSIONS)
+}
+
+/// A video is embedded the way a picture is, and shown as a frame to click.
+pub fn is_video(path: &Path) -> bool {
+    has_extension(path, VIDEO_EXTENSIONS)
 }
 
 /// A path as a link destination.
@@ -65,6 +76,36 @@ fn starts_block(text: &str) -> bool {
 fn continues(text: &str) -> bool {
     let digits = text.bytes().take_while(u8::is_ascii_digit).count();
     text.starts_with("- ") || text.starts_with("> ") || digits > 0 && text[digits..].starts_with(". ")
+}
+
+/// A file name for a new version of the picture at `url`, without the
+/// mark an earlier version left on it.
+fn picture_name(url: &str) -> String {
+    let file = url.split(['?', '#']).next().unwrap_or_default();
+    let file = file.rsplit(['/', '\\']).next().unwrap_or_default();
+    let stem = match file.rsplit_once('.') {
+        _ if url.starts_with("data:") => "",
+        Some((stem, _)) => stem,
+        None => file,
+    };
+    let stem: String = stem
+        .replace("%20", "-")
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '-' })
+        .collect();
+    let stem = stem.trim_matches('-');
+    let stem = match stem.rsplit_once("-edit") {
+        Some((before, after))
+            if after.is_empty()
+                || after
+                    .strip_prefix('-')
+                    .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit())) =>
+        {
+            before
+        }
+        _ => stem,
+    };
+    if stem.is_empty() { "picture" } else { stem }.to_string()
 }
 
 fn single_url(text: &str) -> Option<&str> {
@@ -359,12 +400,76 @@ impl Editor {
         Ok(format!("{prefix}{}", encode(&kept)))
     }
 
+    /// Copies a video into this document's folder and returns the link
+    /// destination. It is never read whole: a file of the same name and
+    /// size is taken to be the same video.
+    fn keep_video(&mut self, file: &Path, name: &str, extension: &str) -> Result<String, String> {
+        let (folder, prefix, _) = self.image_home()?;
+        std::fs::create_dir_all(&folder).map_err(|err| format!("{}: {err}", folder.display()))?;
+        let size = std::fs::metadata(file)
+            .map_err(|err| format!("{}: {err}", file.display()))?
+            .len();
+        let mut number = 1;
+        let kept = loop {
+            let kept = match number {
+                1 => format!("{name}.{extension}"),
+                _ => format!("{name}-{number}.{extension}"),
+            };
+            let target = folder.join(&kept);
+            match std::fs::metadata(&target) {
+                Ok(existing) if existing.len() == size => break kept,
+                Ok(_) => number += 1,
+                Err(_) => {
+                    std::fs::copy(file, &target).map_err(|err| format!("{}: {err}", target.display()))?;
+                    break kept;
+                }
+            }
+        };
+        Ok(format!("{prefix}{}", encode(&kept)))
+    }
+
+    /// Keeps a retouched picture beside the document and points the
+    /// reference to `url` on `line` at it. The original stays where it
+    /// was, so undo brings it back. Returns the new destination.
+    pub fn replace_image(&mut self, line: usize, url: &str, png: &[u8]) -> Result<String, String> {
+        let line = line.min(self.buf.line_count().saturating_sub(1));
+        // The reference ends on `line`; a long one may have begun above it.
+        let near = (line.saturating_sub(3)..=line).rev().find_map(|line| {
+            let text = self.buf.line_text(line);
+            let found = text.match_indices(url).map(|(byte, _)| byte);
+            let byte = found
+                .clone()
+                .find(|byte| text[..*byte].ends_with(['(', '<']))
+                .or(found.clone().next())?;
+            Some(self.buf.line_start(line) + text[..byte].chars().count())
+        });
+        // Or it is named by a definition somewhere else.
+        let anywhere = || {
+            let text = self.buf.text();
+            text.find(url).map(|byte| text[..byte].chars().count())
+        };
+        let start = near
+            .or_else(anywhere)
+            .ok_or(format!("cannot find where the text refers to {url}"))?;
+        let dest = self.keep_image(png, "png", Some(&format!("{}-edit", picture_name(url))))?;
+        let end = start + url.chars().count();
+        self.close_group();
+        self.raw_edit(start..end, &dest);
+        self.close_group();
+        if self.cursor >= end {
+            self.cursor = self.cursor + dest.chars().count() - (end - start);
+        }
+        self.clamp_cursor();
+        Ok(dest)
+    }
+
     /// The Markdown that refers to a file dropped or pasted here. A picture
-    /// from outside the document's folder is copied in, so the document
-    /// keeps working when it moves.
+    /// or a video from outside the document's folder is copied in, so the
+    /// document keeps working when it moves.
     pub fn file_link(&mut self, file: &Path) -> Result<String, String> {
         let name = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-        let image = is_picture(file);
+        let video = is_video(file);
+        let image = is_picture(file) || video;
         if self.margin_active {
             return self.keep_in_margin(file);
         }
@@ -373,14 +478,18 @@ impl Editor {
         let dest = match (inside, &folder) {
             (Some(relative), _) => encode(&relative.to_string_lossy()),
             (None, Some(_)) if image => {
-                let bytes = std::fs::read(file).map_err(|err| format!("{}: {err}", file.display()))?;
                 let extension = file
                     .extension()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_ascii_lowercase();
                 let name = name.split_whitespace().collect::<Vec<_>>().join("-");
-                self.keep_image(&bytes, &extension, Some(&name))?
+                if video {
+                    self.keep_video(file, &name, &extension)?
+                } else {
+                    let bytes = std::fs::read(file).map_err(|err| format!("{}: {err}", file.display()))?;
+                    self.keep_image(&bytes, &extension, Some(&name))?
+                }
             }
             _ => encode(&file.to_string_lossy()),
         };

@@ -1,5 +1,6 @@
 //! Images referenced by the document, loaded and decoded off the UI thread.
-//! Local files, `data:` URIs and (optionally) `http(s)` URLs.
+//! Local files, `data:` URIs and (optionally) `http(s)` URLs. A video is
+//! shown as one frame of itself with a play button on it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,6 +11,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 const MAX_SIDE: u32 = 4096;
 /// Downloads stop here.
 const MAX_BYTES: u64 = 32 << 20;
+/// The longer side of a video's frame.
+const POSTER_SIDE: u32 = 1280;
 
 pub struct Decoded {
     pub id: u64,
@@ -31,6 +34,18 @@ pub enum Source {
     Url(String),
     /// A `data:` URI, whole.
     Data(String),
+}
+
+impl Source {
+    /// What to hand the system's player, if this is a video.
+    pub fn video(&self) -> Option<String> {
+        let (path, open) = match self {
+            Source::File(path) => (path.clone(), path.to_string_lossy().into_owned()),
+            Source::Url(url) => (PathBuf::from(url.split(['?', '#']).next()?), url.clone()),
+            Source::Data(_) => return None,
+        };
+        stet_core::editor::is_video(&path).then_some(open)
+    }
 }
 
 pub struct Images {
@@ -180,6 +195,102 @@ fn decode(bytes: &[u8], id: u64) -> Option<Decoded> {
     })
 }
 
+/// One frame of a video file, as an image file's bytes: from Quick Look
+/// on macOS, else from `ffmpeg` if there is one.
+fn frame(video: &Path, id: u64) -> Option<Vec<u8>> {
+    use std::process::{Command, Stdio};
+    if cfg!(target_os = "macos") {
+        // Quick Look writes `<file name>.png` into a folder of our choosing.
+        let folder = std::env::temp_dir().join(format!("stet-poster-{}-{id}", std::process::id()));
+        std::fs::create_dir_all(&folder).ok()?;
+        let _ = Command::new("/usr/bin/qlmanage")
+            .args(["-t", "-s", &POSTER_SIDE.to_string(), "-o"])
+            .arg(&folder)
+            .arg(video)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let png = folder.join(format!("{}.png", video.file_name()?.to_string_lossy()));
+        let bytes = std::fs::read(png).ok();
+        let _ = std::fs::remove_dir_all(folder);
+        if bytes.is_some() {
+            return bytes;
+        }
+    }
+    let scale = format!("scale={POSTER_SIDE}:{POSTER_SIDE}:force_original_aspect_ratio=decrease");
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(video)
+        .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "-"])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    (output.status.success() && !output.stdout.is_empty()).then_some(output.stdout)
+}
+
+/// What stands for a video in the text: a frame of it, or a blank screen
+/// when there is none to be had, under a play button. A file that is not
+/// there shows nothing, as a missing picture does.
+fn poster(source: &Source, id: u64) -> Option<Decoded> {
+    let picture = match source {
+        Source::File(path) => {
+            if !path.is_file() {
+                return None;
+            }
+            frame(path, id).and_then(|bytes| image::load_from_memory(&bytes).ok())
+        }
+        _ => None,
+    };
+    let mut rgba = match picture {
+        Some(picture) if picture.width().max(picture.height()) > POSTER_SIDE => picture
+            .resize(POSTER_SIDE, POSTER_SIDE, image::imageops::FilterType::Triangle)
+            .into_rgba8(),
+        Some(picture) => picture.into_rgba8(),
+        None => image::RgbaImage::from_pixel(POSTER_SIDE, POSTER_SIDE * 9 / 16, image::Rgba([24, 24, 27, 255])),
+    };
+    play_button(&mut rgba);
+    Some(Decoded {
+        id,
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    })
+}
+
+/// A dark disc with a white triangle, in the middle of the picture.
+fn play_button(picture: &mut image::RgbaImage) {
+    let (width, height) = (picture.width() as f32, picture.height() as f32);
+    let (cx, cy) = (width / 2.0, height / 2.0);
+    let radius = (width.min(height) * 0.11).max(8.0);
+    // The triangle, clockwise, nudged right so it looks centred.
+    let corners = [
+        (cx - radius * 0.28, cy - radius * 0.42),
+        (cx + radius * 0.46, cy),
+        (cx - radius * 0.28, cy + radius * 0.42),
+    ];
+    let reach = radius.ceil() as u32 + 1;
+    let (left, top) = ((cx as u32).saturating_sub(reach), (cy as u32).saturating_sub(reach));
+    for y in top..(cy as u32 + reach).min(picture.height()) {
+        for x in left..(cx as u32 + reach).min(picture.width()) {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let disc = (radius - (px - cx).hypot(py - cy) + 0.5).clamp(0.0, 1.0);
+            // How far inside the nearest edge the point is.
+            let inside = (0..3)
+                .map(|at| {
+                    let ((ax, ay), (bx, by)) = (corners[at], corners[(at + 1) % 3]);
+                    ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) / (bx - ax).hypot(by - ay)
+                })
+                .fold(f32::MAX, f32::min);
+            let triangle = (inside + 0.5).clamp(0.0, 1.0);
+            let pixel = picture.get_pixel_mut(x, y);
+            for channel in &mut pixel.0[..3] {
+                let dimmed = *channel as f32 * (1.0 - disc * 0.6);
+                *channel = (dimmed + (255.0 - dimmed) * triangle * 0.95).round() as u8;
+            }
+        }
+    }
+}
+
 impl Images {
     pub fn new(wake: Arc<dyn Fn() + Send + Sync>, cache: Option<PathBuf>) -> Images {
         let (sender, receiver) = channel();
@@ -211,7 +322,11 @@ impl Images {
             self.cache.clone(),
         );
         let work = move || {
-            let decoded = load(&owned, cache.as_deref()).and_then(|bytes| decode(&bytes, id));
+            let decoded = match owned.video() {
+                // Never read whole: a video is far larger than a picture.
+                Some(_) => poster(&owned, id),
+                None => load(&owned, cache.as_deref()).and_then(|bytes| decode(&bytes, id)),
+            };
             let _ = sender.send((owned, decoded));
             wake();
         };
@@ -221,6 +336,11 @@ impl Images {
             std::thread::spawn(work);
         }
         None
+    }
+
+    /// The file behind a picture, read now.
+    pub fn bytes(&self, source: &Source) -> Option<Vec<u8>> {
+        load(source, self.cache.as_deref())
     }
 
     /// Finished decodes, ready for upload. Empty when nothing changed.
@@ -270,6 +390,32 @@ mod tests {
         );
         assert_eq!(resolve("https://example.com/x.png", Some(doc), false), None);
         assert_eq!(resolve("rel.png", None, true), None);
+    }
+
+    #[test]
+    fn videos_are_shown_as_a_frame_to_click() {
+        let url = Source::Url("https://example.com/talk.MP4?t=10".into());
+        assert_eq!(url.video().as_deref(), Some("https://example.com/talk.MP4?t=10"));
+        assert_eq!(Source::Url("https://example.com/mp4.png".into()).video(), None);
+        assert_eq!(
+            Source::File("/notes/demo.mov".into()).video().as_deref(),
+            Some("/notes/demo.mov")
+        );
+        assert_eq!(Source::File("/notes/demo.png".into()).video(), None);
+
+        // Nothing is fetched for a remote video: a blank screen stands for it.
+        let poster = poster(&url, 3).unwrap();
+        assert_eq!((poster.id, poster.width, poster.height), (3, 1280, 720));
+        let pixel = |x: u32, y: u32| {
+            let at = ((y * poster.width + x) * 4) as usize;
+            [poster.rgba[at], poster.rgba[at + 1], poster.rgba[at + 2]]
+        };
+        assert_eq!(pixel(10, 10), [24, 24, 27]);
+        // The button: white in the middle, a darker disc around it.
+        assert!(pixel(640, 360).iter().all(|&channel| channel > 230));
+        assert!(pixel(640 - 60, 360)[0] < 24);
+        // A video that is not there shows nothing, as a missing picture does.
+        assert!(super::poster(&Source::File("/no/such/clip.mp4".into()), 4).is_none());
     }
 
     #[test]
