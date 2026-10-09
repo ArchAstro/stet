@@ -3,6 +3,7 @@
 
 use crate::gpu::linear;
 use crate::images::{self, Decoded, Images};
+use crate::motion::{self, Tween};
 use crate::retouch::{self, Button, Retouch, Tool};
 use crate::text::{Face, Fonts, Layer as Depth, LineLayout, LineSpec, RowKind, TableRow, color, layout_line};
 use std::collections::HashMap;
@@ -69,27 +70,38 @@ pub enum Target {
     /// The strips that add a column or a row at the end of the table on this line.
     TableAddColumn(usize),
     TableAddRow(usize),
-    /// The card risen from the bottom of the window, and the dimmed area
-    /// around it; its rows, a choice's options `(row, option)`, its buttons.
+    /// A sheet's panel, and the dimmed area around it; its rows and its buttons.
     Sheet,
     SheetScrim,
     SheetRow(usize),
-    SheetOption(usize, usize),
     SheetButton(usize),
     /// The dimmed area around the menu.
     Scrim,
     MenuHint,
 }
 
-const SHEET_RISE: Duration = Duration::from_millis(240);
-const SHEET_FALL: Duration = Duration::from_millis(160);
-
-/// The sheet as last seen, so it can still be drawn sinking away once the
+/// The sheet as last seen, so it can still be drawn leaving once the
 /// editor has let go of it.
 struct Risen {
     sheet: Sheet,
-    since: Instant,
-    closed: Option<Instant>,
+    /// 0 away, 1 here.
+    open: Tween,
+    /// The panel's height, which follows its rows as they come and go.
+    height: Tween,
+    /// It took over the command menu's panel, which stays where it is
+    /// while what is in it changes.
+    pushed: bool,
+    closing: bool,
+}
+
+/// Where a layer had got to, so that what is drawn after can be moved and
+/// faded as one thing.
+#[derive(Clone, Copy)]
+struct Mark {
+    back: usize,
+    texts: usize,
+    front: usize,
+    targets: usize,
 }
 
 /// A picture drawn in the text this frame.
@@ -160,6 +172,12 @@ pub struct View {
     /// The picture taken out of the text to be retouched.
     pub retouch: Option<Retouch>,
     risen: Option<Risen>,
+    /// The frame the command menu was last drawn in, and how tall it was.
+    palette_seen: Option<(u64, f32)>,
+    /// The moment this frame is drawn for.
+    now: Instant,
+    /// The system asks for less motion: things fade, and do not travel.
+    pub reduce_motion: bool,
     sidebar_selected: usize,
     palette_scroll: usize,
     /// Bottom-left of the text cursor in the last frame, if it was on screen.
@@ -220,6 +238,9 @@ impl View {
             pictures: Vec::new(),
             retouch: None,
             risen: None,
+            palette_seen: None,
+            now: Instant::now(),
+            reduce_motion: false,
             sidebar_selected: usize::MAX,
             palette_scroll: 0,
             cursor_point: None,
@@ -438,6 +459,7 @@ impl View {
                         face: None,
                         bold: false,
                         table: None,
+                        plain: false,
                     },
                 );
                 let advance = (layout.rows[0].width / 10.0).max(1.0);
@@ -502,6 +524,7 @@ impl View {
                         face: None,
                         bold: false,
                         table: None,
+                        plain: false,
                     },
                 );
                 let advance = (layout.rows[0].width / 10.0).max(1.0);
@@ -612,6 +635,7 @@ impl View {
                     face: None,
                     bold: false,
                     table,
+                    plain: false,
                 },
             );
             if table.is_some() {
@@ -660,6 +684,7 @@ impl View {
                     face: Some(face),
                     bold,
                     table: None,
+                    plain: true,
                 },
             )
         });
@@ -929,12 +954,63 @@ impl View {
 
     /// Something is in motion: the next frame differs without any input.
     pub fn animating(&self) -> bool {
+        let now = Instant::now();
         let sheet = self
             .risen
             .as_ref()
-            .is_some_and(|risen| risen.closed.is_some() || risen.since.elapsed() < SHEET_RISE);
+            .is_some_and(|risen| risen.closing || risen.open.moving(now) || risen.height.moving(now));
         let retouch = self.retouch.as_ref();
-        sheet || retouch.is_some_and(|retouch| retouch.animating() || retouch.gone())
+        sheet || retouch.is_some_and(|retouch| retouch.animating(now) || retouch.gone(now))
+    }
+
+    /// Nothing travels: a screenshot wants things where they come to rest.
+    pub fn still(&self) -> bool {
+        self.images.blocking
+    }
+
+    /// How long a move takes: no time at all when nothing should move.
+    fn span(&self, span: Duration) -> Duration {
+        if self.still() { Duration::ZERO } else { span }
+    }
+
+    fn mark(&self, layer: &Layer) -> Mark {
+        Mark {
+            back: layer.back.len(),
+            texts: layer.texts.len(),
+            front: layer.front.len(),
+            targets: self.targets.len(),
+        }
+    }
+
+    /// Moves and fades everything drawn since `mark` as one thing. With
+    /// less motion asked for, it fades where it stands.
+    fn shift(&mut self, layer: &mut Layer, mark: Mark, by: (f32, f32), opacity: f32) {
+        let (dx, dy) = if self.reduce_motion {
+            (0.0, 0.0)
+        } else {
+            (by.0.round(), by.1.round())
+        };
+        for quad in layer.back[mark.back..].iter_mut().chain(&mut layer.front[mark.front..]) {
+            quad.rect[0] += dx;
+            quad.rect[1] += dy;
+            quad.color[3] *= opacity;
+        }
+        for text in &mut layer.texts[mark.texts..] {
+            text.left += dx;
+            text.top += dy;
+            text.clip = [
+                text.clip[0] + dx,
+                text.clip[1] + dy,
+                text.clip[2] + dx,
+                text.clip[3] + dy,
+            ];
+            let ink = text.color;
+            text.color = glyphon::Color::rgba(ink.r(), ink.g(), ink.b(), (ink.a() as f32 * opacity).round() as u8);
+        }
+        for (rect, _) in &mut self.targets[mark.targets..] {
+            rect[0] += dx;
+            rect[1] += dy;
+        }
     }
 
     /// What the video behind `Target::Video(index)` opens.
@@ -951,10 +1027,11 @@ impl View {
     pub fn frame(&mut self, ed: &mut Editor) -> Frame {
         ed.refresh();
         self.frame += 1;
+        self.now = Instant::now();
         self.targets.clear();
         self.videos.clear();
         self.pictures.clear();
-        if self.retouch.as_ref().is_some_and(Retouch::gone) {
+        if self.retouch.as_ref().is_some_and(|retouch| retouch.gone(self.now)) {
             self.retouch = None;
         }
         let background = linear(ed.theme.colors.background, 1.0);
@@ -1716,62 +1793,79 @@ impl View {
         }
     }
 
-    /// The sheet: a card of settings that rises from the bottom of the
-    /// window over a dimmed page, and sinks back when it is put away.
+    /// A sheet: settings and actions in the command menu's own panel, in
+    /// the same place and to the same measure, so one reads as a page of
+    /// the other. Opened from the menu, the panel stays and its contents
+    /// change; opened on its own, it arrives; either way it leaves quicker
+    /// than it came.
     fn sheet(&mut self, ed: &Editor, m: &Metrics, layer: &mut Layer) {
-        let now = Instant::now();
-        // A screenshot wants the card where it comes to rest.
-        let still = self.images.blocking;
+        let now = self.now;
+        let (enter, exit) = (self.span(motion::ENTER), self.span(motion::EXIT));
+        let c = ed.theme.colors;
+        let s = self.scale;
+        // The command menu's own measures.
+        let width = (640.0 * s).min(self.width - 32.0 * s).round();
+        let left = ((self.width - width) / 2.0).round();
+        let top = (self.height * 0.14).max(self.titlebar + 12.0 * s).round();
+        let input_height = (48.0 * s).round();
+        let row = (32.0 * s).round();
+        let footer = (30.0 * s).round();
+        let pad = (16.0 * s).round();
+        let rule = (9.0 * s).round();
+        let tall = |sheet: &Sheet| {
+            let buttons = match sheet.buttons.len() {
+                0 => 0.0,
+                count => rule + count as f32 * row,
+            };
+            let status = sheet.status.as_ref().map_or(0.0, |_| row);
+            input_height + 4.0 * s + sheet.rows.len() as f32 * row + buttons + status + footer + 8.0 * s
+        };
+
         match (&ed.sheet, &mut self.risen) {
             (Some(sheet), Some(risen)) => {
                 risen.sheet = sheet.clone();
-                if risen.closed.take().is_some() {
-                    risen.since = now;
+                risen.open.go(1.0, enter, now);
+                if std::mem::take(&mut risen.closing) {
+                    risen.pushed = false;
                 }
             }
             (Some(sheet), None) => {
+                // The command menu was up a frame ago: this takes over its panel.
+                let before = self.palette_seen.filter(|(frame, _)| frame + 1 == self.frame);
+                let mut open = Tween::at(0.0);
+                open.go(1.0, enter, now);
                 self.risen = Some(Risen {
                     sheet: sheet.clone(),
-                    since: now,
-                    closed: None,
-                })
+                    open,
+                    height: Tween::at(before.map_or(tall(sheet), |(_, height)| height)),
+                    pushed: before.is_some(),
+                    closing: false,
+                });
             }
             (None, Some(risen)) => {
-                let closed = *risen.closed.get_or_insert(now);
-                if still || closed.elapsed() >= SHEET_FALL {
+                if !std::mem::replace(&mut risen.closing, true) {
+                    risen.open.go(0.0, exit, now);
+                }
+                if !risen.open.moving(now) {
                     self.risen = None;
                 }
             }
             (None, None) => {}
         }
-        let Some(risen) = &self.risen else { return };
-        let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
-        let open = match risen.closed {
-            _ if still => 1.0,
-            Some(closed) => 1.0 - ease(closed.elapsed().as_secs_f32() / SHEET_FALL.as_secs_f32()),
-            None => ease(risen.since.elapsed().as_secs_f32() / SHEET_RISE.as_secs_f32()),
-        };
-        let live = risen.closed.is_none();
+        let Some(risen) = &mut self.risen else { return };
+        risen.height.go(tall(&risen.sheet), enter, now);
+        let (open, height) = (risen.open.value(now), risen.height.value(now).round());
+        let (live, pushed) = (!risen.closing, risen.pushed && !risen.closing);
         let sheet = risen.sheet.clone();
 
-        let c = ed.theme.colors;
-        let s = self.scale;
-        let (pad, row, gap) = ((22.0 * s).round(), (38.0 * s).round(), (8.0 * s).round());
-        let (title_height, status_height, button_height) = ((28.0 * s).round(), (28.0 * s).round(), (32.0 * s).round());
-        let width = (580.0 * s).min(self.width - 24.0 * s).round();
-        let left = ((self.width - width) / 2.0).round();
-        let status = sheet.status.as_ref().map_or(0.0, |_| status_height);
-        let height =
-            pad + title_height + gap + sheet.rows.len() as f32 * row + status + gap * 2.0 + button_height + pad;
-        let rest = self.height - height - 18.0 * s;
-        let top = (rest + (self.height - rest + 8.0 * s) * (1.0 - open)).round();
-
+        // The page dims with the panel, unless the menu had dimmed it already.
         layer.back.push(Quad {
             rect: [0.0, 0.0, self.width, self.height],
-            color: [0.0, 0.0, 0.0, 0.34 * open],
+            color: [0.0, 0.0, 0.0, 0.28 * if pushed { 1.0 } else { open }],
             radius: 0.0,
         });
-        let radius = 16.0 * s;
+        let whole = self.mark(layer);
+        let radius = 12.0 * s;
         layer.back.push(Quad {
             rect: [left - s, top - s, width + s * 2.0, height + s * 2.0],
             color: linear(c.rule, 1.0),
@@ -1787,165 +1881,156 @@ impl View {
                 .push(([0.0, 0.0, self.width, self.height], Target::SheetScrim));
             self.targets.push(([left, top, width, height], Target::Sheet));
         }
-        let clip = [left, top.max(0.0), left + width, (top + height).min(self.height)];
-        let title = self.label(ed, &sheet.title, c.text, m.ui * 1.12, Face::Ui, true);
-        self.put(layer, title, left + pad, top + pad + title_height / 2.0, clip, c.text);
+        let inside = self.mark(layer);
+        let bottom = top + height;
+        let clip = [left + pad, top, left + width - pad, bottom];
 
-        let labels: Vec<u64> = sheet
-            .rows
-            .iter()
-            .map(|row| self.label(ed, &row.label, c.status, m.ui, Face::Ui, false))
-            .collect();
-        let widest = labels
-            .iter()
-            .map(|key| self.layouts[key].rows[0].width)
-            .fold(0.0, f32::max);
-        let column = if widest > 0.0 { (widest + 18.0 * s).round() } else { 0.0 };
-        let hairline = s.max(1.0);
-        let mut y = top + pad + title_height + gap;
-        for (index, (item, label)) in sheet.rows.iter().zip(labels).enumerate() {
-            let middle = y + row / 2.0;
-            let focused = live && index == sheet.focus && !sheet.busy;
-            // A row with nothing to call it uses the whole width.
-            let named = !item.label.is_empty();
-            let x = left + pad + if named { column } else { 0.0 };
-            let room = left + width - pad - x;
-            if named {
-                self.put(layer, label, left + pad, middle, clip, c.status);
+        // Where the menu has its search field, the sheet has its name.
+        let title = self.label(ed, &sheet.title, c.text, m.ui * 1.2, Face::Ui, false);
+        self.put(layer, title, left + pad, top + input_height / 2.0, clip, c.text);
+        layer.back.push(Quad {
+            rect: [left, top + input_height - s, width, s.max(1.0)],
+            color: linear(c.rule, 0.7),
+            radius: 0.0,
+        });
+
+        let chosen = |layer: &mut Layer, y: f32| {
+            layer.back.push(Quad {
+                rect: [left + 6.0 * s, y, width - 12.0 * s, row],
+                color: linear(c.panel_active, 1.0),
+                radius: 7.0 * s,
+            })
+        };
+        let right = left + width - pad;
+        let mut y = top + input_height + 4.0 * s;
+        for (index, item) in sheet.rows.iter().enumerate() {
+            // Rows the panel has not grown to yet are not drawn half in.
+            if y + row > bottom {
+                break;
             }
-            match &item.field {
-                Field::Note(words) => {
-                    let key = self.label(ed, words, c.status, m.ui * 0.94, Face::Ui, false);
-                    self.put(layer, key, x, middle, [x, clip[1], x + room, clip[3]], c.status);
-                }
-                Field::Text { value, hint, secret } => {
-                    let frame = [x, y + 4.0 * s, room, row - 8.0 * s];
-                    layer.back.push(Quad {
-                        rect: frame,
-                        color: linear(if focused { c.cursor } else { c.rule }, 1.0),
-                        radius: 8.0 * s,
-                    });
-                    layer.back.push(Quad {
-                        rect: [
-                            frame[0] + hairline,
-                            frame[1] + hairline,
-                            room - hairline * 2.0,
-                            frame[3] - hairline * 2.0,
-                        ],
-                        color: linear(c.background, 1.0),
-                        radius: 8.0 * s - hairline,
-                    });
-                    let (shown, rgb) = match (value.is_empty(), secret) {
-                        (true, _) => (hint.clone(), c.status),
-                        // However long it is, it reads the same.
-                        (false, true) => ("•".repeat(value.chars().count().min(24)), c.text),
-                        (false, false) => (value.clone(), c.text),
-                    };
-                    let key = self.label(ed, &shown, rgb, m.ui, Face::Ui, false);
-                    let inset = 10.0 * s;
-                    let typed = if value.is_empty() {
-                        0.0
-                    } else {
-                        self.layouts[&key].rows[0].width
-                    };
-                    // Too long for the field: its end stays in sight.
-                    let start = x + inset - (typed - (room - inset * 2.0)).max(0.0);
-                    let inside = [x + inset, clip[1], x + room - inset, clip[3]];
-                    self.put(layer, key, start, middle, inside, rgb);
-                    if focused {
-                        layer.front.push(Quad {
-                            rect: [
-                                (start + typed + s).round(),
-                                y + 10.0 * s,
-                                (1.5 * s).round().max(1.0),
-                                row - 20.0 * s,
-                            ],
-                            color: linear(c.cursor, 1.0),
-                            radius: 0.0,
-                        });
-                    }
-                    if live {
-                        self.targets.push((frame, Target::SheetRow(index)));
-                    }
-                }
+            let middle = y + row / 2.0;
+            let selected = index == sheet.focus && !sheet.busy;
+            let (words, rgb, caret) = match &item.field {
+                Field::Note(words) => (words.clone(), c.status, false),
+                Field::Text { value, hint, .. } if value.is_empty() => (hint.clone(), c.status, selected),
+                // However long a secret is, it reads the same.
+                Field::Text {
+                    value, secret: true, ..
+                } => ("•".repeat(value.chars().count().min(24)), c.text, selected),
+                Field::Text { value, .. } => (value.clone(), if selected { c.text } else { c.status }, selected),
                 Field::Choice { options, chosen } => {
-                    let mut at = x;
-                    for (option, name) in options.iter().enumerate() {
-                        let rgb = if option == *chosen { c.text } else { c.status };
-                        let key = self.label(ed, name, rgb, m.ui, Face::Ui, option == *chosen);
-                        let pill = [
-                            at,
-                            y + 5.0 * s,
-                            self.layouts[&key].rows[0].width + 24.0 * s,
-                            row - 10.0 * s,
-                        ];
-                        if option == *chosen {
-                            layer.back.push(Quad {
-                                rect: pill,
-                                color: linear(if focused { c.cursor } else { c.rule }, 1.0),
-                                radius: pill[3] / 2.0,
-                            });
-                            layer.back.push(Quad {
-                                rect: [
-                                    pill[0] + hairline,
-                                    pill[1] + hairline,
-                                    pill[2] - hairline * 2.0,
-                                    pill[3] - hairline * 2.0,
-                                ],
-                                color: linear(c.panel_active, 1.0),
-                                radius: pill[3] / 2.0 - hairline,
-                            });
-                        }
-                        self.put(layer, key, at + 12.0 * s, middle, clip, rgb);
-                        if live {
-                            self.targets.push((pill, Target::SheetOption(index, option)));
-                        }
-                        at += pill[2] + 4.0 * s;
+                    let name = options.get(*chosen).cloned().unwrap_or_default();
+                    match selected {
+                        true => (format!("‹  {name}  ›"), c.text, false),
+                        false => (name, c.status, false),
                     }
                 }
+            };
+            if item.label.is_empty() {
+                // A line of explanation, from margin to margin.
+                let key = self.label(ed, &words, c.status, m.ui * 0.92, Face::Ui, false);
+                self.put(layer, key, left + pad, middle, clip, c.status);
+                y += row;
+                continue;
+            }
+            if selected {
+                chosen(layer, y);
+            }
+            let fixed = matches!(item.field, Field::Note(_));
+            let name_rgb = if fixed { c.status } else { c.text };
+            let name = self.label(ed, &item.label, name_rgb, m.ui * 1.05, Face::Ui, false);
+            let name_width = self.put(layer, name, left + pad, middle, clip, name_rgb);
+            // The value keeps to the right, and when it is too long for the
+            // row its end is what stays in sight.
+            let key = self.label(ed, &words, rgb, m.ui * 0.98, Face::Ui, false);
+            let wide = self.layouts[&key].rows[0].width;
+            let from = left + pad + name_width + pad;
+            let reach = if caret { right - 3.0 * s } else { right };
+            self.put(layer, key, reach - wide, middle, [from, top, right, bottom], rgb);
+            if caret {
+                let bar = (2.0 * s).round().max(1.0);
+                layer.front.push(Quad {
+                    rect: [right - bar, (middle - m.ui * 0.7).round(), bar, (m.ui * 1.4).round()],
+                    color: linear(c.cursor, 1.0),
+                    radius: bar / 2.0,
+                });
+            }
+            if live && !fixed {
+                self.targets
+                    .push(([left + 6.0 * s, y, width - 12.0 * s, row], Target::SheetRow(index)));
             }
             y += row;
         }
-        if let Some((words, bad)) = &sheet.status {
+
+        // What can be done, under a rule, as rows like any other.
+        if !sheet.buttons.is_empty() && y + rule + row <= bottom {
+            layer.back.push(Quad {
+                rect: [left + pad, (y + rule / 2.0).round(), width - pad * 2.0, s.max(1.0)],
+                color: linear(c.rule, 0.7),
+                radius: 0.0,
+            });
+            y += rule;
+            for (index, button) in sheet.buttons.iter().enumerate() {
+                if y + row > bottom {
+                    break;
+                }
+                let middle = y + row / 2.0;
+                let ready = button.enabled && !sheet.busy;
+                let selected = sheet.button_at_focus() == Some(index) && ready;
+                if selected {
+                    chosen(layer, y);
+                }
+                let rgb = if ready { c.text } else { c.status };
+                let key = self.label(ed, &button.label, rgb, m.ui * 1.05, Face::Ui, ready);
+                self.put(layer, key, left + pad, middle, clip, rgb);
+                if selected {
+                    let enter = self.label(ed, "↵", c.status, m.ui * 0.92, Face::Ui, false);
+                    let wide = self.layouts[&enter].rows[0].width;
+                    self.put(layer, enter, right - wide, middle, clip, c.status);
+                }
+                if live {
+                    self.targets
+                        .push(([left + 6.0 * s, y, width - 12.0 * s, row], Target::SheetButton(index)));
+                }
+                y += row;
+            }
+        }
+        if let Some((words, bad)) = &sheet.status
+            && y + row <= bottom
+        {
             let rgb = if *bad { c.error } else { c.status };
-            let key = self.label(ed, words, rgb, m.ui * 0.94, Face::Ui, false);
-            let inside = [left + pad, clip[1], left + width - pad, clip[3]];
-            self.put(layer, key, left + pad, y + status_height / 2.0, inside, rgb);
+            let key = self.label(ed, words, rgb, m.ui * 0.92, Face::Ui, false);
+            self.put(layer, key, left + pad, y + row / 2.0, clip, rgb);
         }
 
-        // Buttons from the right: the one Enter presses is filled in.
-        let baseline = top + height - pad - button_height;
-        let mut right = left + width - pad;
-        let last = sheet.buttons.len().saturating_sub(1);
-        for (index, button) in sheet.buttons.iter().enumerate().rev() {
-            let ready = button.enabled && !sheet.busy;
-            let chief = index == last;
-            let rgb = match (chief, ready) {
-                (true, _) => c.background,
-                (false, true) => c.text,
-                (false, false) => c.status,
-            };
-            let key = self.label(ed, &button.label, rgb, m.ui, Face::Ui, chief);
-            let wide = self.layouts[&key].rows[0].width + 30.0 * s;
-            let rect = [right - wide, baseline, wide, button_height];
-            let fill = if chief { c.cursor } else { c.panel_active };
-            layer.back.push(Quad {
-                rect,
-                color: linear(fill, if ready { 1.0 } else { 0.4 }),
-                radius: 9.0 * s,
-            });
-            self.put(
-                layer,
-                key,
-                rect[0] + 15.0 * s,
-                baseline + button_height / 2.0,
-                clip,
-                rgb,
-            );
-            if live {
-                self.targets.push((rect, Target::SheetButton(index)));
-            }
-            right -= wide + 8.0 * s;
+        // The keys, where the menu says its own; they ride the panel's foot.
+        let acts = sheet
+            .buttons
+            .get(sheet.button_at_focus().unwrap_or(sheet.buttons.len().saturating_sub(1)))
+            .filter(|button| button.enabled && !sheet.busy)
+            .map(|button| format!("↵ {}    ", button.label.to_lowercase()))
+            .unwrap_or_default();
+        let turns = match sheet.rows.get(sheet.focus).map(|row| &row.field) {
+            Some(Field::Choice { .. }) => "←→ change    ",
+            _ => "",
+        };
+        let hint = format!("↑↓ move    {turns}{acts}esc close");
+        let key = self.label(ed, &hint, c.status, m.ui * 0.85, Face::Ui, false);
+        let wide = self.layouts[&key].rows[0].width;
+        self.put(
+            layer,
+            key,
+            right - wide,
+            bottom - 4.0 * s - footer / 2.0,
+            clip,
+            c.status,
+        );
+
+        match pushed {
+            // The panel was already here: only what is in it arrives, from
+            // the side it would be paged in from.
+            true => self.shift(layer, inside, ((1.0 - open) * 14.0 * s, 0.0), open),
+            false => self.shift(layer, whole, (0.0, (1.0 - open) * 8.0 * s), open),
         }
     }
 
@@ -1955,7 +2040,7 @@ impl View {
     fn retouching(&mut self, ed: &Editor, ui: f32, layer: &mut Layer) {
         let Some(mut retouch) = self.retouch.take() else { return };
         let s = self.scale;
-        let open = retouch.openness();
+        let open = retouch.openness(self.now);
         let black = |alpha: f32| [0.0, 0.0, 0.0, alpha];
         layer.back.push(Quad {
             rect: [0.0, 0.0, self.width, self.height],
@@ -1992,11 +2077,23 @@ impl View {
         layer.images.push((retouch::TEXTURE, rect));
 
         retouch.buttons.clear();
-        // The tools wait until the picture has nearly arrived.
-        if open > 0.85 && !retouch.closing() {
+        if open > 0.99 && !retouch.closing() {
             self.retouch_marks(ed, &retouch, layer);
+        }
+        // The tools follow the picture in over the second half of its way,
+        // each from its own edge, and are gone before it is back in the text.
+        let tools = ((open - 0.5) / 0.5).clamp(0.0, 1.0);
+        if tools > 0.0 {
+            let travel = (1.0 - tools) * 8.0 * s;
+            let mark = self.mark(layer);
             self.retouch_tools(ed, &mut retouch, layer, [above, bar, ui]);
+            self.shift(layer, mark, (0.0, -travel), tools);
+            let mark = self.mark(layer);
             self.retouch_settings(ed, &mut retouch, layer, [below, bar, ui]);
+            self.shift(layer, mark, (0.0, travel), tools);
+        }
+        if retouch.closing() {
+            retouch.buttons.clear();
         }
         self.retouch = Some(retouch);
     }
@@ -2372,6 +2469,8 @@ impl View {
         } else {
             String::new()
         };
+        // A sheet opened from here takes over this panel at this height.
+        self.palette_seen = Some((self.frame, height));
         let hint = format!("{position}↑↓ move    ↵ choose    esc close");
         let key = self.label(ed, &hint, c.status, m.ui * 0.85, Face::Ui, false);
         let hint_width = self.layouts[&key].rows[0].width;

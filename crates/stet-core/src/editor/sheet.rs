@@ -1,7 +1,9 @@
-//! A sheet: a card that rises from the bottom of the window with a few
-//! settings and the buttons that act on them. Anything settings-like is one
-//! of these. The core holds what it says and takes its keys; the shell draws
-//! it, and does what its buttons ask when it is told one was pressed.
+//! A sheet: a menu of settings and the actions on them, in the same panel
+//! and with the same manners as the command menu it is reached from. One
+//! row is selected; the arrows move, typing fills in the selected line,
+//! Enter acts. Anything settings-like is one of these. The core holds what
+//! it says and takes its keys; the shell draws it, and does what its
+//! actions ask when it is told one was chosen.
 
 use super::{Editor, Effect};
 use crate::input::{Key, KeyEvent};
@@ -37,9 +39,9 @@ pub struct Sheet {
     pub id: &'static str,
     pub title: String,
     pub rows: Vec<Row>,
-    /// The row with the keyboard.
+    /// What is selected: a row, or past the rows, a button.
     pub focus: usize,
-    /// Left to right; Enter presses the last.
+    /// Actions, listed under the rows. Enter on a row presses the last.
     pub buttons: Vec<Button>,
     /// One line on how it is going, and whether that is badly.
     pub status: Option<(String, bool)>,
@@ -124,9 +126,37 @@ impl Sheet {
         sheet
     }
 
-    /// Puts the keyboard on the first row that takes it.
+    /// Whether the selection can rest here: a row to fill in, or a button
+    /// that can be pressed.
+    fn selectable(&self, at: usize) -> bool {
+        match self.rows.get(at) {
+            Some(row) => row.takes_keys(),
+            None => self
+                .buttons
+                .get(at - self.rows.len())
+                .is_some_and(|button| button.enabled),
+        }
+    }
+
+    /// Selects the first row that can be filled in, or failing that the
+    /// first button.
     pub fn focus_first(&mut self) {
-        self.focus = self.rows.iter().position(Row::takes_keys).unwrap_or(0);
+        let all = self.rows.len() + self.buttons.len();
+        self.focus = (0..all).find(|&at| self.selectable(at)).unwrap_or(0);
+    }
+
+    /// Selects the button with this id.
+    pub fn focus_button(&mut self, id: &str) {
+        if let Some(at) = self.buttons.iter().position(|button| button.id == id) {
+            self.focus = self.rows.len() + at;
+        }
+    }
+
+    /// The selected button, if the selection is on one.
+    pub fn button_at_focus(&self) -> Option<usize> {
+        self.focus
+            .checked_sub(self.rows.len())
+            .filter(|at| *at < self.buttons.len())
     }
 
     pub fn row(&self, id: &str) -> Option<&Row> {
@@ -150,34 +180,55 @@ impl Sheet {
     }
 
     /// Replaces the row with this id, or adds it at `at` if there is none.
+    /// The selection stays on what it was on.
     pub fn put(&mut self, at: usize, row: Row) {
+        let on = self.rows.get(self.focus).map(|row| row.id);
+        let button = self.button_at_focus();
         match self.rows.iter_mut().find(|old| old.id == row.id) {
             Some(old) => *old = row,
             None => self.rows.insert(at.min(self.rows.len()), row),
         }
-        if !self.rows.get(self.focus).is_some_and(Row::takes_keys) {
-            self.focus_first();
-        }
+        self.reselect(on, button);
     }
 
     pub fn remove(&mut self, id: &str) {
+        let on = self.rows.get(self.focus).map(|row| row.id);
+        let button = self.button_at_focus();
         self.rows.retain(|row| row.id != id);
-        if !self.rows.get(self.focus).is_some_and(Row::takes_keys) {
-            self.focus_first();
+        self.reselect(on, button);
+    }
+
+    /// After rows came or went: back onto the row or button that was
+    /// selected, if it is still there to be.
+    fn reselect(&mut self, row: Option<&'static str>, button: Option<usize>) {
+        let found = match (row, button) {
+            (Some(id), _) => self.rows.iter().position(|row| row.id == id),
+            (None, Some(button)) => Some(self.rows.len() + button),
+            (None, None) => None,
+        };
+        match found.filter(|&at| self.selectable(at)) {
+            Some(at) => self.focus = at,
+            None => self.focus_first(),
         }
     }
 
     fn step(&mut self, back: bool) {
-        let count = self.rows.len();
+        let count = self.rows.len() + self.buttons.len();
         let order = (1..=count).map(|by| (self.focus + if back { count - by } else { by }) % count.max(1));
-        if let Some(next) = order.into_iter().find(|&at| self.rows[at].takes_keys()) {
+        if let Some(next) = order.into_iter().find(|&at| self.selectable(at)) {
             self.focus = next;
         }
     }
 
-    fn turn(&mut self, by: isize) {
+    /// Moves a choice on; `around` goes back to the first after the last.
+    fn turn(&mut self, by: isize, around: bool) {
         if let Some(Field::Choice { options, chosen }) = self.rows.get_mut(self.focus).map(|row| &mut row.field) {
-            *chosen = (*chosen as isize + by).clamp(0, options.len() as isize - 1) as usize;
+            let count = options.len() as isize;
+            let next = *chosen as isize + by;
+            *chosen = match around {
+                true => next.rem_euclid(count.max(1)),
+                false => next.clamp(0, count - 1),
+            } as usize;
         }
     }
 
@@ -214,24 +265,14 @@ impl Editor {
         }
     }
 
-    pub fn sheet_focus(&mut self, row: usize) {
+    /// A click on a row: it is selected, and a choice moves on to its next.
+    pub fn sheet_click(&mut self, row: usize) {
         if let Some(sheet) = &mut self.sheet
             && sheet.rows.get(row).is_some_and(Row::takes_keys)
+            && !sheet.busy
         {
             sheet.focus = row;
-        }
-    }
-
-    pub fn sheet_choose(&mut self, row: usize, option: usize) {
-        self.sheet_focus(row);
-        if let Some(Field::Choice { options, chosen }) = self
-            .sheet
-            .as_mut()
-            .and_then(|sheet| sheet.rows.get_mut(row))
-            .map(|row| &mut row.field)
-            && option < options.len()
-        {
-            *chosen = option;
+            sheet.turn(1, true);
         }
     }
 
@@ -249,14 +290,15 @@ impl Editor {
         match event.key {
             Key::Esc => self.close_sheet(),
             Key::Enter => {
-                let last = sheet.buttons.len().saturating_sub(1);
-                self.sheet_press(last);
+                // The selected button, or from a row, the last one.
+                let pressed = sheet.button_at_focus().unwrap_or(sheet.buttons.len().saturating_sub(1));
+                self.sheet_press(pressed);
             }
             Key::Tab if event.mods.shift => sheet.step(true),
             Key::Tab | Key::Down => sheet.step(false),
             Key::Up => sheet.step(true),
-            Key::Left => sheet.turn(-1),
-            Key::Right => sheet.turn(1),
+            Key::Left => sheet.turn(-1, false),
+            Key::Right => sheet.turn(1, false),
             Key::Backspace => {
                 if let Some(value) = sheet.typed() {
                     match command {

@@ -312,18 +312,22 @@ picture comes forward, and a few tools appear.
 
 ## Publishing to Substack
 
-`:publish` (File → Publish to Substack…) raises a card from the bottom of the
-window: the publication, the title and subtitle (from the front matter, or the
-first heading), and who it is for. **Create draft** uploads the document's
-local pictures and makes a draft on Substack; **Open in Substack** takes you
-to it. Nothing is ever sent to readers from here: publishing stays a button
+`:publish` (File → Publish to Substack…, or from the `⌘/` menu) opens a page
+of the command menu: the publication, the title and subtitle (from the front
+matter, or the first heading), and who it is for. **Create draft** uploads the
+document's local pictures and makes a draft on Substack; **Open in Substack**
+takes you to it. Nothing is ever sent to readers from here: publishing stays a button
 you press on Substack.
 
-1. **Signing in.** Substack has no publishing API, so Stet uses the one its own editor does, with your session cookie. The first time, the card asks for it: in your browser, on substack.com, DevTools → Application → Cookies → `substack.sid`. It is kept in the macOS login keychain and nowhere else, never shown, and sent only to Substack over HTTPS (to a custom domain only once Substack says the domain is yours).
-2. **What carries over.** Headings, emphasis, links, lists, quotes, code, pictures with captions, footnotes. A table goes up as preformatted text, and a local video as a link, because Substack's editor has neither; the card says so before you send.
+1. **Signing in.** Substack has no publishing API, so Stet uses the one its own editor does, with your session cookie. The first time, the menu asks for it: in your browser, on substack.com, DevTools → Application → Cookies → `substack.sid`. It is kept in the macOS login keychain and nowhere else, never shown, and sent only to Substack over HTTPS (to a custom domain only once Substack says the domain is yours).
+2. **What carries over.** Headings, emphasis, links, lists, quotes, code, pictures with captions, footnotes. A table goes up as preformatted text, and a local video as a link, because Substack's editor has neither; the menu says so before you send.
 3. **It may break.** This is Substack's private interface, undocumented and theirs to change.
 
-Cards like this one are how Stet asks for settings: Tab moves between fields, the arrows change a choice, Enter presses the filled button, Esc puts the card away.
+Pages like this one are how Stet asks for settings. They sit in the command menu's panel and work the way it does: ↑ and ↓ move, typing fills in the selected line, ← and → change a choice, Enter acts, Esc closes.
+
+## Motion
+
+Little moves. The command menu and the selection in it answer the keyboard at once, with no animation. What is opened rarely and on purpose does move, briefly: a picture comes forward out of the text to be retouched and goes back into it, and a page of settings arrives in the menu's panel. Anything interrupted turns round from where it is. With *Reduce motion* on in System Settings, things fade where they stand instead of travelling.
 
 ## Copy and paste
 

@@ -4,10 +4,11 @@
 //! same picture the same way.
 
 use crate::images::Decoded;
+use crate::motion::{self, Tween};
 use crate::text::Fonts;
 use image::RgbaImage;
 use serde_json::Value;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use stet_core::{Key, KeyEvent};
 
 pub type Point = (f32, f32);
@@ -18,8 +19,6 @@ pub type Rect = [f32; 4];
 pub const TEXTURE: u64 = u64::MAX;
 /// Nothing longer or wider is taken on.
 const MAX_SIDE: u32 = 8192;
-const OPEN: Duration = Duration::from_millis(220);
-const CLOSE: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
@@ -604,9 +603,11 @@ pub struct Retouch {
     /// Where the picture sat in the text, and where it sits while open.
     pub from: [f32; 4],
     pub place: [f32; 4],
-    opened: Instant,
-    closing: Option<Instant>,
-    /// No animation: a screenshot wants the end state.
+    /// How far out of the text the picture is: 0 in it, 1 on the desk.
+    open: Tween,
+    closing: bool,
+    /// No travel: a screenshot wants the end state, and so does anyone who
+    /// has asked their system for less motion.
     pub still: bool,
     stale: bool,
     /// The size of the picture as last drawn.
@@ -616,8 +617,11 @@ pub struct Retouch {
 }
 
 impl Retouch {
-    pub fn new(base: RgbaImage, line: usize, url: String, from: Option<[f32; 4]>) -> Retouch {
+    pub fn new(base: RgbaImage, line: usize, url: String, from: Option<[f32; 4]>, still: bool) -> Retouch {
         let shown = (base.width(), base.height());
+        let still = still || from.is_none();
+        let mut open = Tween::at(if still { 1.0 } else { 0.0 });
+        open.go(1.0, motion::ENTER, Instant::now());
         Retouch {
             base,
             marks: Marks::default(),
@@ -634,9 +638,9 @@ impl Retouch {
             url,
             from: from.unwrap_or([0.0; 4]),
             place: [0.0; 4],
-            opened: Instant::now(),
-            closing: None,
-            still: from.is_none(),
+            open,
+            closing: false,
+            still,
             stale: true,
             shown,
             buttons: Vec::new(),
@@ -644,35 +648,33 @@ impl Retouch {
     }
 
     /// How far open the picture is: 0 in the text, 1 on the desk.
-    pub fn openness(&self) -> f32 {
-        let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
-        match self.closing {
-            Some(_) if self.still => 0.0,
-            Some(since) => 1.0 - ease(since.elapsed().as_secs_f32() / CLOSE.as_secs_f32()),
-            None if self.still => 1.0,
-            None => ease(self.opened.elapsed().as_secs_f32() / OPEN.as_secs_f32()),
+    pub fn openness(&self, now: Instant) -> f32 {
+        self.open.value(now)
+    }
+
+    pub fn animating(&self, now: Instant) -> bool {
+        self.open.moving(now)
+    }
+
+    /// Sends the picture back, from wherever it has got to.
+    pub fn close(&mut self) {
+        if !std::mem::replace(&mut self.closing, true) {
+            let span = if self.still {
+                std::time::Duration::ZERO
+            } else {
+                motion::EXIT
+            };
+            self.open.go(0.0, span, Instant::now());
         }
     }
 
-    pub fn animating(&self) -> bool {
-        !self.still
-            && match self.closing {
-                Some(since) => since.elapsed() < CLOSE,
-                None => self.opened.elapsed() < OPEN,
-            }
-    }
-
-    pub fn close(&mut self) {
-        self.closing.get_or_insert_with(Instant::now);
-    }
-
     pub fn closing(&self) -> bool {
-        self.closing.is_some()
+        self.closing
     }
 
-    /// Closed, and done shrinking back into the text.
-    pub fn gone(&self) -> bool {
-        self.closing.is_some_and(|since| self.still || since.elapsed() >= CLOSE)
+    /// Closed, and back in the text.
+    pub fn gone(&self, now: Instant) -> bool {
+        self.closing && !self.open.moving(now)
     }
 
     pub fn changed(&self) -> bool {
@@ -857,7 +859,7 @@ impl Retouch {
         }
         let typing = self.typing.is_some();
         self.settle();
-        if !inside(&self.place) || self.closing.is_some() {
+        if !inside(&self.place) || self.closing {
             return Outcome::Stay;
         }
         let at = self.to_picture(x, y);
@@ -1137,7 +1139,7 @@ mod tests {
     }
 
     fn open(width: u32, height: u32) -> Retouch {
-        let mut retouch = Retouch::new(white(width, height), 0, "a.png".into(), None);
+        let mut retouch = Retouch::new(white(width, height), 0, "a.png".into(), None, true);
         // Shown at twice its size, away from the corner.
         retouch.place = [100.0, 50.0, width as f32 * 2.0, height as f32 * 2.0];
         retouch

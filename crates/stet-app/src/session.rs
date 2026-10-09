@@ -60,9 +60,8 @@ impl Session {
             .and_then(|bytes| retouch::decode(&bytes));
         match opened {
             Ok(picture) => {
-                let mut retouch = Retouch::new(picture, line, url.to_string(), from);
-                retouch.still |= self.view.images.blocking;
-                self.view.retouch = Some(retouch);
+                let still = self.view.still();
+                self.view.retouch = Some(Retouch::new(picture, line, url.to_string(), from, still));
             }
             Err(err) => self.say(Err(err)),
         }

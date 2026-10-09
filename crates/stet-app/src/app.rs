@@ -109,6 +109,7 @@ pub fn prepare(args: &Args) -> Prepared {
                         face,
                         bold: false,
                         table: None,
+                        plain: false,
                     },
                 );
             };
@@ -346,6 +347,10 @@ impl Running {
             0.0
         };
         (view.width, view.height) = (size.width as f32, size.height as f32);
+        #[cfg(target_os = "macos")]
+        {
+            view.reduce_motion = crate::macos::reduce_motion();
+        }
         let mut running = Running {
             session: Session {
                 editor,
@@ -781,8 +786,7 @@ impl Running {
             Some(Target::Note(index)) => editor.open_note(index),
             Some(Target::Sheet) => {}
             Some(Target::SheetScrim) => editor.close_sheet(),
-            Some(Target::SheetRow(row)) => editor.sheet_focus(row),
-            Some(Target::SheetOption(row, option)) => editor.sheet_choose(row, option),
+            Some(Target::SheetRow(row)) => editor.sheet_click(row),
             Some(Target::SheetButton(index)) => editor.sheet_press(index),
             Some(Target::Video(index)) => {
                 // Played by whatever plays videos here.
@@ -1080,6 +1084,10 @@ impl Running {
             }
             WindowEvent::DroppedFile(path) => self.drop_file(&path, event_loop),
             WindowEvent::Focused(true) => {
+                #[cfg(target_os = "macos")]
+                {
+                    self.session.view.reduce_motion = crate::macos::reduce_motion();
+                }
                 self.session.editor.check_disk();
                 self.session.editor.refresh_sidebar();
                 self.session.view.images.retry_failed();

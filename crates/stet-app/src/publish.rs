@@ -39,11 +39,11 @@ pub struct Publisher {
 
 fn sign_in_rows() -> [Row; 2] {
     [
-        Row::secret("cookie", "Sign in", "paste your substack.sid cookie"),
+        Row::secret("cookie", "Cookie", "paste your substack.sid"),
         Row::note(
             "cookie-help",
             "",
-            "In your browser: substack.com, then DevTools → Application → Cookies → substack.sid",
+            "In your browser, on substack.com: DevTools → Application → Cookies → substack.sid",
         ),
     ]
 }
@@ -135,12 +135,7 @@ impl Publisher {
             true => primary("draft", "Create draft", false),
             false => primary("signin", "Sign in", true),
         };
-        let mut sheet = Sheet::new(
-            SHEET,
-            "Publish to Substack",
-            rows,
-            vec![Button::new("cancel", "Cancel"), button],
-        );
+        let mut sheet = Sheet::new(SHEET, "Publish to Substack", rows, vec![button]);
         if signed_in {
             sheet.focus = sheet.rows.iter().position(|row| row.id == "title").unwrap_or(0);
             self.check();
@@ -276,7 +271,8 @@ impl Publisher {
                             // What was about to happen has happened.
                             sheet.remove("summary");
                             sheet.status = Some((format!("The draft is on Substack.{pictures}"), false));
-                            sheet.buttons = vec![Button::new("done", "Done"), Button::new("open", "Open in Substack")];
+                            sheet.buttons = vec![Button::new("open", "Open in Substack")];
+                            sheet.focus_button("open");
                         }
                         // Put away while it worked: say so where it will be seen.
                         None => {

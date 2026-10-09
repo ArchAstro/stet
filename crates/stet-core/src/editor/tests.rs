@@ -1822,38 +1822,54 @@ fn a_sheet_takes_the_keyboard_and_reports_its_buttons() {
         Row::text("title", "Title", "Old", ""),
         Row::choice("who", "For", &["Everyone", "Paid"], 0),
     ];
-    let buttons = vec![Button::new("cancel", "Cancel"), Button::new("go", "Go")];
+    let buttons = vec![Button::new("other", "Another way"), Button::new("go", "Go")];
     ed.open_sheet(Sheet::new("test", "A sheet", rows, buttons));
-    // The first row that takes keys has them; notes are skipped.
+    // The first row that can be filled in is selected; notes are skipped.
     assert_eq!(ed.sheet.as_ref().unwrap().focus, 1);
-    keys(&mut ed, "<D-v><Tab>er<BS><BS><BS>New<Tab><Right><Right><Tab>");
-    ed.insert_text(" title");
+    keys(&mut ed, "<D-v><Down>er<BS><BS><BS>New<Tab><Right><Right><Left><Right>");
     let sheet = ed.sheet.as_ref().unwrap();
-    assert_eq!(sheet.text("key"), Some("pasted secret title"));
+    assert_eq!(sheet.text("key"), Some("pasted secret"));
     assert_eq!(sheet.text("title"), Some("OlNew"));
-    assert_eq!((sheet.chosen("who"), sheet.focus), (Some(1), 1));
+    assert_eq!((sheet.chosen("who"), sheet.focus), (Some(1), 3));
+    // A click selects a row, and moves a choice on and around.
+    ed.sheet_click(3);
+    assert_eq!(ed.sheet.as_ref().unwrap().chosen("who"), Some(0));
+    ed.sheet_click(2);
+    ed.insert_text(" title");
+    assert_eq!(ed.sheet.as_ref().unwrap().text("title"), Some("OlNew title"));
     // Nothing typed reached the document, and vim saw none of it.
     assert_eq!((ed.buf.text().as_str(), ed.mode), ("unchanged", Mode::Normal));
 
-    // Enter presses the last button; a click presses any; a busy sheet neither.
-    keys(&mut ed, "<CR>");
-    ed.sheet_press(0);
+    // Enter on a row presses the last button; on a button, that button.
     let pressed = |button| Effect::Sheet { sheet: "test", button };
-    assert_eq!(ed.take_effects(), vec![pressed("go"), pressed("cancel")]);
+    keys(&mut ed, "<CR><Down><Down><CR>");
+    assert_eq!(ed.sheet.as_ref().unwrap().focus, 4);
+    assert_eq!(ed.take_effects(), vec![pressed("go"), pressed("other")]);
+    // The selection goes round, past buttons that cannot be pressed.
+    ed.sheet.as_mut().unwrap().buttons[1].enabled = false;
+    keys(&mut ed, "<Down>");
+    assert_eq!(ed.sheet.as_ref().unwrap().focus, 1);
+    keys(&mut ed, "<Up><CR>");
+    assert_eq!(ed.take_effects(), vec![pressed("other")]);
+    // A busy sheet presses nothing.
     ed.sheet.as_mut().unwrap().busy = true;
     keys(&mut ed, "<CR>");
-    ed.sheet.as_mut().unwrap().busy = false;
-    ed.sheet.as_mut().unwrap().buttons[1].enabled = false;
-    keys(&mut ed, "<CR>");
+    ed.sheet_press(0);
     assert_eq!(ed.take_effects(), vec![]);
+    ed.sheet.as_mut().unwrap().busy = false;
 
-    // Rows come and go by id, and the keyboard stays on one that takes it.
+    // Rows come and go by id, and the selection stays on what it was on.
     let sheet = ed.sheet.as_mut().unwrap();
+    sheet.focus = 2;
     sheet.remove("key");
-    sheet.put(0, Row::note("who", "For", "Everyone, always"));
     assert_eq!((sheet.rows.len(), sheet.focus), (3, 1));
-    assert!(matches!(&sheet.row("who").unwrap().field, Field::Note(words) if words == "Everyone, always"));
-    ed.sheet_choose(1, 0);
+    sheet.put(0, Row::note("first", "", "A new first row"));
+    assert_eq!(sheet.rows[sheet.focus].id, "title");
+    sheet.put(0, Row::note("title", "Title", "No longer a field"));
+    assert!(matches!(&sheet.row("title").unwrap().field, Field::Note(words) if words == "No longer a field"));
+    assert_eq!(sheet.rows[sheet.focus].id, "who");
+    sheet.focus_button("other");
+    assert_eq!(sheet.button_at_focus(), Some(0));
     keys(&mut ed, "<Esc>");
     assert!(ed.sheet.is_none());
     keys(&mut ed, "x");

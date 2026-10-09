@@ -81,6 +81,18 @@ pub fn install(sink: impl Fn(AppEvent) + Send + Sync + 'static) {
     }
 }
 
+/// System Settings → Accessibility → Display → Reduce motion.
+pub fn reduce_motion() -> bool {
+    use objc2::{class, msg_send};
+    // SAFETY: `NSWorkspace.sharedWorkspace` is a class property that returns
+    // the process's one workspace object, and the accessor takes no
+    // arguments and returns a BOOL.
+    unsafe {
+        let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        !workspace.is_null() && msg_send![workspace, accessibilityDisplayShouldReduceMotion]
+    }
+}
+
 /// What a menu item does: the same keys the shortcut sends, or a command.
 const MENUS: &[(&str, &[(&str, &str)])] = &[
     (

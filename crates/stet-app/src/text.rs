@@ -225,6 +225,9 @@ pub struct LineSpec<'a> {
     pub bold: bool,
     /// The line is a row of a table drawn as a grid.
     pub table: Option<TableRow<'a>>,
+    /// One colour throughout, given when it is drawn rather than shaped in:
+    /// an interface label, which can then be faded.
+    pub plain: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -346,8 +349,10 @@ impl<'a> Styler<'a> {
                         Weight::BOLD
                     } else {
                         self.base_weight
-                    })
-                    .color(color(self.dim(span_color(span, self.base_color, spec.colors))));
+                    });
+                if !spec.plain {
+                    attrs = attrs.color(color(self.dim(span_color(span, self.base_color, spec.colors))));
+                }
                 if span.syntax == stet_core::markdown::syntax::COMMENT {
                     attrs = attrs.style(Style::Italic);
                 }
