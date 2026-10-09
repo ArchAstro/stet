@@ -2496,6 +2496,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stet-substack"
+version = "0.2.0"
+dependencies = [
+ "pulldown-cmark",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "str_indices"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
