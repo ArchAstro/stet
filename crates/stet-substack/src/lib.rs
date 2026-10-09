@@ -40,7 +40,9 @@ mod http;
 mod image;
 pub mod keychain;
 
-pub use client::{Client, Cookie, DraftRef, Fields, Profile, Publication, PublicationInfo, USER_AGENT, UploadedImage};
+pub use client::{
+    COOKIE_NAMES, Client, Cookie, DraftRef, Fields, Profile, Publication, PublicationInfo, USER_AGENT, UploadedImage,
+};
 pub use convert::{CodeBlockNode, Document, Hosted, Options, convert, is_remote, youtube_id};
 pub use error::{Error, Result};
 pub use flow::{Created, DraftOptions, create_draft_from_file, create_draft_from_markdown, resolve};

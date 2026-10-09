@@ -13,6 +13,9 @@ pub struct DraftOptions {
     pub convert: Options,
     /// `everyone`, `only_paid`, `founding` or `only_free`.
     pub audience: String,
+    /// Used instead of the document's own, when given.
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
 }
 
 impl Default for DraftOptions {
@@ -20,6 +23,8 @@ impl Default for DraftOptions {
         DraftOptions {
             convert: Options::default(),
             audience: "everyone".into(),
+            title: None,
+            subtitle: None,
         }
     }
 }
@@ -71,7 +76,18 @@ pub fn create_draft_from_markdown<T: Transport>(
     }
 
     let mut fields = Fields::from(&document);
-    fields.title = fields.title.or_else(|| Some(fallback_title.to_string()));
+    let given = |text: &Option<String>| {
+        text.as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    fields.title = given(&options.title)
+        .or(fields.title)
+        .or_else(|| Some(fallback_title.to_string()));
+    if options.subtitle.is_some() {
+        fields.subtitle = given(&options.subtitle);
+    }
     let draft = client.create_draft(profile.user_id, &fields, &options.audience)?;
     Ok(Created {
         draft,

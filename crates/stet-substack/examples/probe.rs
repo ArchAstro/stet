@@ -55,7 +55,27 @@ fn run() -> Result<(), String> {
     }
     let client = Client::from_keychain(publication).map_err(|e| e.to_string())?;
     // First to Substack itself: is the cookie good, and is the publication this account's?
-    let profile = client.profile().map_err(|e| e.to_string())?;
+    let profile = match client.profile() {
+        Ok(profile) => profile,
+        // Say as much as can be said about why, without saying the cookie.
+        Err(stet_substack::Error::CookieRejected { status }) => {
+            println!("sent under both names: HTTP {status}");
+            for name in stet_substack::COOKIE_NAMES {
+                let alone = Client::from_keychain(publication)
+                    .map_err(|e| e.to_string())?
+                    .cookie_name(name);
+                match alone.profile() {
+                    Ok(_) => println!("sent as {name} alone: accepted"),
+                    Err(err) => println!("sent as {name} alone: {err}"),
+                }
+            }
+            if !client.cookie_looks_signed() {
+                println!("the stored value does not begin `s%3A`, as Substack's session cookie does");
+            }
+            return Err("Substack did not accept the stored cookie".into());
+        }
+        Err(err) => return Err(err.to_string()),
+    };
     let id = || -> Result<u64, String> {
         arg.and_then(|a| a.parse().ok())
             .ok_or_else(|| "this command needs a numeric ID".to_string())
@@ -81,6 +101,21 @@ fn run() -> Result<(), String> {
             let draft = client.get_draft(id()?).map_err(|e| e.to_string())?;
             let body = draft["draft_body"].as_str().unwrap_or("null");
             println!("title: {}", draft["draft_title"]);
+            // What Substack made of the body, if it says: the tags it rendered.
+            if let Some(html) = draft["body_html"].as_str().or(draft["draft_body_html"].as_str()) {
+                let mut tags: Vec<&str> = html
+                    .split('<')
+                    .skip(1)
+                    .filter(|tag| !tag.starts_with('/'))
+                    .filter_map(|tag| tag.split([' ', '>', '/']).next())
+                    .collect();
+                tags.dedup();
+                eprintln!("rendered html: {} bytes, tags in order: {}", html.len(), tags.join(" "));
+            } else {
+                let mut keys: Vec<&String> = draft.as_object().map(|o| o.keys().collect()).unwrap_or_default();
+                keys.retain(|key| key.contains("html") || key.contains("body") || key.contains("preview"));
+                eprintln!("no rendered html in the draft; body-like fields: {keys:?}");
+            }
             println!("{body}");
         }
         "prepublish" => {

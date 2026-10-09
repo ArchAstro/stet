@@ -17,7 +17,14 @@ pub const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Ap
 /// The session cookie's value, as the browser stores it (usually still
 /// percent-encoded, starting `s%3A`). Never printed.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Cookie(String);
+pub struct Cookie {
+    value: String,
+    /// The one name to send it under; both when `None`.
+    name: Option<&'static str>,
+}
+
+/// The names the session cookie has gone by.
+pub const COOKIE_NAMES: [&str; 2] = ["substack.sid", "connect.sid"];
 
 impl Cookie {
     /// Accepts the bare value, or `substack.sid=value` pasted from DevTools.
@@ -33,12 +40,29 @@ impl Cookie {
                 "the cookie must be the bare value of substack.sid: no spaces, quotes or semicolons".into(),
             ));
         }
-        Ok(Cookie(value.to_string()))
+        Ok(Cookie {
+            value: value.to_string(),
+            name: None,
+        })
     }
 
-    /// Sent under both names reported for the session cookie; the wrong one is ignored.
+    /// Sent under both names reported for the session cookie, unless one was chosen.
     fn header(&self) -> String {
-        format!("substack.sid={0}; connect.sid={0}", self.0)
+        match self.name {
+            Some(name) => format!("{name}={}", self.value),
+            None => format!("substack.sid={0}; connect.sid={0}", self.value),
+        }
+    }
+
+    /// The value itself, for the keychain alone.
+    pub(crate) fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Whether the value has the shape of a signed session cookie (`s%3A…` or
+    /// `s:…`). Says nothing else about it.
+    pub fn looks_signed(&self) -> bool {
+        self.value.starts_with("s%3A") || self.value.starts_with("s:")
     }
 }
 
@@ -181,6 +205,16 @@ impl<T: Transport> Client<T> {
             user_agent: USER_AGENT.into(),
             confirmed: Cell::new(false),
         })
+    }
+
+    /// Sends the cookie under one of [`COOKIE_NAMES`] only.
+    pub fn cookie_name(mut self, name: &'static str) -> Self {
+        self.cookie.name = Some(name);
+        self
+    }
+
+    pub fn cookie_looks_signed(&self) -> bool {
+        self.cookie.looks_signed()
     }
 
     pub fn user_agent(mut self, user_agent: &str) -> Self {
@@ -473,7 +507,7 @@ mod tests {
 
     #[test]
     fn cookie_forms_and_redaction() {
-        assert_eq!(Cookie::new(" substack.sid=s%3Aabc ").unwrap().0, "s%3Aabc");
+        assert_eq!(Cookie::new(" substack.sid=s%3Aabc ").unwrap().value, "s%3Aabc");
         assert_eq!(
             Cookie::new("s%3Aabc").unwrap().header(),
             "substack.sid=s%3Aabc; connect.sid=s%3Aabc"
