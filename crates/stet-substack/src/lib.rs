@@ -5,8 +5,11 @@
 //! `substack.sid` session cookie. None of it is documented or promised to
 //! stay put.
 //!
-//! The cookie is a password. The caller supplies it; this crate never reads or
-//! stores one. An app should keep it in the macOS Keychain and pass it in.
+//! The cookie is a password. It is kept in the macOS login keychain
+//! ([`keychain`]) and nowhere else: never in a file, an environment variable
+//! or a command line, and never printed. It is sent over HTTPS to Substack's
+//! own hosts, and to a custom domain only once the account's profile has
+//! listed that domain; redirects are not followed.
 //!
 //! - [`convert`]: Markdown to Substack's document JSON. Pure.
 //! - [`Client`]: one method per endpoint, over a [`Transport`].
@@ -35,6 +38,7 @@ mod error;
 mod flow;
 mod http;
 mod image;
+pub mod keychain;
 
 pub use client::{Client, Cookie, DraftRef, Fields, Profile, Publication, PublicationInfo, USER_AGENT, UploadedImage};
 pub use convert::{CodeBlockNode, Document, Hosted, Options, convert, is_remote, youtube_id};

@@ -1,17 +1,19 @@
 //! Tries the client against the real Substack with your own cookie.
 //!
-//!   SUBSTACK_SID='s%3A...' cargo run -p stet-substack --example probe -- <publication> <command> [arg]
+//!   cargo run -p stet-substack --example probe -- <publication> <command> [arg]
 //!
 //! Commands:
+//!   store            ask for the substack.sid cookie (hidden) and keep it in the keychain
+//!   forget           remove it from the keychain
 //!   dump FILE        convert FILE and print the JSON; no network, no cookie needed
 //!   whoami           GET the profile: user id and publications (read-only)
 //!   draft FILE       upload FILE's pictures and create a DRAFT; prints its edit URL
 //!   show ID          GET a draft as stored (read-only); prints the body it holds
 //!   prepublish ID    GET Substack's pre-publish checks (read-only)
 //!
-//! It never publishes. The cookie is read from the environment and never printed.
+//! It never publishes. The cookie is read from the keychain and never printed.
 
-use stet_substack::{Client, DraftOptions, Options, convert, create_draft_from_file};
+use stet_substack::{Client, DraftOptions, Options, convert, create_draft_from_file, keychain};
 
 fn main() {
     if let Err(message) = run() {
@@ -23,7 +25,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [publication, command, rest @ ..] = args.as_slice() else {
-        return Err("usage: probe <publication> <dump|whoami|draft|show|prepublish> [FILE|ID]".into());
+        return Err("usage: probe <publication> <store|forget|dump|whoami|draft|show|prepublish> [FILE|ID]".into());
     };
     let arg = rest.first().map(String::as_str);
     if command == "dump" {
@@ -40,15 +42,26 @@ fn run() -> Result<(), String> {
         );
         return Ok(());
     }
-    let cookie = std::env::var("SUBSTACK_SID").map_err(|_| "set SUBSTACK_SID to the substack.sid cookie value")?;
-    let client = Client::new(&cookie, publication).map_err(|e| e.to_string())?;
+    if command == "store" {
+        println!("Paste the value of the substack.sid cookie (it is not shown), twice:");
+        keychain::store().map_err(|e| e.to_string())?;
+        println!("kept in the login keychain as {:?}", keychain::SERVICE);
+        return Ok(());
+    }
+    if command == "forget" {
+        let gone = keychain::forget().map_err(|e| e.to_string())?;
+        println!("{}", if gone { "removed" } else { "there was none" });
+        return Ok(());
+    }
+    let client = Client::from_keychain(publication).map_err(|e| e.to_string())?;
+    // First to Substack itself: is the cookie good, and is the publication this account's?
+    let profile = client.profile().map_err(|e| e.to_string())?;
     let id = || -> Result<u64, String> {
         arg.and_then(|a| a.parse().ok())
             .ok_or_else(|| "this command needs a numeric ID".to_string())
     };
     match command.as_str() {
         "whoami" => {
-            let profile = client.profile().map_err(|e| e.to_string())?;
             println!("user id: {}", profile.user_id);
             for p in profile.publications {
                 println!("publication: {} ({}) -> {}", p.name, p.subdomain, p.origin);

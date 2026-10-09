@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::http::{Method, Request, Response, Transport, Ureq};
 use crate::image;
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::fmt;
 
 const PROFILE_URL: &str = "https://substack.com/api/v1/user/profile/self";
@@ -143,6 +144,9 @@ pub struct Client<T: Transport = Ureq> {
     cookie: Cookie,
     publication: Publication,
     user_agent: String,
+    /// The account's own profile lists this publication. Until it does, the
+    /// cookie goes to Substack's hosts and nowhere else.
+    confirmed: Cell<bool>,
 }
 
 impl<T: Transport> fmt::Debug for Client<T> {
@@ -157,6 +161,15 @@ impl Client<Ureq> {
     pub fn new(cookie: &str, publication: &str) -> Result<Self> {
         Self::with_transport(Ureq::default(), Cookie::new(cookie)?, Publication::new(publication)?)
     }
+
+    /// With the cookie from the login keychain, where `keychain::store` put it.
+    pub fn from_keychain(publication: &str) -> Result<Self> {
+        Self::with_transport(
+            Ureq::default(),
+            crate::keychain::cookie()?,
+            Publication::new(publication)?,
+        )
+    }
 }
 
 impl<T: Transport> Client<T> {
@@ -166,6 +179,7 @@ impl<T: Transport> Client<T> {
             cookie,
             publication,
             user_agent: USER_AGENT.into(),
+            confirmed: Cell::new(false),
         })
     }
 
@@ -196,6 +210,9 @@ impl<T: Transport> Client<T> {
             add(&entry["publication"]);
         }
         add(&value["primaryPublication"]);
+        if publications.iter().any(|info| self.is_mine(info)) {
+            self.confirmed.set(true);
+        }
         Ok(Profile { user_id, publications })
     }
 
@@ -313,6 +330,17 @@ impl<T: Transport> Client<T> {
     }
 
     fn call(&self, method: Method, url: &str, referer: &str, body: Option<Value>) -> Result<Value> {
+        // A mistyped custom domain is somebody else's server: it gets no
+        // cookie until Substack itself has said the domain is this account's.
+        let host = url.strip_prefix("https://").and_then(|rest| rest.split('/').next());
+        let substack = host.is_some_and(|host| host == "substack.com" || host.ends_with(".substack.com"));
+        if !substack && !self.confirmed.get() {
+            return Err(Error::Config(format!(
+                "{} is not a Substack host, and the account's profile has not been seen to list it; \
+                 call profile() first, so the cookie is only sent to a domain that is yours",
+                host.unwrap_or(url)
+            )));
+        }
         let request = self.request(method, url, referer, body);
         let response = self.transport.send(&request)?;
         read(&response)
@@ -601,16 +629,44 @@ mod tests {
 
     #[test]
     fn custom_domain_requests_go_to_that_domain() {
-        let mock = Mock::default().reply(200, r#"{"id":3}"#);
+        let profile = |domain: &str| {
+            format!(
+                r#"{{"id":1,"publicationUsers":[{{"publication":{{"subdomain":"news","custom_domain":"{domain}"}}}}]}}"#
+            )
+        };
+        let mock = Mock::default()
+            .reply(200, &profile("news.example.com"))
+            .reply(200, r#"{"id":3}"#);
         let c = Client::with_transport(
             &mock,
             Cookie::new("c").unwrap(),
             Publication::new("news.example.com").unwrap(),
         )
         .unwrap();
+        // Not before the account's profile has named the domain.
+        let early = c.create_draft(1, &Fields::default(), "everyone").unwrap_err();
+        assert!(early.to_string().contains("news.example.com is not a Substack host"));
+        assert!(mock.sent.borrow().is_empty());
+        c.profile().unwrap();
         let draft = c.create_draft(1, &Fields::default(), "everyone").unwrap();
-        assert_eq!(mock.sent.borrow()[0].url, "https://news.example.com/api/v1/drafts");
+        assert_eq!(mock.sent.borrow()[1].url, "https://news.example.com/api/v1/drafts");
         assert_eq!(draft.edit_url, "https://news.example.com/publish/post/3");
+
+        // A domain the profile does not list never sees the cookie.
+        let mock = Mock::default().reply(200, &profile("news.example.com"));
+        let c = Client::with_transport(
+            &mock,
+            Cookie::new("c").unwrap(),
+            Publication::new("news.exampel.com").unwrap(),
+        )
+        .unwrap();
+        c.profile().unwrap();
+        assert!(c.create_draft(1, &Fields::default(), "everyone").is_err());
+        assert_eq!(mock.sent.borrow().len(), 1);
+        assert_eq!(
+            mock.sent.borrow()[0].url,
+            "https://substack.com/api/v1/user/profile/self"
+        );
     }
 
     fn error_for(status: u16, headers: &[(&str, &str)], body: &str) -> Error {
