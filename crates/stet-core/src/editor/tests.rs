@@ -389,6 +389,52 @@ fn mouse_selection() {
     assert_eq!(ed.selection(), Some(0..4));
 }
 
+#[test]
+fn a_double_click_drags_by_words_and_a_triple_click_by_lines() {
+    let text = "|one two three four\nsecond line here\nthird";
+    for vim in [true, false] {
+        let mut ed = editor(text);
+        if !vim {
+            ed.config.vim = false;
+            ed.mode = Mode::Insert;
+        }
+        // Double click "two", drag into "three": both words, whole.
+        ed.mouse_down(5, 2, false);
+        assert_eq!(ed.selection(), Some(4..7), "vim {vim}");
+        ed.mouse_drag(10);
+        assert_eq!(ed.selection(), Some(4..13), "vim {vim}");
+        ed.mouse_drag(16);
+        assert_eq!(ed.selection(), Some(4..18), "vim {vim}");
+        // Back the other way, past where it began: "two" stays in.
+        ed.mouse_drag(1);
+        assert_eq!(ed.selection(), Some(0..7), "vim {vim}");
+        // And home again: just the word.
+        ed.mouse_drag(6);
+        assert_eq!(ed.selection(), Some(4..7), "vim {vim}");
+        // Onto the next line.
+        ed.mouse_drag(27);
+        assert_eq!(ed.selection(), Some(4..30), "vim {vim}");
+        ed.mouse_up();
+        // Released: moving the mouse does nothing more.
+        ed.mouse_drag(0);
+        assert_eq!(ed.selection(), Some(4..30), "vim {vim}");
+
+        // Triple click the second line, drag down, then up past it.
+        ed.mouse_down(22, 3, false);
+        let lines = |ed: &Editor| ed.selection().map(|range| ed.buf.slice(range));
+        assert_eq!(lines(&ed).unwrap().trim_end(), "second line here", "vim {vim}");
+        ed.mouse_drag(38);
+        assert_eq!(lines(&ed).unwrap().trim_end(), "second line here\nthird", "vim {vim}");
+        ed.mouse_drag(2);
+        assert_eq!(
+            lines(&ed).unwrap().trim_end(),
+            "one two three four\nsecond line here",
+            "vim {vim}"
+        );
+        ed.mouse_up();
+    }
+}
+
 // ----- suggestion mode ------------------------------------------------------
 
 fn suggesting(text: &str) -> Editor {

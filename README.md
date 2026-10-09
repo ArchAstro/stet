@@ -468,7 +468,7 @@ window's own event handlers, for end-to-end checks without touching the mouse:
 keys :theme nord<CR>
 text typed as if by the IME
 click 300 200          # points; add a count, or cmd / shift
-drag 100 100 400 300
+drag 100 100 400 300   # a fifth number begins it with a double (2) or triple (3) click
 scroll 300 300 240
 resize 900 700
 shot /tmp/frame.png    # what the window shows now

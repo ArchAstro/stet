@@ -103,6 +103,16 @@ pub enum Primary {
     Ctrl,
 }
 
+/// What a drag of the mouse extends the selection by, and from where.
+#[derive(Clone, Debug)]
+enum Drag {
+    Chars(usize),
+    /// From the word a double click selected.
+    Words(Range<usize>),
+    /// From the line a triple click selected.
+    Lines(Range<usize>),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollTo {
     Center,
@@ -219,7 +229,7 @@ pub struct Editor {
     goal_col: Option<usize>,
     keep_goal: bool,
     group_open: bool,
-    drag_origin: Option<usize>,
+    drag: Option<Drag>,
     disk_mtime: Option<SystemTime>,
     rng: u64,
     vim: vim::State,
@@ -307,7 +317,7 @@ impl Editor {
             goal_col: None,
             keep_goal: false,
             group_open: false,
-            drag_origin: None,
+            drag: None,
             disk_mtime: None,
             rng: seed | 1,
             vim: vim::State::default(),
@@ -1155,12 +1165,12 @@ impl Editor {
                     }
                 }
                 self.cursor = pos;
-                self.drag_origin = Some(pos);
+                self.drag = Some(Drag::Chars(pos));
             }
             2 => {
-                if let Some(word) = motion::text_object(&self.buf, pos, false, 'w') {
-                    self.select(word.range, visual);
-                }
+                let word = self.word_at(pos);
+                self.select(word.clone(), visual);
+                self.drag = Some(Drag::Words(word));
             }
             _ => {
                 let line = self.buf.line_of(pos);
@@ -1170,11 +1180,18 @@ impl Editor {
                     self.cursor = range.end;
                     self.mode = Mode::VisualLine;
                 } else {
-                    self.select(range, false);
+                    self.select(range.clone(), false);
                 }
+                self.drag = Some(Drag::Lines(range));
             }
         }
         self.clamp_cursor();
+    }
+
+    /// The word a double click on `pos` takes: the word, or the run of
+    /// spaces or punctuation, that `pos` is in.
+    fn word_at(&self, pos: usize) -> Range<usize> {
+        motion::text_object(&self.buf, pos, false, 'w').map_or(pos..pos, |word| word.range)
     }
 
     fn select(&mut self, range: Range<usize>, visual: bool) {
@@ -1190,14 +1207,49 @@ impl Editor {
         }
     }
 
+    /// The pointer moved with the button down. A drag begun with a double
+    /// click takes whole words, and one begun with a triple click whole
+    /// lines; what the clicks selected stays selected whichever way it goes.
     pub fn mouse_drag(&mut self, pos: usize) {
-        let Some(origin) = self.drag_origin else { return };
         let pos = pos.min(self.buf.len());
-        if pos == origin && self.anchor.is_none() {
+        let visual = self.mode != Mode::Insert;
+        let (origin, reached) = match self.drag.clone() {
+            None => return,
+            Some(Drag::Chars(origin)) => {
+                if pos == origin && self.anchor.is_none() {
+                    return;
+                }
+                self.anchor = Some(origin);
+                self.cursor = pos;
+                if self.mode == Mode::Normal {
+                    self.mode = Mode::Visual;
+                }
+                return self.clamp_cursor();
+            }
+            Some(Drag::Words(origin)) => (origin, self.word_at(pos)),
+            Some(Drag::Lines(origin)) => {
+                let line = self.buf.line_of(pos);
+                (origin, self.buf.line_start(line)..self.buf.line_end(line))
+            }
+        };
+        // A visual selection takes in the character its ends rest on.
+        let last = |range: &Range<usize>| {
+            if visual {
+                range.end.saturating_sub(1).max(range.start)
+            } else {
+                range.end
+            }
+        };
+        if origin.is_empty() && reached.is_empty() {
             return;
         }
-        self.anchor = Some(origin);
-        self.cursor = pos;
+        if reached.start < origin.start {
+            self.anchor = Some(last(&origin));
+            self.cursor = reached.start;
+        } else {
+            self.anchor = Some(origin.start);
+            self.cursor = last(&reached).max(last(&origin));
+        }
         if self.mode == Mode::Normal {
             self.mode = Mode::Visual;
         }
@@ -1205,7 +1257,7 @@ impl Editor {
     }
 
     pub fn mouse_up(&mut self) {
-        self.drag_origin = None;
+        self.drag = None;
     }
 
     // ----- shortcuts -----------------------------------------------------

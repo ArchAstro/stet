@@ -826,7 +826,8 @@ impl Running {
                 if command && clicks == 1 && editor.follow_link_at(pos) {
                     // Followed; nothing to select.
                 } else {
-                    self.dragging = clicks == 1;
+                    // A double or triple click can be dragged on from, too.
+                    self.dragging = true;
                     editor.mouse_down(pos, clicks, self.mods.shift_key());
                 }
             }
@@ -994,6 +995,11 @@ impl Running {
                 let ((x0, y0), (x1, y1)) = (point(0), point(2));
                 self.mouse_move(x0, y0);
                 self.last_click = None;
+                // A fifth number: begin with a double (2) or triple (3) click.
+                for _ in 1..numbers.get(4).map_or(1, |count| *count as usize).clamp(1, 3) {
+                    self.mouse_press(event_loop);
+                    self.mouse_release();
+                }
                 self.mouse_press(event_loop);
                 for step in 1..=8 {
                     let t = step as f32 / 8.0;
