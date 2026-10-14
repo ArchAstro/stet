@@ -32,8 +32,8 @@ stet-substack = { path = "../stet-substack", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }
-objc2 = "0.5"
-objc2-foundation = { version = "0.2", features = ["NSArray", "NSString", "NSURL"] }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"] }
 
 [features]
 default = ["remote-images", "substack"]
