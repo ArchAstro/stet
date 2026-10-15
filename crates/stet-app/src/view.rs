@@ -55,6 +55,10 @@ pub enum Target {
     Tab(usize),
     SidebarRow(usize),
     Sidebar,
+    /// A row of the outline panel, and its fold arrow.
+    OutlineRow(usize),
+    OutlineFold(usize),
+    Outline,
     PaletteRow(usize),
     Palette,
     ContextRow(usize),
@@ -180,6 +184,9 @@ pub struct View {
     pub reduce_motion: bool,
     sidebar_selected: usize,
     palette_scroll: usize,
+    /// The outline row the cursor was in last frame, so the panel only
+    /// scrolls to follow when it changes.
+    outline_current: Option<usize>,
     /// Bottom-left of the text cursor in the last frame, if it was on screen.
     cursor_point: Option<(f32, f32)>,
     /// Margin sections and where they are pinned, for this frame.
@@ -243,6 +250,7 @@ impl View {
             reduce_motion: false,
             sidebar_selected: usize::MAX,
             palette_scroll: 0,
+            outline_current: None,
             cursor_point: None,
             pins: Vec::new(),
             pin_tops: Vec::new(),
@@ -425,11 +433,20 @@ impl View {
         }
     }
 
+    /// The outline panel's width on the right of the window.
+    fn outline_width(&self, ed: &Editor) -> f32 {
+        if ed.outline_panel.visible {
+            (230.0 * self.scale).min(self.width * 0.25).round()
+        } else {
+            0.0
+        }
+    }
+
     /// Where the document pane ends and the margin begins, if it is open.
     fn split(&self, ed: &Editor) -> Option<f32> {
-        let chrome = self.sidebar_width(ed);
-        ed.margin_visible()
-            .then(|| (chrome + (self.width - chrome) * 0.58).round())
+        let chrome = self.sidebar_width(ed) + self.outline_width(ed);
+        let right = self.width - self.outline_width(ed);
+        ed.margin_visible().then(|| (chrome + (right - chrome) * 0.58).round())
     }
 
     /// True if a window x position is over the pane that does not have the
@@ -437,6 +454,7 @@ impl View {
     pub fn over_other_pane(&self, ed: &Editor, x: f32) -> bool {
         self.split(ed)
             .is_some_and(|split| (x >= split) != ed.in_margin() && x >= self.sidebar_width(ed))
+            && x < self.width - self.outline_width(ed)
     }
 
     fn metrics(&mut self, ed: &Editor) -> Metrics {
@@ -469,11 +487,12 @@ impl View {
         };
         // With the margin open the editor area is two panes; these are the
         // metrics of whichever one `ed` currently holds.
-        let chrome = self.sidebar_width(ed);
+        let chrome = self.sidebar_width(ed) + self.outline_width(ed);
+        let edge = self.width - self.outline_width(ed);
         let (origin, right) = match self.split(ed) {
-            Some(split) if ed.in_margin() => (split, self.width),
+            Some(split) if ed.in_margin() => (split, edge),
             Some(split) => (chrome, split),
-            None => (chrome, self.width),
+            None => (chrome, edge),
         };
         let available = right - origin;
         // Leave room for hanging heading markers; less in a narrow pane.
@@ -1024,6 +1043,11 @@ impl View {
         ed.sidebar.scroll = (ed.sidebar.scroll as isize + rows).clamp(0, last) as usize;
     }
 
+    pub fn scroll_outline(&mut self, ed: &mut Editor, rows: isize) {
+        let last = ed.outline_rows().len().saturating_sub(1) as isize;
+        ed.outline_panel.scroll = (ed.outline_panel.scroll as isize + rows).clamp(0, last) as usize;
+    }
+
     pub fn frame(&mut self, ed: &mut Editor) -> Frame {
         ed.refresh();
         self.frame += 1;
@@ -1088,6 +1112,7 @@ impl View {
         self.status(ed, &m, &mut frame.base);
         self.tabs(ed, &m, &mut frame.base);
         self.sidebar(ed, &m, &mut frame.base);
+        self.outline_panel(ed, &m, &mut frame.base);
         self.palette(ed, &m, &mut frame.over);
         self.context_menu(ed, &m, &mut frame.over);
         self.retouching(ed, m.ui, &mut frame.over);
@@ -1700,6 +1725,125 @@ impl View {
                 pad,
                 top + m.row / 2.0,
                 [0.0, 0.0, width - pad, self.height],
+                c.status,
+            );
+        }
+    }
+
+    /// The outline panel: the document's headings beside the text, the one
+    /// the cursor is in marked, and the list following it when it changes.
+    fn outline_panel(&mut self, ed: &mut Editor, m: &Metrics, layer: &mut Layer) {
+        if !ed.outline_panel.visible {
+            self.outline_current = None;
+            return;
+        }
+        let c = ed.theme.colors;
+        let s = self.scale;
+        let width = self.outline_width(ed);
+        let left = self.width - width;
+        layer.back.push(Quad {
+            rect: [left, 0.0, width, self.height],
+            color: linear(c.panel, 1.0),
+            radius: 0.0,
+        });
+        layer.back.push(Quad {
+            rect: [left, 0.0, s.max(1.0), self.height],
+            color: linear(c.rule, 0.6),
+            radius: 0.0,
+        });
+        self.targets.push(([left, 0.0, width, self.height], Target::Outline));
+
+        let pad = (14.0 * s).round();
+        let indent = (14.0 * s).round();
+        let header_top = self.titlebar.max(10.0 * s) + 6.0 * s;
+        let key = self.label(ed, "OUTLINE", c.status, m.ui * 0.82, Face::Ui, true);
+        self.put(
+            layer,
+            key,
+            left + pad,
+            header_top + m.row / 2.0,
+            [left, 0.0, self.width - pad, self.height],
+            c.status,
+        );
+
+        let top = (header_top + m.row + 4.0 * s).round();
+        let visible = (((self.height - top) / m.row).floor() as usize).max(1);
+        let count = ed.outline_rows().len();
+        // The heading the cursor is in: the last one at or above it.
+        let line = ed.buf.line_of(ed.cursor);
+        let current = ed.outline_rows().iter().rposition(|row| row.line <= line);
+        // Follow it only when it changes, so wheeling the list by hand sticks.
+        if current != self.outline_current {
+            self.outline_current = current;
+            if let Some(at) = current {
+                if at < ed.outline_panel.scroll {
+                    ed.outline_panel.scroll = at;
+                } else if at >= ed.outline_panel.scroll + visible {
+                    ed.outline_panel.scroll = at + 1 - visible;
+                }
+            }
+        }
+        ed.outline_panel.scroll = ed.outline_panel.scroll.min(count.saturating_sub(visible));
+
+        let inset = (6.0 * s).round();
+        for (slot, index) in (ed.outline_panel.scroll..count).take(visible + 1).enumerate() {
+            let row = &ed.outline_rows()[index];
+            let y = top + slot as f32 * m.row;
+            let rect = [left + inset, y, width - inset * 2.0, m.row];
+            let here = current == Some(index);
+            if here {
+                layer.back.push(Quad {
+                    rect,
+                    color: linear(c.panel_active, 1.0),
+                    radius: 7.0 * s,
+                });
+            }
+            self.targets.push((rect, Target::OutlineRow(index)));
+            let middle = y + m.row / 2.0;
+            let clip = [left + pad, top, self.width - pad, self.height];
+            // One indent step per level below the top.
+            let mut x = left + pad + row.depth as f32 * indent;
+            // A fold arrow where there is something to fold; every row keeps
+            // the space so the text stays aligned.
+            let chevron = self.label(
+                ed,
+                if row.folded { "▸" } else { "▾" },
+                c.status,
+                m.ui * 1.1,
+                Face::Ui,
+                false,
+            );
+            let chevron_width = self.layouts[&chevron].rows[0].width;
+            if row.foldable {
+                self.targets
+                    .push(([x, y, chevron_width + 6.0 * s, m.row], Target::OutlineFold(index)));
+                self.put(layer, chevron, x, middle, clip, c.status);
+            }
+            x += chevron_width + 6.0 * s;
+            if here {
+                // A mark on the heading the cursor is in.
+                layer.back.push(Quad {
+                    rect: [
+                        left + 2.0 * s,
+                        y + 6.0 * s,
+                        (3.0 * s).round().max(1.0),
+                        m.row - 12.0 * s,
+                    ],
+                    color: linear(c.cursor, 1.0),
+                    radius: 2.0 * s,
+                });
+            }
+            let key = self.label(ed, &row.text, c.text, m.ui, Face::Ui, here);
+            self.put(layer, key, x, middle, clip, c.text);
+        }
+        if count == 0 {
+            let key = self.label(ed, "No headings", c.status, m.ui, Face::Ui, false);
+            self.put(
+                layer,
+                key,
+                left + pad,
+                top + m.row / 2.0,
+                [0.0, 0.0, self.width - pad, self.height],
                 c.status,
             );
         }
@@ -2362,6 +2506,14 @@ impl View {
         let headers = (0..shown.len()).filter(|&slot| starts_section(slot)).count();
         let list_height = (shown.len().max(1) as f32 * row + headers as f32 * header).round();
         let height = input_height + list_height + footer + 8.0 * s;
+        // The outline indents by heading level and marks where the cursor is.
+        let outline = palette.kind == PaletteKind::Outline;
+        let at_cursor = outline
+            .then(|| {
+                let line = ed.buf.line_of(ed.cursor);
+                palette.outline.iter().rposition(|row| row.line <= line)
+            })
+            .flatten();
 
         layer.back.push(Quad {
             rect: [0.0, 0.0, self.width, self.height],
@@ -2448,15 +2600,38 @@ impl View {
                 [detail_left, top, left + width - pad, top + height],
                 c.status,
             );
-            let key = self.label(ed, &item.label, c.text, m.ui * 1.05, Face::Ui, false);
-            self.put(
-                layer,
-                key,
-                left + pad,
-                middle,
-                [left + pad, top, detail_left - pad * 0.5, top + height],
-                c.text,
-            );
+            let clip = [left + pad, top, detail_left - pad * 0.5, top + height];
+            let mut x = left + pad;
+            if let Some(heading) = outline.then(|| &palette.outline[palette.matches[at]]) {
+                // One indent step per level below the top.
+                x += heading.depth as f32 * (14.0 * s).round();
+                // A fold arrow where there is something to fold; every row
+                // keeps the space so the text stays aligned.
+                let chevron = self.label(
+                    ed,
+                    if heading.folded { "▸" } else { "▾" },
+                    c.status,
+                    m.ui * 1.1,
+                    Face::Ui,
+                    false,
+                );
+                let chevron_width = self.layouts[&chevron].rows[0].width;
+                if heading.foldable {
+                    self.put(layer, chevron, x, middle, clip, c.status);
+                }
+                x += chevron_width + 6.0 * s;
+                // The heading the cursor is in.
+                if at_cursor == Some(palette.matches[at]) {
+                    layer.back.push(Quad {
+                        rect: [left + 2.0 * s, y + 6.0 * s, (3.0 * s).round().max(1.0), row - 12.0 * s],
+                        color: linear(c.cursor, 1.0),
+                        radius: 2.0 * s,
+                    });
+                }
+            }
+            let here = outline && at_cursor == Some(palette.matches[at]);
+            let key = self.label(ed, &item.label, c.text, m.ui * 1.05, Face::Ui, here);
+            self.put(layer, key, x, middle, clip, c.text);
             y += row;
         }
         if shown.is_empty() {
@@ -2471,7 +2646,11 @@ impl View {
         };
         // A sheet opened from here takes over this panel at this height.
         self.palette_seen = Some((self.frame, height));
-        let hint = format!("{position}↑↓ move    ↵ choose    esc close");
+        let hint = if outline {
+            format!("{position}↑↓ move    ↵ jump    ← → fold    esc close")
+        } else {
+            format!("{position}↑↓ move    ↵ choose    esc close")
+        };
         let key = self.label(ed, &hint, c.status, m.ui * 0.85, Face::Ui, false);
         let hint_width = self.layouts[&key].rows[0].width;
         self.put(

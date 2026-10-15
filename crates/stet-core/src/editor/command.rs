@@ -153,7 +153,10 @@ impl Editor {
                     text: String::new(),
                 })
             }
-            "sidebar" | "browse" | "tree" | "Ex" | "Explore" => self.toggle_sidebar(),
+            "sidebar" | "browse" | "tree" | "Ex" | "Explore" if arg.is_empty() => self.toggle_sidebar(),
+            "outlinebar" | "outlinepanel" => self.toggle_outline_panel(),
+            "sidebar" if arg == "outline" => self.toggle_outline_panel(),
+            "outline" | "toc" => self.open_palette(PaletteKind::Outline),
             "backlinks" => self.open_palette(PaletteKind::Backlinks),
             "agent" | "ask" if arg.is_empty() => self.agent_prompt(),
             "agent" | "ask" => {

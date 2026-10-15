@@ -68,6 +68,7 @@ impl Editor {
             scroll_px: 0.0,
             doc_id: self.next_doc_id,
             snapshot: None,
+            outline_folded: Default::default(),
         }
     }
 

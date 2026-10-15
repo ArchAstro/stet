@@ -43,6 +43,8 @@ pub struct Config {
     pub link_completion: bool,
     /// Show the file browser at startup.
     pub sidebar: bool,
+    /// Show the document's headings beside the text at startup.
+    pub outline: bool,
     /// While writing, show margin notes beside the text they are pinned to
     /// (false lists the margin from top to bottom at all times).
     pub pinned_notes: bool,
@@ -118,6 +120,7 @@ impl Default for Config {
             highlight: true,
             link_completion: true,
             sidebar: false,
+            outline: false,
             pinned_notes: true,
             smart_paste: true,
             copy_html: true,

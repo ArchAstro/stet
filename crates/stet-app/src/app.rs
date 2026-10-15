@@ -338,6 +338,9 @@ impl Running {
             editor.toggle_sidebar();
             editor.sidebar.focused = false;
         }
+        if editor.config.outline {
+            editor.toggle_outline_panel();
+        }
         let mut view = View::new(fonts, Images::new(wake.clone(), platform::cache_dir()));
         view.scale = window.scale_factor() as f32;
         view.zoom = state.zoom.unwrap_or(1.0).clamp(0.5, 4.0);
@@ -782,6 +785,9 @@ impl Running {
             Some(Target::Tab(index)) => editor.switch_tab(index),
             Some(Target::SidebarRow(index)) => editor.sidebar_click(index, command),
             Some(Target::Sidebar) => editor.sidebar.focused = true,
+            Some(Target::OutlineRow(index)) => editor.outline_panel_click(index),
+            Some(Target::OutlineFold(index)) => editor.outline_panel_fold(index),
+            Some(Target::Outline) => {}
             Some(Target::MenuHint) => editor.open_palette(PaletteKind::Help),
             Some(Target::Note(index)) => editor.open_note(index),
             Some(Target::Sheet) => {}
@@ -904,7 +910,16 @@ impl Running {
         if session.editor.palette.is_some() || session.editor.sheet.is_some() || session.view.retouch.is_some() {
             return;
         }
-        if matches!(over, Some(Target::Sidebar | Target::SidebarRow(_))) {
+        if matches!(
+            over,
+            Some(Target::Outline | Target::OutlineRow(_) | Target::OutlineFold(_))
+        ) {
+            let rows = (pixels / (28.0 * session.view.scale)).round() as isize;
+            session.view.scroll_outline(
+                &mut session.editor,
+                if rows == 0 { pixels.signum() as isize } else { rows },
+            );
+        } else if matches!(over, Some(Target::Sidebar | Target::SidebarRow(_))) {
             let rows = (pixels / (28.0 * session.view.scale)).round() as isize;
             session.view.scroll_sidebar(
                 &mut session.editor,

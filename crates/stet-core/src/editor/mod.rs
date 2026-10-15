@@ -7,6 +7,7 @@ mod links;
 mod margin;
 mod menu;
 mod motion;
+mod outline;
 mod palette;
 mod paste;
 mod pins;
@@ -25,6 +26,7 @@ pub use links::{Backlink, Link, link_in, rewrite_destinations};
 pub use margin::margin_path;
 pub use menu::{ContextMenu, MenuAt, MenuItem};
 pub use motion::Matcher;
+pub use outline::{OutlinePanel, OutlineRow};
 pub use palette::{Act, Item, Palette, PaletteKind};
 pub use paste::{Clip, is_picture, is_video};
 pub use pins::Pin;
@@ -40,7 +42,7 @@ use crate::input::{Key, KeyEvent, Mods};
 use crate::markdown::{self, Doc};
 use crate::theme::{Theme, Themes};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -283,6 +285,13 @@ pub struct Editor {
     code_cache: RefCell<CodeCache>,
     /// Tables of the current analysis.
     table_cache: RefCell<tables::TableCache>,
+    /// Headings folded away in the outline, by level and text.
+    outline_folded: HashSet<outline::Fold>,
+    /// The outline panel beside the text.
+    pub outline_panel: OutlinePanel,
+    /// The panel's rows, and the `(document, revision)` they were built at.
+    outline_rows: Vec<OutlineRow>,
+    outline_rows_key: Option<(u64, u64)>,
 }
 
 impl Editor {
@@ -351,6 +360,10 @@ impl Editor {
             highlighter: RefCell::new(Highlighter::default()),
             code_cache: RefCell::new((None, HashMap::new())),
             table_cache: RefCell::new((None, Vec::new())),
+            outline_folded: HashSet::new(),
+            outline_panel: OutlinePanel::default(),
+            outline_rows: Vec::new(),
+            outline_rows_key: None,
             config,
         }
     }
@@ -374,6 +387,7 @@ impl Editor {
             // Block indices belong to this analysis only.
             self.code_cache.borrow_mut().1.clear();
         }
+        self.refresh_outline_rows();
     }
 
     pub fn doc(&self) -> &Doc {

@@ -216,6 +216,10 @@ enum Action {
     ToggleTask,
     ContextMenu,
     AgentPrompt,
+    /// The document's headings, in the pop-up menu.
+    Outline,
+    /// The document's headings, in the panel beside the text.
+    OutlinePanel,
     /// `Ctrl-w` and a letter: the margin and its pane.
     Pane(char),
     RecordMacro(char),
@@ -465,6 +469,14 @@ fn parse_action(event: KeyEvent, r: &mut Reader, visual: bool) -> Result<Action,
             Some('m') => {
                 r.at += 1;
                 ContextMenu
+            }
+            Some('o') => {
+                r.at += 1;
+                Outline
+            }
+            Some('O') => {
+                r.at += 1;
+                OutlinePanel
             }
             Some('a') => {
                 r.at += 1;
@@ -825,6 +837,8 @@ impl Editor {
             }
             Action::Resolve { accept } => self.resolve_at_cursor(accept),
             Action::ToggleTask => self.toggle_task(),
+            Action::Outline => self.open_palette(super::PaletteKind::Outline),
+            Action::OutlinePanel => self.toggle_outline_panel(),
             Action::ContextMenu => self.open_context_menu(super::MenuAt::Cursor),
             Action::AgentPrompt => self.agent_prompt(),
             Action::Pane(key) => match key {

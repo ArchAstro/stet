@@ -78,7 +78,7 @@ Vim is on by default (`:novim` or `vim = false` for a standard text field).
 4. **Visual** — `v`, `V`, and block `Ctrl-v` (`I`, `A`, `c`, `d`, `y`, `r`, `~ u U`, `> <`); `o` swaps ends.
 5. **Registers and macros** — `"a`–`"z`, `"A` append, `"0`, `"_`, `"+`; the unnamed register is the system clipboard. `qa … q` records, `@a` and `@@` replay.
 6. **Search** — `/` and `?` take regular expressions (smart case, live highlight; an invalid pattern is searched literally). `:s/a/b/g` and `:%s/(\w+)@(\w+)/\2 at \1/g` support `\1`…`\9` and `&`.
-7. **Command line** — `:w :q :wq :wa :qa :e :tabnew :theme :font :monofont :files :sidebar :backlinks :recover :help :<line>`; Tab completes theme and font names.
+7. **Command line** — `:w :q :wq :wa :qa :e :tabnew :theme :font :monofont :files :sidebar :outline :outlinebar :backlinks :recover :help :<line>`; Tab completes theme and font names.
 8. **Markdown** — Enter continues lists, tasks and quotes; Tab/Shift-Tab indent items; `gt` toggles a task.
 
 Shortcuts use Cmd on macOS and Ctrl elsewhere (in vim mode on Ctrl platforms,
@@ -189,9 +189,10 @@ over the built-in ones, shortcuts included:
 ```
 
 Every action has a command to bind (the menu lists them): `:w :q :tabnew
-:tabnext :files :sidebar :follow :back :forward :backlinks :actions :agent
-:suggest :accept :reject :acceptall :rejectall :nextsuggestion :bold :italic
-:link :task :theme :font :focus :typewriter :zoom in :fullscreen :help`.
+:tabnext :files :sidebar :outline :outlinebar :follow :back :forward
+:backlinks :actions :agent :suggest :accept :reject :acceptall :rejectall
+:nextsuggestion :bold :italic :link :task :theme :font :focus :typewriter
+:zoom in :fullscreen :help`.
 
 ## Assistants
 
@@ -236,6 +237,20 @@ folder; `j`/`k` or arrows move, Enter or `l` opens a file or folder, `h`
 closes one, `t` opens in a new tab, `-` widens to the parent folder, `r`
 re-reads, Esc returns to the text. Clicking works too. `sidebar = true` shows
 it at startup.
+
+## Outline
+
+`g o` or `:outline` lists the document's headings in a pop-up, indented by
+level and opening on the one the cursor is in. `j`/`k` or the arrows move,
+Enter or a click jumps there and closes, `←`/`→` fold a heading's
+subheadings away and back, Esc or Tab returns to the text, and typing
+filters. Setext headings count; headings inside code fences do not.
+
+`g O`, `:outlinebar` or `:sidebar outline` opens the same headings as a
+panel beside the text: it stays while you write, marks the heading the
+cursor is in, and scrolls to it when you move to another section. Clicking
+a row jumps, clicking `▸`/`▾` folds. Folds are shared with the pop-up and
+remembered per document. `outline = true` shows the panel at startup.
 
 ## Code
 
