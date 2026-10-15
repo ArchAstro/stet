@@ -2,7 +2,7 @@
 //! its shortcut, markdown syntax, vim keys), opening files, backlinks, and
 //! picking themes and fonts.
 
-use super::{Editor, Mode, Primary};
+use super::{Editor, Mode, OutlineRow, Primary};
 use crate::input::{Key, KeyEvent};
 use std::path::PathBuf;
 
@@ -15,6 +15,8 @@ pub enum PaletteKind {
     Notes,
     Themes,
     Fonts,
+    /// The document's headings.
+    Outline,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +31,10 @@ pub enum Act {
     Open {
         path: PathBuf,
         line: Option<usize>,
+    },
+    /// Jump to a line of this document.
+    Goto {
+        line: usize,
     },
     /// Reference rows do nothing.
     None,
@@ -53,6 +59,8 @@ pub struct Palette {
     pub selected: usize,
     /// Command that undoes a live preview when the menu is dismissed.
     revert: Option<String>,
+    /// Rows of the outline, parallel to `items`; empty for every other kind.
+    pub outline: Vec<OutlineRow>,
 }
 
 impl Palette {
@@ -65,12 +73,29 @@ impl Palette {
             items,
             selected: 0,
             revert: None,
+            outline: Vec::new(),
         };
         palette.filter();
         palette
     }
 
-    fn filter(&mut self) {
+    /// The outline menu: headings as items, their rows beside them.
+    pub(super) fn outline(items: Vec<Item>, rows: Vec<OutlineRow>) -> Palette {
+        let mut palette = Palette {
+            kind: PaletteKind::Outline,
+            placeholder: "Document outline".to_string(),
+            query: String::new(),
+            matches: Vec::new(),
+            items,
+            selected: 0,
+            revert: None,
+            outline: rows,
+        };
+        palette.filter();
+        palette
+    }
+
+    pub(super) fn filter(&mut self) {
         let query = self.query.to_lowercase();
         let words: Vec<&str> = query.split_whitespace().collect();
         let mut ranked: Vec<(u8, usize)> = self
@@ -156,6 +181,10 @@ const VIM: &[(&str, &str)] = &[
     ("Marks", "ma   `a  'a"),
     ("Scroll", "Ctrl-d Ctrl-u   Ctrl-f Ctrl-b   zz zt zb"),
     ("Links", "gf or Enter follows   Ctrl-o back   Ctrl-i forward"),
+    (
+        "Outline",
+        "g o opens headings   g O the panel   j k move   ↵ jumps   ← → fold",
+    ),
     ("Tabs", "]t  [t   :tabnew  :q"),
     ("Tasks and suggestions", "gt toggles a task   ]s [s   gsa gsr"),
     (
@@ -202,6 +231,8 @@ impl Editor {
             command("Back", format!("{}  Ctrl-o", chord(false, "[")), "back"),
             command("Forward", format!("{}  Ctrl-i", chord(false, "]")), "forward"),
             command("Notes linking here…", chord(true, "L"), "backlinks"),
+            command("Document outline…", "g o".to_string(), "outline"),
+            command("Document outline panel", "g O".to_string(), "outlinebar"),
             command(
                 "Show or hide the margin (research notes)",
                 format!("{}  Ctrl-w m", chord(true, "M")),
@@ -329,6 +360,7 @@ impl Editor {
         let (placeholder, items) = match kind {
             PaletteKind::Help => ("Search commands, shortcuts and markdown", self.help_items()),
             PaletteKind::Files => ("Go to file", self.file_items()),
+            PaletteKind::Outline => return self.open_outline(),
             PaletteKind::Notes => {
                 let mut items = self.file_items();
                 for item in &mut items {
@@ -430,7 +462,7 @@ impl Editor {
         }
     }
 
-    fn palette_move(&mut self, delta: isize) {
+    pub(super) fn palette_move(&mut self, delta: isize) {
         let Some(palette) = &mut self.palette else { return };
         let count = palette.matches.len() as isize;
         if count == 0 {
@@ -456,6 +488,13 @@ impl Editor {
 
     pub(super) fn palette_key(&mut self, event: KeyEvent) {
         let ctrl = event.mods.ctrl;
+        if self
+            .palette
+            .as_ref()
+            .is_some_and(|palette| palette.kind == PaletteKind::Outline)
+        {
+            return self.outline_key(event);
+        }
         match event.key {
             Key::Esc => self.close_palette(),
             Key::Char('c' | '[' | 'g') if ctrl => self.close_palette(),
@@ -500,7 +539,7 @@ impl Editor {
         }
     }
 
-    fn palette_run(&mut self) {
+    pub(super) fn palette_run(&mut self) {
         let Some(palette) = self.palette.take() else { return };
         let Some(item) = palette.selected_item() else { return };
         match item.act.clone() {
@@ -517,6 +556,7 @@ impl Editor {
                     Err(err) => self.error(err),
                 }
             }
+            Act::Goto { line } => self.goto_line(line),
             Act::Insert { text, block } => {
                 let line = self.buf.line_of(self.cursor);
                 if self.mode != Mode::Insert {

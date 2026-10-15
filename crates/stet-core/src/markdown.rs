@@ -86,6 +86,16 @@ pub struct CodeBlock {
     pub lines: Vec<(u32, u32)>,
 }
 
+/// A heading of the document, for the outline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Heading {
+    /// The heading's first line.
+    pub line: usize,
+    pub level: u8,
+    /// The heading's text, with ATX or setext markers stripped.
+    pub text: String,
+}
+
 #[derive(Default)]
 pub struct Doc {
     lines: Vec<Line>,
@@ -150,6 +160,112 @@ impl Doc {
     pub fn in_fence(&self, line: usize) -> bool {
         self.fences.iter().any(|fence| fence.contains(&line))
     }
+    /// Every heading in document order. ATX headings are one line; a setext
+    /// heading is its content lines, the underline dropped. Text inside a
+    /// fence never carries a heading block, so none of it shows up here.
+    pub fn headings(&self) -> Vec<Heading> {
+        let line = |index: usize| {
+            let start = self.line_starts[index];
+            let end = self
+                .line_starts
+                .get(index + 1)
+                .map_or(self.source.len(), |next| next - 1);
+            &self.source[start..end.max(start)]
+        };
+        let mut out = Vec::new();
+        let mut at = 0;
+        while at < self.lines.len() {
+            let Block::Heading(level) = self.lines[at].block else {
+                at += 1;
+                continue;
+            };
+            let first = markers_stripped(line(at));
+            if first.starts_with('#') {
+                // ATX: exactly one line, optional closing hashes.
+                at += 1;
+                let text = atx_text(first);
+                if !text.is_empty() {
+                    out.push(Heading {
+                        line: at - 1,
+                        level,
+                        text,
+                    });
+                }
+                continue;
+            }
+            // Setext: content lines that neither open an ATX heading nor are
+            // the underline, which closes the heading.
+            let mut last = at;
+            while last + 1 < self.lines.len() && self.lines[last + 1].block == Block::Heading(level) && {
+                let next = markers_stripped(line(last + 1));
+                !next.starts_with('#') && !is_underline(next)
+            } {
+                last += 1;
+            }
+            let underline = last + 1 < self.lines.len()
+                && self.lines[last + 1].block == Block::Heading(level)
+                && is_underline(markers_stripped(line(last + 1)));
+            let (content_end, next) = if underline {
+                (last + 1, last + 2)
+            } else {
+                (last + 1, last + 1)
+            };
+            let text = (at..content_end)
+                .map(|index| markers_stripped(line(index)).trim())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !text.is_empty() {
+                out.push(Heading { line: at, level, text });
+            }
+            at = next.max(at + 1);
+        }
+        out
+    }
+}
+
+/// The line with quote and list markers and surrounding space removed.
+fn markers_stripped(line: &str) -> &str {
+    let mut text = line.trim_start();
+    loop {
+        let rest = text.trim_start_matches([' ', '\t']);
+        let after = if let Some(after) = rest.strip_prefix('>') {
+            Some(after.trim_start_matches([' ', '\t']))
+        } else if let Some(after) = rest
+            .strip_prefix(['-', '*', '+'])
+            .filter(|_| rest[1..].starts_with([' ', '\t']))
+        {
+            Some(after.trim_start_matches([' ', '\t']))
+        } else {
+            // An ordered list marker: digits, `.` or `)`, then space.
+            let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            (digits > 0
+                && digits <= 9
+                && rest[digits..].starts_with(['.', ')'])
+                && matches!(rest.as_bytes().get(digits + 1), Some(b' ' | b'\t')))
+            .then(|| rest[digits + 1..].trim_start_matches([' ', '\t']))
+        };
+        match after {
+            Some(after) if after.len() < rest.len() => text = after,
+            _ => return rest,
+        }
+    }
+}
+
+/// True for a setext underline: nothing but `=` or `-`.
+fn is_underline(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b == b'=' || b == b'-')
+}
+
+/// The text of an ATX heading line, hashes and closing sequence removed.
+fn atx_text(line: &str) -> String {
+    let text = line.trim_start_matches('#').trim();
+    let hashes = text.len() - text.trim_end_matches('#').len();
+    let text = if hashes > 0 && (text.len() == hashes || text.as_bytes()[text.len() - hashes - 1] == b' ') {
+        text[..text.len() - hashes].trim_end()
+    } else {
+        text
+    };
+    text.to_string()
 }
 
 pub(crate) fn options() -> Options {
@@ -1090,6 +1206,84 @@ mod tests {
         assert_eq!(doc.block(5), Block::Text);
         assert_eq!(styled("## Title", 0), vec![s("## ", MARKER)]);
         assert_eq!(styled("Setext\n===", 1), vec![s("===", MARKER)]);
+    }
+
+    #[test]
+    fn headings_outline_extracts_levels_and_text() {
+        let doc = parse(
+            "# One\n\n## Two *em*\n\nSetext\n===\n\nDeep\n---\n\n> # Quoted\n\n- # In a list\n\n```\n# not a heading\n```\n\n#### Four ####\n\n##\n",
+        );
+        assert_eq!(
+            doc.headings(),
+            vec![
+                Heading {
+                    line: 0,
+                    level: 1,
+                    text: "One".into()
+                },
+                Heading {
+                    line: 2,
+                    level: 2,
+                    text: "Two *em*".into()
+                },
+                Heading {
+                    line: 4,
+                    level: 1,
+                    text: "Setext".into()
+                },
+                Heading {
+                    line: 7,
+                    level: 2,
+                    text: "Deep".into()
+                },
+                Heading {
+                    line: 10,
+                    level: 1,
+                    text: "Quoted".into()
+                },
+                Heading {
+                    line: 12,
+                    level: 1,
+                    text: "In a list".into()
+                },
+                Heading {
+                    line: 18,
+                    level: 4,
+                    text: "Four".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn headings_outline_multiline_and_adjacent_setext() {
+        let doc = parse("Title\nmore\n===\n\nOther\n===\n\n# Atx\n\nThird\n===\n");
+        assert_eq!(
+            doc.headings(),
+            vec![
+                Heading {
+                    line: 0,
+                    level: 1,
+                    text: "Title more".into()
+                },
+                Heading {
+                    line: 4,
+                    level: 1,
+                    text: "Other".into()
+                },
+                Heading {
+                    line: 7,
+                    level: 1,
+                    text: "Atx".into()
+                },
+                Heading {
+                    line: 9,
+                    level: 1,
+                    text: "Third".into()
+                },
+            ]
+        );
+        assert!(parse("just text\n\nmore text").headings().is_empty());
     }
 
     #[test]

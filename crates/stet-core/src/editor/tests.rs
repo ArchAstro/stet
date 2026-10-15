@@ -1008,6 +1008,140 @@ fn the_menu_lists_runs_and_inserts() {
 }
 
 #[test]
+fn the_outline_lists_headings_and_jumps() {
+    let mut ed = editor("# Top\n\nintro\n\n## Middle\n\nbo|dy\n\n### Deep\n\nend");
+    // Opens on the heading the cursor is in, as an indented list.
+    keys(&mut ed, ":outline<CR>");
+    let labels = |ed: &Editor| {
+        ed.palette
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.label.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ed.palette.as_ref().unwrap().kind, PaletteKind::Outline);
+    assert_eq!(labels(&ed), ["Top", "Middle", "Deep"]);
+    let depths = |ed: &Editor| {
+        ed.palette
+            .as_ref()
+            .unwrap()
+            .outline
+            .iter()
+            .map(|row| row.depth)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(depths(&ed), [0, 1, 2]);
+    assert_eq!(ed.palette.as_ref().unwrap().selected, 1);
+    // j/k move; Enter jumps and closes.
+    keys(&mut ed, "j");
+    assert_eq!(ed.palette.as_ref().unwrap().selected, 2);
+    keys(&mut ed, "k");
+    assert_eq!(ed.palette.as_ref().unwrap().selected, 1);
+    keys(&mut ed, "<CR>");
+    assert!(ed.palette.is_none());
+    assert_eq!(show(&ed), "# Top\n\nintro\n\n|## Middle\n\nbody\n\n### Deep\n\nend");
+    // Typing filters the visible headings.
+    keys(&mut ed, ":outline<CR>deep<CR>");
+    assert!(ed.palette.is_none());
+    assert_eq!(show(&ed), "# Top\n\nintro\n\n## Middle\n\nbody\n\n|### Deep\n\nend");
+    // Esc and Tab put the keyboard back.
+    keys(&mut ed, ":outline<CR><Esc>");
+    assert!(ed.palette.is_none());
+    keys(&mut ed, ":outline<CR><Tab>");
+    assert!(ed.palette.is_none());
+    // `g o` opens it too, on the heading under the cursor.
+    keys(&mut ed, "gg:outline<CR>j<CR>gg");
+    assert_eq!(show(&ed), "|# Top\n\nintro\n\n## Middle\n\nbody\n\n### Deep\n\nend");
+    keys(&mut ed, "go");
+    assert_eq!(ed.palette.as_ref().unwrap().kind, PaletteKind::Outline);
+    assert_eq!(ed.palette.as_ref().unwrap().selected, 0);
+    // Left folds a heading's subtree away; Right brings it back.
+    keys(&mut ed, "<Left>");
+    assert_eq!(labels(&ed), ["Top"]);
+    assert_eq!(ed.palette.as_ref().unwrap().selected, 0);
+    keys(&mut ed, "<Right>");
+    assert_eq!(labels(&ed), ["Top", "Middle", "Deep"]);
+    assert_eq!(ed.palette.as_ref().unwrap().selected, 0);
+    // Folding a heading without children does nothing.
+    keys(&mut ed, "jj<Left>");
+    assert_eq!(labels(&ed), ["Top", "Middle", "Deep"]);
+    // An edit that leaves the headings alone keeps the folds: a fold is
+    // keyed by the heading's text, not by its line.
+    keys(&mut ed, "kk<Left><Esc>GAx<Esc>:outline<CR>");
+    assert_eq!(labels(&ed), ["Top"]);
+    assert_eq!(ed.buf.text(), "# Top\n\nintro\n\n## Middle\n\nbody\n\n### Deep\n\nendx");
+    // A document without headings says so instead of opening.
+    let mut plain = editor("|just text");
+    keys(&mut plain, ":outline<CR>");
+    assert!(plain.palette.is_none());
+    assert_eq!(plain.message.as_ref().unwrap().text, "no headings in this document");
+}
+
+#[test]
+fn the_outline_panel_follows_and_folds() {
+    let mut ed = editor("# Top\n\nintro\n\n## Middle\n\nbody\n");
+    let labels = |ed: &Editor| ed.outline_rows().iter().map(|row| row.text.clone()).collect::<Vec<_>>();
+    // Hidden until asked for, by any of its commands.
+    assert!(!ed.outline_panel.visible);
+    assert!(!Config::default().outline);
+    keys(&mut ed, ":outlinebar<CR>");
+    assert!(ed.outline_panel.visible);
+    keys(&mut ed, ":outlinebar<CR>");
+    assert!(!ed.outline_panel.visible);
+    keys(&mut ed, ":sidebar outline<CR>");
+    assert!(ed.outline_panel.visible);
+    keys(&mut ed, ":outlinepanel<CR>");
+    assert!(!ed.outline_panel.visible);
+    keys(&mut ed, "gO");
+    assert!(ed.outline_panel.visible);
+    ed.refresh();
+    assert_eq!(labels(&ed), ["Top", "Middle"]);
+    assert_eq!(
+        ed.outline_rows()
+            .iter()
+            .map(|row| (row.depth, row.line, row.foldable))
+            .collect::<Vec<_>>(),
+        [(0, 0, true), (1, 4, false)]
+    );
+    // A click on a row jumps to its heading.
+    ed.outline_panel_click(1);
+    assert_eq!(show(&ed), "# Top\n\nintro\n\n|## Middle\n\nbody\n");
+    // Folding hides the subtree, and the pop-up sees the same folds.
+    ed.outline_panel_fold(0);
+    ed.refresh();
+    assert_eq!(labels(&ed), ["Top"]);
+    keys(&mut ed, ":outline<CR>");
+    let menu = ed.palette.as_ref().unwrap();
+    assert_eq!(menu.kind, PaletteKind::Outline);
+    assert_eq!(
+        menu.items.iter().map(|item| item.label.as_str()).collect::<Vec<_>>(),
+        ["Top"]
+    );
+    keys(&mut ed, "<Esc>");
+    // The folds survive an edit that leaves the headings alone.
+    keys(&mut ed, "GAx<Esc>");
+    ed.refresh();
+    assert_eq!(labels(&ed), ["Top"]);
+    // Renaming the heading drops its fold.
+    keys(&mut ed, "ggwcwTops<Esc>");
+    ed.refresh();
+    assert_eq!(labels(&ed), ["Tops", "Middle"]);
+    // Folds belong to the document: a new tab starts unfolded.
+    ed.outline_panel_fold(0);
+    ed.refresh();
+    assert_eq!(labels(&ed), ["Tops"]);
+    keys(&mut ed, ":tabnew<CR>");
+    ed.set_text("# Top\n\n## Middle\n");
+    ed.refresh();
+    assert_eq!(labels(&ed), ["Top", "Middle"]);
+    keys(&mut ed, ":tabprevious<CR>");
+    ed.refresh();
+    assert_eq!(labels(&ed), ["Tops"]);
+}
+
+#[test]
 fn the_file_browser_walks_and_opens() {
     let dir = temp_dir("browser");
     std::fs::create_dir_all(dir.join("notes/sub")).unwrap();

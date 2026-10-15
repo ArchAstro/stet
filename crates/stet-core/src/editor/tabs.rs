@@ -3,9 +3,11 @@
 //! The active document lives in the editor's own fields; the others are
 //! stashed whole and swapped in when their tab is selected.
 
+use super::outline;
 use super::{Editor, Effect, Mode};
 use crate::buffer::Buffer;
 use crate::markdown::Doc;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -24,6 +26,8 @@ pub(super) struct Stash {
     pub(super) scroll_px: f32,
     pub(super) doc_id: u64,
     pub(super) snapshot: Option<u64>,
+    /// Outline folds belong to the document, not the window.
+    pub(super) outline_folded: HashSet<outline::Fold>,
 }
 
 pub struct TabInfo {
@@ -151,6 +155,7 @@ impl Editor {
             scroll_px: self.scroll_px,
             doc_id: self.doc_id,
             snapshot: self.snapshot.take(),
+            outline_folded: std::mem::take(&mut self.outline_folded),
         }
     }
 
@@ -165,6 +170,7 @@ impl Editor {
         self.scroll_px = stash.scroll_px;
         self.doc_id = stash.doc_id;
         self.snapshot = stash.snapshot;
+        self.outline_folded = stash.outline_folded;
         self.anchor = None;
         self.group_open = false;
         self.code_cache.borrow_mut().0 = None;
@@ -205,6 +211,7 @@ impl Editor {
         swap(&mut self.scroll_px, &mut other.scroll_px);
         swap(&mut self.doc_id, &mut other.doc_id);
         swap(&mut self.snapshot, &mut other.snapshot);
+        swap(&mut self.outline_folded, &mut other.outline_folded);
         self.code_cache.borrow_mut().0 = None;
         self.table_cache.borrow_mut().0 = None;
     }
