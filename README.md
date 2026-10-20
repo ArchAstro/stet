@@ -2,15 +2,42 @@
   <img src="assets/banner.jpg" alt="stet — a quiet, fast markdown writer" width="100%">
 </p>
 
-# Stet
+<p align="center">
+  <b>A quiet, fast markdown writer.</b><br>
+  Rust core · GPU-rendered · real vim · review suggestions · an assistant that never grabs the pen
+</p>
 
-A quiet, fast markdown writer. Rust core, GPU-rendered, vim keys, linked
-notes, review suggestions, and a way for an assistant to work in your
-document without getting in your way.
+<p align="center">
+  <a href="https://github.com/ArchAstro/stet/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ArchAstro/stet?color=d9432f&label=release"></a>
+  <a href="https://github.com/ArchAstro/stet/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/ArchAstro/stet/ci.yml?branch=main&label=ci"></a>
+  <img alt="macOS, Linux, Windows" src="https://img.shields.io/badge/macOS%20·%20Linux%20·%20Windows-1b1e27">
+  <img alt="Rust 1.90+" src="https://img.shields.io/badge/rust-1.90%2B-1b1e27">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1b1e27"></a>
+</p>
 
-*Stet* is the proofreader's mark for "let it stand" — written beside a
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#a-tour">Tour</a> ·
+  <a href="#themes">Themes</a> ·
+  <a href="#how-it-compares">Compare</a> ·
+  <a href="#speed">Speed</a> ·
+  <a href="#manual">Manual</a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/hero.png" alt="Stet with an essay on the left and its margin on the right: notes pinned beside the sentences they belong to, those sentences dotted underneath" width="100%">
+</p>
+
+*Stet* is the proofreader's mark for "let it stand": written beside a
 correction, with dots under the words, to keep the original. Suggestions you
 can accept or let stand are what the review mode is built around.
+
+## Why Stet
+
+1. **It is fast.** A keystroke reaches a finished frame in **0.07 ms** on a small note and **0.6 ms** on a megabyte with 1,800 suggestions. A second `stet file.md` opens a tab in the running window in a few milliseconds.
+2. **It shows your source.** Markdown keeps its markers, dimmed so the words come first. No preview pane, no WYSIWYG surprises.
+3. **Review is built in.** Suggestions are CriticMarkup in the text, so they survive git, email and every other tool.
+4. **Assistants work beside you, not instead of you.** `stet ctl` lets Claude, or any program, read the live text and propose changes while you type. Your cursor, mode and focus are never touched.
 
 ## Install
 
@@ -29,13 +56,6 @@ also download `stet-macos.dmg` from the releases page and drag the app across.
 Until releases are signed with a Developer ID, an app downloaded in a browser
 needs a right-click → Open the first time; the installer does not.
 
-While this repository is private the anonymous download does not work; with
-the GitHub CLI signed in, use:
-
-```sh
-gh api repos/ArchAstro/stet/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
-```
-
 On Windows, download `stet-windows-x64.zip` from the releases page. To build
 from source instead (needs Rust 1.90+):
 
@@ -44,7 +64,126 @@ sh scripts/install.sh        # builds stet into ~/.cargo/bin, links the skill
 cargo run --release -- examples/tour.md
 ```
 
-## Using it
+## A tour
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/suggestions.png" alt="A suggested replacement under the cursor, with the actions menu offering to accept or reject it">
+      <p><b>Suggestions.</b> Insertions in green, deletions struck in red, replacements as both. Right-click or <code>K</code> to accept or reject; <code>]s</code> jumps to the next.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/menu.png" alt="The command menu filtered by 'sugg', listing suggestion commands, markdown to insert and vim keys">
+      <p><b>One menu for everything.</b> <code>⌘/</code> lists every command with its shortcut, the markdown you can insert and the vim keys. Type to filter.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/retouch.png" alt="A picture brought forward over the dimmed document, with a toolbar of retouching tools">
+      <p><b>Retouch pictures in place.</b> Crop, draw arrows, boxes and text, or redact. The original is never written over.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/tables.png" alt="A markdown table drawn as an aligned grid below a picture">
+      <p><b>Tables as a grid.</b> Pipes become rules and columns line up, but every character is still the source. Tab moves between cells.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/code.png" alt="The dark stet-ink theme showing a highlighted Rust code block">
+      <p><b>Code in about 200 languages.</b> Sublime grammars, coloured by your theme, re-highlighted from the edited line only.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/files.png" alt="The file browser open beside the document">
+      <p><b>Linked notes.</b> <code>[[Note]]</code> links, backlinks, link completion and an optional file browser turn a folder into a knowledge base.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/publish.png" alt="The Publish to Substack card in the command menu, asking for the session cookie, title and audience">
+      <p><b>Publish to Substack.</b> <code>:publish</code> makes a draft with your pictures uploaded. Sending to readers stays a button you press on Substack.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/theme-stet-ink.png" alt="The essay in the dark stet-ink theme">
+      <p><b>Light and ink.</b> The two house themes carry the proofreader's vermilion; thirteen more ship alongside them.</p>
+    </td>
+  </tr>
+</table>
+
+## Themes
+
+Fifteen built in, plus your own in `~/.config/stet/themes/`. `:theme` previews as you move.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/theme-stet.png" alt="stet theme"><br><sub><code>stet</code></sub></td>
+    <td><img src="docs/screenshots/theme-stet-ink.png" alt="stet-ink theme"><br><sub><code>stet-ink</code></sub></td>
+    <td><img src="docs/screenshots/theme-nord.png" alt="nord theme"><br><sub><code>nord</code></sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/theme-gruvbox-light.png" alt="gruvbox-light theme"><br><sub><code>gruvbox-light</code></sub></td>
+    <td><img src="docs/screenshots/theme-dracula.png" alt="dracula theme"><br><sub><code>dracula</code></sub></td>
+    <td><img src="docs/screenshots/theme-everforest.png" alt="everforest theme"><br><sub><code>everforest</code></sub></td>
+  </tr>
+</table>
+
+## How it compares
+
+What each editor does **out of the box**, without plugins.
+
+| | **Stet** | iA Writer | Obsidian | Typora |
+|---|:---:|:---:|:---:|:---:|
+| Open source | ✅ MIT | — | — | — |
+| Native app, not Electron | ✅ Rust + wgpu | ✅ | — | — |
+| Vim: registers, macros, block visual, `:s` | ✅ | — | ◐ vim mode | — |
+| Review suggestions to accept or reject | ✅ | — | — | — |
+| Assistants edit the live document without moving your cursor | ✅ | — | — | — |
+| `[[Wiki links]]` and backlinks | ✅ | ◐ | ✅ | — |
+| A margin of notes pinned to the text | ✅ | — | — | — |
+| Crop, annotate and redact pictures in place | ✅ | — | — | — |
+| Tables drawn as a grid | ✅ | — | ✅ | ✅ |
+| Publish a draft to Substack | ✅ | — | — | — |
+| Price | free | paid | free for personal use | paid |
+
+◐ partial. Spotted a mistake? Open an issue.
+
+### By platform
+
+| | macOS | Linux | Windows |
+|---|:---:|:---:|:---:|
+| Editor, vim, themes, margin, tables, retouching | ✅ | ✅ | ✅ |
+| `stet file.md` opens a tab in the running window | ✅ | ✅ | — |
+| Assistants through `stet ctl` | ✅ | ✅ | — |
+| Native app: Dock, Finder, Open With, menu bar | ✅ | — | — |
+| Video thumbnails | ✅ Quick Look | ◐ with `ffmpeg` | ◐ with `ffmpeg` |
+| Publish to Substack (cookie kept in the keychain) | ✅ | — | — |
+| One-line installer | ✅ | ✅ | zip |
+
+## Speed
+
+Measured with `--bench` on an M-series Mac (release build):
+
+| Document | Keystroke to frame built | Full analysis |
+|---|---|---|
+| 1.5 KB | 0.07 ms | 0.01 ms |
+| 0.9 MB of prose, 21k lines | 0.2 ms | 3.6 ms |
+| 0.9 MB with 1,800 suggestions | 0.6 ms | 4.8 ms |
+
+1. **Analysis is incremental.** An edit re-parses only the top-level blocks around it and splices the result into the previous analysis. Where markdown lets distant text decide how a block reads (reference and footnote definitions, unclosed fences, metadata blocks), it falls back to a full pass. A randomized test checks that the incremental result equals a full one after every edit (`STET_FUZZ=50000 cargo test --release -p stet-core incremental_analysis` runs three million of them). Below 16 KB the whole document is simply re-parsed.
+2. **Layout is cached per line**, keyed by content, so a frame after a keystroke shapes one line.
+3. **Code highlighting restarts at the edited line** and stops when the parser state converges with the previous run.
+4. **Nothing slow runs on the typing thread.** Crash-recovery snapshots (a synced write, 4–5 ms) happen on a worker.
+5. **A second launch does not start anything**: it hands the file to the running window.
+6. **Startup overlaps work with the OS creating the window**: fonts are scanned and the first screen shaped on another thread. `STET_TIMING=1 stet -f file.md` prints each step.
+7. **Frames are presented as soon as they are drawn** rather than queued behind the display refresh.
+
+`STET_TRACE_PARSE=1` reports each edit that needed a full analysis, and why.
+
+Screenshots are rendered off-screen from [`docs/showcase/essay.md`](docs/showcase/essay.md) by `sh scripts/screenshots.sh`.
+
+## Manual
+
+<details>
+<summary><b>Using it</b></summary>
 
 Started from a terminal, `stet file.md` opens its window as a separate process
 and hands the prompt straight back. `stet --wait file.md` (or `-f`) stays attached
@@ -56,17 +195,10 @@ few milliseconds instead of starting again (`-n` forces a separate window).
 Press **Cmd-/** (Ctrl-/ elsewhere, or F1) for the menu: every command with its
 shortcut, markdown syntax you can insert, and the vim keys. Type to filter.
 
-## Layout
+</details>
 
-| Crate | Owns | Platform code |
-|---|---|---|
-| `crates/stet-core` | buffer + undo, vim and standard keys, markdown analysis, syntax highlighting, suggestions, links, tabs, menu and file-browser state, themes, config, file I/O, crash recovery | none |
-| `crates/stet-app` | window (`winit`), renderer (`wgpu` + `glyphon`), text layout, fonts, images, clipboard, dialogs | all of it |
-
-The core takes `KeyEvent`s, text and mouse positions, and emits `Effect`s for
-what only a shell can do (display-line motion, dialogs, opening URLs, quitting).
-
-## Keys
+<details>
+<summary><b>Keys</b></summary>
 
 Vim is on by default (`:novim` or `vim = false` for a standard text field).
 
@@ -99,7 +231,10 @@ vim keeps its own Ctrl chords):
 | Theme picker, focus mode, full screen | `Shift-T`, `Shift-D`, `Shift-F` or F11 |
 | Zoom | `+`, `-`, `0` |
 
-## On the Mac
+</details>
+
+<details>
+<summary><b>On the Mac</b></summary>
 
 `Stet.app` is a normal Mac app: double-click a markdown file, drag one onto
 the Dock icon, or use Open With, and it opens as a tab in the running window.
@@ -108,7 +243,10 @@ The menu bar has every command with its shortcut (a shortcut you rebind in
 documents. Build it from a checkout with `make app`, or `make install-app` to
 put it in `/Applications`.
 
-## The margin
+</details>
+
+<details>
+<summary><b>The margin</b></summary>
 
 Every document has a margin: a scratch pane beside it for research notes,
 quotes, data and paragraphs you have cut but are not ready to lose. Nothing
@@ -121,7 +259,7 @@ in it touches the document.
 5. **Drop files on it** (a CSV, a PDF, a screenshot): they are copied into the margin's own folder and linked from it, so data travels with the document without sitting in it.
 6. **Assistants use it too**: `stet ctl edit --margin …` puts research there instead of in your text.
 
-### Pinning notes to the text
+#### Pinning notes to the text
 
 A margin section (a heading and what follows it) can be pinned to a place in
 the document. While you write, pinned notes are shown beside the text they
@@ -152,7 +290,10 @@ attached files in `.stet/notes.md.files/`, in the same folder. The folder is
 hidden from the file browser and from note links; commit it or ignore it as
 you prefer.
 
-## Right-click and the actions menu
+</details>
+
+<details>
+<summary><b>Right-click and the actions menu</b></summary>
 
 Right-click anything, or press `K` (also `gm`, Cmd/Ctrl-`.`, Shift-F10 or the
 menu key) for the actions that apply at the cursor:
@@ -166,7 +307,10 @@ menu key) for the actions that apply at the cursor:
 `j`/`k` or the arrows move, Enter or `l` runs, Esc or `q` closes, and each
 item's letter (shown on the right) runs it directly.
 
-## Your own key bindings
+</details>
+
+<details>
+<summary><b>Your own key bindings</b></summary>
 
 Any key or key sequence can be bound, per mode, in `config.toml`. Yours win
 over the built-in ones, shortcuts included:
@@ -193,7 +337,10 @@ Every action has a command to bind (the menu lists them): `:w :q :tabnew
 :suggest :accept :reject :acceptall :rejectall :nextsuggestion :bold :italic
 :link :task :theme :font :focus :typewriter :zoom in :fullscreen :help`.
 
-## Assistants
+</details>
+
+<details>
+<summary><b>Assistants</b></summary>
 
 Other programs work in your documents through `stet ctl` while you type. The
 included skill (`skill/stet/SKILL.md`) teaches Claude Code to use it.
@@ -217,7 +364,10 @@ included skill (`skill/stet/SKILL.md`) teaches Claude Code to use it.
 3. **You can talk back.** While an assistant waits, the status bar shows `● Claude`. Press Cmd/Ctrl-Shift-A (or `ga`, or `:agent <message>`) to send it a request; a selection travels with it ("make this punchier"), and without one it is a general request ("make a diagram and insert it"). `◌ Claude working` shows until it comes back for the next one.
 4. The socket is `~/.config/stet/stet.sock`, and only your user can connect to it. macOS and Linux only for now.
 
-## Linked notes
+</details>
+
+<details>
+<summary><b>Linked notes</b></summary>
 
 A folder of markdown files works as a knowledge base.
 
@@ -229,7 +379,10 @@ A folder of markdown files works as a knowledge base.
 6. The workspace is the nearest parent folder containing `.git`, `.obsidian` or `.stet-root`, else the document's folder.
 7. URLs, images and other files open in their own apps.
 
-## File browser
+</details>
+
+<details>
+<summary><b>File browser</b></summary>
 
 Hidden until you press Cmd/Ctrl-`\` (or `:sidebar`). It shows the document's
 folder; `j`/`k` or arrows move, Enter or `l` opens a file or folder, `h`
@@ -237,13 +390,19 @@ closes one, `t` opens in a new tab, `-` widens to the parent folder, `r`
 re-reads, Esc returns to the text. Clicking works too. `sidebar = true` shows
 it at startup.
 
-## Code
+</details>
+
+<details>
+<summary><b>Code</b></summary>
 
 Fenced code blocks and front matter are colored by language using Sublime
 Text grammars (`syntect` + `two-face`, about 200 languages; pure Rust). Colors
 come from the theme. `highlight = false` turns it off.
 
-## Suggestions
+</details>
+
+<details>
+<summary><b>Suggestions</b></summary>
 
 Suggestions are CriticMarkup in the document text, following ArchDev's
 plan-collab convention, so they survive any tool and merge like ordinary edits:
@@ -267,7 +426,10 @@ deletion, and `c` produces a replacement. Text the convention cannot represent
 (reserved tokens, code fences, another author's suggestion) is refused with a
 message rather than written wrongly.
 
-## Fonts
+</details>
+
+<details>
+<summary><b>Fonts</b></summary>
 
 Every installed font is available.
 
@@ -276,7 +438,10 @@ Every installed font is available.
 3. Proportional fonts work for prose; code, tables and the status line use the code font.
 4. Any `.ttf`/`.otf` in `~/.config/stet/fonts/` is loaded as well.
 
-## Images
+</details>
+
+<details>
+<summary><b>Images</b></summary>
 
 Shown under the line that references them: local files, `data:` URIs and
 `http(s)` URLs (PNG, JPEG, GIF, WebP, BMP). Remote images are fetched in the
@@ -289,7 +454,10 @@ frame comes from Quick Look on macOS and from `ffmpeg` elsewhere, if it is
 installed. Without one, and for a video at a URL, the button sits on a blank
 screen. Nothing plays inside the window.
 
-## Retouching a picture
+</details>
+
+<details>
+<summary><b>Retouching a picture</b></summary>
 
 Right-click a picture, or run `:image` on its line: the page dims, the
 picture comes forward, and a few tools appear.
@@ -310,7 +478,10 @@ picture comes forward, and a few tools appear.
 3. Enter, Esc or **Done** puts the picture back. If you changed it, the result is saved beside the original as `name-edit.png` and the text points at that; the original is never written over, and one undo in the document restores the reference.
 4. Assistants have the same tools: `stet ctl annotate` (below).
 
-## Publishing to Substack
+</details>
+
+<details>
+<summary><b>Publishing to Substack</b></summary>
 
 `:publish` (File → Publish to Substack…, or from the `⌘/` menu) opens a page
 of the command menu: the publication, the title and subtitle (from the front
@@ -325,11 +496,17 @@ you press on Substack.
 
 Pages like this one are how Stet asks for settings. They sit in the command menu's panel and work the way it does: ↑ and ↓ move, typing fills in the selected line, ← and → change a choice, Enter acts, Esc closes.
 
-## Motion
+</details>
+
+<details>
+<summary><b>Motion</b></summary>
 
 Little moves. The command menu and the selection in it answer the keyboard at once, with no animation. What is opened rarely and on purpose does move, briefly: a picture comes forward out of the text to be retouched and goes back into it, and a page of settings arrives in the menu's panel. Anything interrupted turns round from where it is. With *Reduce motion* on in System Settings, things fade where they stand instead of travelling.
 
-## Copy and paste
+</details>
+
+<details>
+<summary><b>Copy and paste</b></summary>
 
 Paste takes the richest thing on the clipboard and turns it into Markdown.
 
@@ -343,7 +520,10 @@ Paste takes the richest thing on the clipboard and turns it into Markdown.
 
 `smart_paste = false`, `copy_html = false` and `image_dir = "…"` change any of this.
 
-## Tables
+</details>
+
+<details>
+<summary><b>Tables</b></summary>
 
 A table is drawn as a grid: the pipes become rules, columns line up whatever
 the source looks like, and a long cell wraps inside its column. A table too
@@ -368,13 +548,19 @@ With the mouse:
 4. **Right-click** any cell for all of it in one menu; each item has a letter, so `K` or `gm` then the letter works from the keyboard. `table_grid = false` shows the
 source as it is.
 
-## Never losing text
+</details>
+
+<details>
+<summary><b>Never losing text</b></summary>
 
 1. Saves are atomic (temp file, fsync, rename) and refuse to overwrite a file that changed on disk.
 2. Unsaved text is snapshotted to `~/.config/stet/recovery/` shortly after you stop typing. After a crash, reopening the file restores it as an undoable edit (`u` returns to the saved version); untitled drafts come back as tabs.
 3. An orderly quit, or saving, removes the snapshots.
 
-## Configuration
+</details>
+
+<details>
+<summary><b>Configuration</b></summary>
 
 `~/.config/stet/config.toml` (`%APPDATA%\stet` on Windows; `STET_CONFIG_DIR` overrides):
 
@@ -421,39 +607,38 @@ again.
   cursor = "#ff5555"
   ```
 
-## Speed
+</details>
 
-Measured with `--bench` on an M-series Mac (release build):
+<details>
+<summary><b>Layout</b></summary>
 
-| Document | Keystroke to frame built | Full analysis |
+| Crate | Owns | Platform code |
 |---|---|---|
-| 1.5 KB | 0.07 ms | 0.01 ms |
-| 0.9 MB of prose, 21k lines | 0.2 ms | 3.6 ms |
-| 0.9 MB with 1,800 suggestions | 0.6 ms | 4.8 ms |
+| `crates/stet-core` | buffer + undo, vim and standard keys, markdown analysis, syntax highlighting, suggestions, links, tabs, menu and file-browser state, themes, config, file I/O, crash recovery | none |
+| `crates/stet-app` | window (`winit`), renderer (`wgpu` + `glyphon`), text layout, fonts, images, clipboard, dialogs | all of it |
 
-1. **Analysis is incremental.** An edit re-parses only the top-level blocks around it and splices the result into the previous analysis. Where markdown lets distant text decide how a block reads (reference and footnote definitions, unclosed fences, metadata blocks), it falls back to a full pass. A randomized test checks that the incremental result equals a full one after every edit (`STET_FUZZ=50000 cargo test --release -p stet-core incremental_analysis` runs three million of them). Below 16 KB the whole document is simply re-parsed.
-2. **Layout is cached per line**, keyed by content, so a frame after a keystroke shapes one line.
-3. **Code highlighting restarts at the edited line** and stops when the parser state converges with the previous run.
-4. **Nothing slow runs on the typing thread.** Crash-recovery snapshots (a synced write, 4–5 ms) happen on a worker.
-5. **A second launch does not start anything**: it hands the file to the running window.
-6. **Startup overlaps work with the OS creating the window**: fonts are scanned and the first screen shaped on another thread. `STET_TIMING=1 stet -f file.md` prints each step.
-7. **Frames are presented as soon as they are drawn** rather than queued behind the display refresh.
+The core takes `KeyEvent`s, text and mouse positions, and emits `Effect`s for
+what only a shell can do (display-line motion, dialogs, opening URLs, quitting).
 
-`STET_TRACE_PARSE=1` reports each edit that needed a full analysis, and why.
+</details>
 
-## Releases
+<details>
+<summary><b>Releases</b></summary>
 
 1. CI (`.github/workflows/ci.yml`) runs tests on Linux, macOS and Windows, formatting, clippy, docs, the minimum supported Rust (1.90), a dependency audit, and a soak of the incremental analysis.
 2. Pushing a tag `vX.Y.Z` that matches the version in `Cargo.toml` runs `.github/workflows/release.yml`: it re-verifies, builds `stet-linux-x64`, `stet-darwin-arm64`, `stet-darwin-x64` and `stet-windows-x64`, and publishes them with `SHA256SUMS` and generated notes. Each archive holds the binary, the skill, the license and this file.
 3. Running that workflow by hand (Actions → Release → Run workflow) is a dry run: every target is built and packaged, nothing is published.
-4. Once the repository is public, a release also attests build provenance, and `install.sh` works anonymously.
+4. Each release attests build provenance (`gh attestation verify <file> -R ArchAstro/stet`).
 
 ```console
 make release-check
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-## Checks
+</details>
+
+<details>
+<summary><b>Checks</b></summary>
 
 ```sh
 cargo test --workspace
@@ -478,3 +663,5 @@ quit
 Building without HTTPS (`--no-default-features`) drops remote images,
 publishing to Substack, and the only dependency that needs a C compiler for
 the target.
+
+</details>
