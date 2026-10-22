@@ -2514,7 +2514,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stet-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "stet-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
@@ -2558,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "stet-substack"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "pulldown-cmark",
  "serde_json",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "stet-youtube"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "getrandom 0.3.4",
  "serde_json",
