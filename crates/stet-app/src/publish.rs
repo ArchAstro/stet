@@ -14,9 +14,6 @@ use stet_substack::{
 
 pub const SHEET: &str = "publish";
 const AUDIENCES: [(&str, &str); 2] = [("Everyone", "everyone"), ("Paid subscribers", "only_paid")];
-/// What to do with local videos, and the word the choice is remembered by.
-#[cfg(feature = "youtube")]
-const VIDEOS: [(&str, &str); 2] = [("Upload to YouTube", "youtube"), ("Link to the file", "link")];
 
 enum Event {
     /// Who the stored cookie belongs to; the flag says Substack refused it.
@@ -208,12 +205,19 @@ impl Publisher {
         let audiences = AUDIENCES.map(|(label, _)| label);
         rows.push(Row::choice("audience", "Audience", &audiences, 0));
         #[cfg(feature = "youtube")]
-        if !document.local_videos.is_empty() {
-            // Upload, unless linking was chosen last time or YouTube is not signed in.
-            let remembered = crate::platform::State::load().videos;
-            let link = remembered.as_deref() == Some("link") || (!self.offline && !stet_youtube::keychain::signed_in());
-            let options = VIDEOS.map(|(label, _)| label);
-            rows.push(Row::choice("videos", "Videos", &options, link as usize));
+        {
+            // The YouTube setting, shown whether or not this post has videos.
+            rows.push(crate::youtube::auto_upload_row("YouTube", "Auto-upload videos", "Off"));
+            let videos = match document.local_videos.len() {
+                0 => "No local videos in this post".to_string(),
+                1 => "One local video".to_string(),
+                count => format!("{count} local videos"),
+            };
+            let account = match self.offline || stet_youtube::keychain::signed_in() {
+                true => crate::youtube::privacy().label().to_string(),
+                false => "not connected: run :youtube to sign in".to_string(),
+            };
+            rows.push(Row::note("youtube-about", "", &format!("{videos} · {account}")));
         }
         let pictures = match document.local_images().len() {
             0 => String::new(),
@@ -225,13 +229,15 @@ impl Publisher {
             "",
             &format!("It goes up as a draft; nothing is sent to readers.{pictures}"),
         ));
-        // The videos row says what becomes of them; their warnings would repeat it.
+        // Videos going to YouTube need no warning that they cannot go to Substack.
+        #[cfg(feature = "youtube")]
+        let uploading = crate::youtube::auto_upload();
+        #[cfg(not(feature = "youtube"))]
+        let uploading = false;
         let warnings: Vec<&String> = document
             .warnings
             .iter()
-            .filter(|warning| {
-                !(cfg!(feature = "youtube") && document.local_videos.iter().any(|v| warning.contains(v.as_str())))
-            })
+            .filter(|warning| !(uploading && document.local_videos.iter().any(|v| warning.contains(v.as_str()))))
             .collect();
         if let Some(first) = warnings.first() {
             let more = match warnings.len() - 1 {
@@ -294,22 +300,17 @@ impl Publisher {
                 let markdown = editor.buf.text();
                 let document = convert(&markdown, &Options::default());
                 #[cfg(feature = "youtube")]
-                let to_youtube: Vec<String> = match sheet.chosen("videos") {
+                let to_youtube: Vec<String> = match sheet.chosen(crate::youtube::AUTO) {
                     Some(0) => document.local_videos.clone(),
                     _ => Vec::new(),
                 };
                 #[cfg(feature = "youtube")]
-                if let Some(chosen) = sheet.chosen("videos") {
-                    if chosen == 0 && !stet_youtube::keychain::signed_in() {
-                        sheet.status = Some((
-                            "YouTube is not signed in: run :youtube first, or link the videos.".into(),
-                            true,
-                        ));
-                        return;
-                    }
-                    let mut state = crate::platform::State::load();
-                    state.videos = Some(VIDEOS[chosen.min(1)].1.to_string());
-                    state.save();
+                if !to_youtube.is_empty() && !stet_youtube::keychain::signed_in() {
+                    sheet.status = Some((
+                        "YouTube is not signed in: run :youtube first, or turn auto-upload off.".into(),
+                        true,
+                    ));
+                    return;
                 }
                 #[cfg(feature = "youtube")]
                 let local = !document.local_images().is_empty() || !to_youtube.is_empty();

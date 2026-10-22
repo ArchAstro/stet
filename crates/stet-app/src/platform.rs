@@ -128,7 +128,8 @@ pub struct State {
     pub substack: Option<String>,
     /// Who sees uploaded videos: `unlisted`, `public` or `private`.
     pub youtube_privacy: Option<String>,
-    /// What publishing did with local videos last: `youtube` or `link`.
+    /// Whether publishing uploads local videos to YouTube (`youtube`, the
+    /// default) or leaves them as links to the file (`link`).
     pub videos: Option<String>,
 }
 
