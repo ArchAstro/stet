@@ -153,6 +153,8 @@ impl Session {
                 other => rest.push(other),
             }
         }
+        #[cfg(feature = "youtube")]
+        self.youtube.keep_auto_upload(&self.editor);
         if !moved_visually {
             self.view.goal_x = None;
         }

@@ -27,6 +27,8 @@ pub struct Connector {
     run: u64,
     /// No keychain and no network: a screenshot wants only the sheet.
     pub offline: bool,
+    /// The auto-upload setting as last saved, once read.
+    auto: Option<bool>,
 }
 
 /// Who sees uploads, as last chosen.
@@ -37,6 +39,27 @@ pub fn privacy() -> Privacy {
         .and_then(Privacy::parse)
         .unwrap_or_default()
 }
+
+/// Whether publishing uploads a document's local videos, as set. On unless
+/// turned off.
+pub fn auto_upload() -> bool {
+    crate::platform::State::load().videos.as_deref() != Some("link")
+}
+
+fn set_auto_upload(on: bool) {
+    let mut state = crate::platform::State::load();
+    state.videos = Some(if on { "youtube" } else { "link" }.to_string());
+    state.save();
+}
+
+/// The auto-upload setting as a row, labelled as `label` with `on` and `off`.
+/// Both sheets show it under the same id, and whichever changes it saves it.
+pub fn auto_upload_row(label: &str, on: &str, off: &str) -> Row {
+    Row::choice(AUTO, label, &[on, off], (!auto_upload()) as usize)
+}
+
+/// The id of the auto-upload row.
+pub const AUTO: &str = "auto";
 
 fn sign_in_rows(client_id: &str) -> [Row; 3] {
     [
@@ -50,12 +73,13 @@ fn sign_in_rows(client_id: &str) -> [Row; 3] {
     ]
 }
 
-fn signed_in_rows() -> [Row; 3] {
+fn signed_in_rows() -> [Row; 4] {
     let labels = Privacy::ALL.map(Privacy::label);
     let chosen = Privacy::ALL.iter().position(|p| *p == privacy()).unwrap_or(0);
     [
         Row::note("channel", "Channel", "Checking your sign-in…"),
         Row::choice("privacy", "Privacy", &labels, chosen),
+        auto_upload_row("Auto-upload", "On", "Off"),
         Row::note(
             "about",
             "",
@@ -72,7 +96,7 @@ fn signed_in_buttons() -> Vec<Button> {
 fn show_signed_out(sheet: &mut Sheet, why: Option<String>) {
     // The client id is not secret; it stays for another try.
     let client_id = sheet.text("client-id").unwrap_or("").to_string();
-    for id in ["channel", "privacy", "about"] {
+    for id in ["channel", "privacy", AUTO, "about"] {
         sheet.remove(id);
     }
     for (at, row) in sign_in_rows(&client_id).into_iter().enumerate() {
@@ -93,6 +117,23 @@ impl Connector {
             receiver,
             run: 0,
             offline: false,
+            auto: None,
+        }
+    }
+
+    /// Saves the auto-upload setting as soon as an open sheet changes it.
+    pub fn keep_auto_upload(&mut self, editor: &Editor) {
+        let Some(on) = editor
+            .sheet
+            .as_ref()
+            .and_then(|sheet| sheet.chosen(AUTO))
+            .map(|chosen| chosen == 0)
+        else {
+            return;
+        };
+        if *self.auto.get_or_insert_with(auto_upload) != on {
+            set_auto_upload(on);
+            self.auto = Some(on);
         }
     }
 
