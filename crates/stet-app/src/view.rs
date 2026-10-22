@@ -1092,7 +1092,9 @@ impl View {
         self.context_menu(ed, &m, &mut frame.over);
         self.retouching(ed, m.ui, &mut frame.over);
         self.sheet(ed, &m, &mut frame.over);
-        if self.layouts.len() > 3000 {
+        // Bounded by text as well as count: a shaped line costs hundreds of
+        // bytes a character, and every edit to a long line leaves a copy.
+        if self.layouts.len() > 3000 || self.layouts.values().map(|layout| layout.text.len()).sum::<usize>() > 1 << 20 {
             let keep = self.frame - 1;
             self.layouts.retain(|_, layout| layout.last_used >= keep);
         }
