@@ -241,6 +241,13 @@ impl Gpu {
         self.textures.insert(id, bind);
     }
 
+    /// Drops the textures of pictures no longer kept.
+    pub fn free_images(&mut self, ids: &[u64]) {
+        for id in ids {
+            self.textures.remove(id);
+        }
+    }
+
     pub fn render(
         &mut self,
         target: &wgpu::TextureView,

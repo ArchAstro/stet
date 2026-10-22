@@ -6,11 +6,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, Instant};
 
 /// Larger images are downscaled before upload.
 const MAX_SIDE: u32 = 4096;
+/// Larger sources are not decoded at all.
+const MAX_DECODE: u32 = 16384;
 /// Downloads stop here.
 const MAX_BYTES: u64 = 32 << 20;
+/// A texture not drawn for this long is freed.
+const KEEP: Duration = Duration::from_secs(60);
+/// Over this many bytes of textures, the longest unseen go first...
+const BUDGET: u64 = 512 << 20;
+/// ...but nothing drawn within this long, so scrolling never reloads.
+const RECENT: Duration = Duration::from_secs(2);
 /// The longer side of a video's frame.
 const POSTER_SIDE: u32 = 1280;
 
@@ -24,7 +33,25 @@ pub struct Decoded {
 enum State {
     Loading,
     Failed,
-    Ready { id: u64, width: u32, height: u32 },
+    /// Decoded and uploaded; `used` is when it was last drawn.
+    Ready {
+        id: u64,
+        width: u32,
+        height: u32,
+        used: Instant,
+    },
+    /// Its texture was freed. The size stays, so the layout holds still.
+    Evicted {
+        id: u64,
+        width: u32,
+        height: u32,
+    },
+    /// Drawn again after eviction: decoding anew, under a new id.
+    Reloading {
+        id: u64,
+        width: u32,
+        height: u32,
+    },
 }
 
 /// Where an image comes from.
@@ -180,7 +207,16 @@ fn load(source: &Source, cache: Option<&Path>) -> Option<Vec<u8>> {
 }
 
 fn decode(bytes: &[u8], id: u64) -> Option<Decoded> {
-    let image = image::load_from_memory(bytes).ok()?;
+    // Absurd sizes (a tiny file that inflates to gigabytes) are refused.
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODE);
+    limits.max_image_height = Some(MAX_DECODE);
+    limits.max_alloc = Some(1 << 30);
+    reader.limits(limits);
+    let image = reader.decode().ok()?;
     let image = if image.width().max(image.height()) > MAX_SIDE {
         image.resize(MAX_SIDE, MAX_SIDE, image::imageops::FilterType::Triangle)
     } else {
@@ -306,15 +342,28 @@ impl Images {
     }
 
     /// `(id, width, height)` once decoded; starts loading on first request.
+    /// Asking does not keep a texture alive, drawing it (`touch`) does.
+    /// After eviction the id is dead: it draws nothing until `touch` has
+    /// brought the picture back, but its size is still right.
     pub fn get(&mut self, source: &Source) -> Option<(u64, u32, u32)> {
         match self.states.get(source) {
-            Some(State::Ready { id, width, height }) => return Some((*id, *width, *height)),
+            Some(
+                State::Ready { id, width, height, .. }
+                | State::Evicted { id, width, height }
+                | State::Reloading { id, width, height },
+            ) => return Some((*id, *width, *height)),
             Some(_) => return None,
             None => {}
         }
+        self.states.insert(source.clone(), State::Loading);
+        self.start(source);
+        None
+    }
+
+    /// Decodes `source` under a fresh id, off the UI thread.
+    fn start(&mut self, source: &Source) {
         let id = self.next_id;
         self.next_id += 1;
-        self.states.insert(source.clone(), State::Loading);
         let (sender, wake, owned, cache) = (
             self.sender.clone(),
             self.wake.clone(),
@@ -335,7 +384,66 @@ impl Images {
         } else {
             std::thread::spawn(work);
         }
-        None
+    }
+
+    /// `source` was drawn at `now`: keeps its texture, or brings it back.
+    pub fn touch(&mut self, source: &Source, now: Instant) {
+        match self.states.get_mut(source) {
+            Some(State::Ready { used, .. }) => *used = now,
+            Some(&mut State::Evicted { id, width, height }) => {
+                self.states
+                    .insert(source.clone(), State::Reloading { id, width, height });
+                self.start(source);
+            }
+            _ => {}
+        }
+    }
+
+    /// Frees pictures not drawn for a minute, then the longest unseen
+    /// while textures exceed the budget. Returns the ids to free.
+    pub fn evict(&mut self, now: Instant) -> Vec<u64> {
+        let mut freed = Vec::new();
+        let mut bytes = 0;
+        let mut resident = Vec::new();
+        for (source, state) in &self.states {
+            if let State::Ready {
+                width, height, used, ..
+            } = state
+            {
+                bytes += *width as u64 * *height as u64 * 4;
+                let idle = now.saturating_duration_since(*used);
+                if idle >= KEEP {
+                    freed.push(source.clone());
+                } else if idle >= RECENT {
+                    resident.push((*used, source.clone()));
+                }
+            }
+        }
+        for source in &freed {
+            if let Some(State::Ready { width, height, .. }) = self.states.get(source) {
+                bytes -= *width as u64 * *height as u64 * 4;
+            }
+        }
+        resident.sort_by_key(|(used, _)| *used);
+        for (_, source) in resident {
+            if bytes <= BUDGET {
+                break;
+            }
+            if let Some(State::Ready { width, height, .. }) = self.states.get(&source) {
+                bytes -= *width as u64 * *height as u64 * 4;
+            }
+            freed.push(source);
+        }
+        freed
+            .into_iter()
+            .filter_map(|source| match self.states.get(&source) {
+                Some(&State::Ready { id, width, height, .. }) => {
+                    self.states.insert(source, State::Evicted { id, width, height });
+                    Some(id)
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// The file behind a picture, read now.
@@ -352,6 +460,7 @@ impl Images {
                     id: image.id,
                     width: image.width,
                     height: image.height,
+                    used: Instant::now(),
                 },
                 None => State::Failed,
             };
@@ -416,6 +525,66 @@ mod tests {
         assert!(pixel(640 - 60, 360)[0] < 24);
         // A video that is not there shows nothing, as a missing picture does.
         assert!(super::poster(&Source::File("/no/such/clip.mp4".into()), 4).is_none());
+    }
+
+    fn ready(images: &mut Images, name: &str, id: u64, side: u32, used: Instant) -> Source {
+        let source = Source::File(name.into());
+        images.states.insert(
+            source.clone(),
+            State::Ready {
+                id,
+                width: side,
+                height: side,
+                used,
+            },
+        );
+        source
+    }
+
+    #[test]
+    fn pictures_unseen_for_a_while_are_evicted_and_return() {
+        let mut images = Images::new(Arc::new(|| {}), None);
+        images.blocking = true;
+        let start = Instant::now();
+        let old = ready(&mut images, "/no/old.png", 1, 100, start);
+        let new = ready(&mut images, "/no/new.png", 2, 100, start + KEEP);
+        assert_eq!(images.evict(start + KEEP), vec![1]);
+        // Nothing twice, and the size stays so the layout holds still.
+        assert!(images.evict(start + KEEP).is_empty());
+        assert_eq!(images.get(&old), Some((1, 100, 100)));
+        // Asking again does not bring it back, drawing does: under a new id.
+        assert!(images.poll().is_empty());
+        images.touch(&new, start + KEEP);
+        images.touch(&old, start + KEEP);
+        // The file is not there: the reload fails, once, and does not loop.
+        assert!(images.poll().is_empty());
+        assert_eq!(images.get(&old), None);
+        images.touch(&old, start + KEEP);
+        assert!(images.poll().is_empty());
+        assert!(matches!(images.states[&new], State::Ready { id: 2, .. }));
+    }
+
+    #[test]
+    fn a_budget_frees_the_longest_unseen_but_never_the_recent() {
+        let mut images = Images::new(Arc::new(|| {}), None);
+        let start = Instant::now();
+        // 4096² is 64 MiB: ten of them is over the budget.
+        for at in 0..10u64 {
+            ready(
+                &mut images,
+                &format!("/no/{at}.png"),
+                at + 1,
+                4096,
+                start + Duration::from_secs(at),
+            );
+        }
+        let now = start + Duration::from_secs(9) + RECENT;
+        let mut freed = images.evict(now);
+        freed.sort();
+        // Two come off; the one drawn last (id 10) and its neighbour are safe.
+        assert_eq!(freed, vec![1, 2]);
+        let all = start + Duration::from_secs(9);
+        assert!(images.evict(all).is_empty());
     }
 
     #[test]

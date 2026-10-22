@@ -435,6 +435,8 @@ impl Running {
         for image in self.session.view.uploads() {
             self.gpu.upload_image(image.id, image.width, image.height, &image.rgba);
         }
+        let stale = self.session.view.images.evict(Instant::now());
+        self.gpu.free_images(&stale);
         #[cfg(feature = "substack")]
         self.session.publish.poll(&mut self.session.editor);
         if !self.drawn {
