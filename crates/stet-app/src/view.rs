@@ -1476,6 +1476,7 @@ impl View {
                 if y < m.bottom {
                     let rect = [m.left, y + gap * 0.5, width, height];
                     layer.images.push((id, rect));
+                    self.images.touch(&source, Instant::now());
                     let (top, bottom) = (rect[1].max(m.top), (rect[1] + height).min(m.bottom));
                     let seen = [m.left, top, width, bottom - top];
                     match source.video() {
