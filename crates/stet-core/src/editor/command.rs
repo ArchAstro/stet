@@ -166,6 +166,7 @@ impl Editor {
             "pasteplain" => self.paste(true),
             "image" | "retouch" => self.effects.push(super::Effect::EditImage),
             "publish" | "substack" => self.effects.push(super::Effect::Publish),
+            "youtube" => self.effects.push(super::Effect::YouTube),
             "margin" | "scratch" => self.toggle_margin(),
             "pane" | "other" => self.switch_pane(),
             "send" | "copyover" => self.send_to_other_pane(false),

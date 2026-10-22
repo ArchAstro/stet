@@ -126,6 +126,10 @@ pub struct State {
     pub window: Option<(f32, f32)>,
     /// The Substack publication last published to.
     pub substack: Option<String>,
+    /// Who sees uploaded videos: `unlisted`, `public` or `private`.
+    pub youtube_privacy: Option<String>,
+    /// What publishing did with local videos last: `youtube` or `link`.
+    pub videos: Option<String>,
 }
 
 impl State {

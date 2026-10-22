@@ -144,6 +144,8 @@ pub enum Effect {
     EditImage,
     /// Offer to publish the document.
     Publish,
+    /// Offer to sign in to YouTube, where a published document's videos go.
+    YouTube,
     /// A sheet's button was pressed.
     Sheet {
         sheet: &'static str,

@@ -12,6 +12,8 @@ pub struct Session {
     pub view: View,
     #[cfg(feature = "substack")]
     pub publish: crate::publish::Publisher,
+    #[cfg(feature = "youtube")]
+    pub youtube: crate::youtube::Connector,
 }
 
 impl Session {
@@ -136,6 +138,14 @@ impl Session {
                 }
                 #[cfg(not(feature = "substack"))]
                 Effect::Publish => self.say(Err("this build of stet cannot publish".to_string())),
+                #[cfg(feature = "youtube")]
+                Effect::YouTube => self.youtube.open(&mut self.editor),
+                #[cfg(feature = "youtube")]
+                Effect::Sheet { sheet, button } if sheet == crate::youtube::SHEET => {
+                    self.youtube.act(&mut self.editor, button)
+                }
+                #[cfg(not(feature = "youtube"))]
+                Effect::YouTube => self.say(Err("this build of stet cannot upload to YouTube".to_string())),
                 Effect::Zoom(step) => {
                     self.view.set_zoom(step);
                     rest.push(Effect::Zoom(step));
