@@ -152,26 +152,36 @@ const HUGE: usize = 16 << 10;
 /// Most text the layout cache keeps between frames, in bytes.
 const BUDGET: usize = 1 << 20;
 
-/// Notes `key` as the most recently used huge line, and returns the keys of
-/// the oldest ones to drop to get back under `BUDGET`. Two always stay: the
-/// line being edited and one a pane or a frame still draws.
-fn touch_huge(huge: &mut Vec<(u64, usize)>, key: u64, len: usize) -> Vec<u64> {
-    huge.retain(|(k, _)| *k != key);
-    huge.push((key, len));
-    let mut total: usize = huge.iter().map(|(_, len)| len).sum();
-    let mut dropped = 0;
-    while huge.len() - dropped > 2 && total > BUDGET {
-        total -= huge[dropped].1;
-        dropped += 1;
+/// Notes `key` as the most recently used huge line, used in frame `used`, and
+/// returns the keys of the oldest ones to drop to get back under `BUDGET`.
+/// Two always stay: the line being edited and one a pane still draws. None
+/// used in frame `floor` or later goes, as the frame being drawn holds them.
+fn touch_huge(huge: &mut Vec<(u64, usize, u64)>, key: u64, len: usize, used: u64, floor: u64) -> Vec<u64> {
+    huge.retain(|(k, ..)| *k != key);
+    huge.push((key, len, used));
+    let mut total: usize = huge.iter().map(|(_, len, _)| len).sum();
+    let mut dropped = Vec::new();
+    let mut at = 0;
+    while huge.len() > 2 && total > BUDGET && at < huge.len() {
+        if huge[at].2 < floor {
+            let (k, len, _) = huge.remove(at);
+            total -= len;
+            dropped.push(k);
+        } else {
+            at += 1;
+        }
     }
-    huge.drain(..dropped).map(|(k, _)| k).collect()
+    dropped
 }
 
 pub struct View {
     pub fonts: Fonts,
     pub layouts: HashMap<u64, LineLayout>,
-    /// `(key, text bytes)` of the huge lines among `layouts`, least recently used first.
-    huge: Vec<(u64, usize)>,
+    /// `(key, text bytes, frame used)` of the huge lines among `layouts`, least
+    /// recently used first.
+    huge: Vec<(u64, usize, u64)>,
+    /// Whether a frame is being drawn, and so holds the keys of its lines.
+    drawing: bool,
     pub images: Images,
     pub width: f32,
     pub height: f32,
@@ -245,6 +255,7 @@ impl View {
             fonts,
             layouts: HashMap::new(),
             huge: Vec::new(),
+            drawing: false,
             images,
             width: 1000.0,
             height: 700.0,
@@ -680,7 +691,8 @@ impl View {
     /// Marks a huge line's layout as just used, and drops the oldest ones past
     /// the budget. Edits arrive faster than frames, so this can't wait for one.
     fn note_huge(&mut self, key: u64, len: usize) {
-        for old in touch_huge(&mut self.huge, key, len) {
+        let floor = if self.drawing { self.frame } else { u64::MAX };
+        for old in touch_huge(&mut self.huge, key, len, self.frame, floor) {
             self.layouts.remove(&old);
         }
     }
@@ -1063,6 +1075,7 @@ impl View {
     pub fn frame(&mut self, ed: &mut Editor) -> Frame {
         ed.refresh();
         self.frame += 1;
+        self.drawing = true;
         self.now = Instant::now();
         self.targets.clear();
         self.videos.clear();
@@ -1134,8 +1147,9 @@ impl View {
             let keep = self.frame - 1;
             self.layouts.retain(|_, layout| layout.last_used >= keep);
             let layouts = &self.layouts;
-            self.huge.retain(|(k, _)| layouts.contains_key(k));
+            self.huge.retain(|(k, ..)| layouts.contains_key(k));
         }
+        self.drawing = false;
         frame
     }
 
@@ -2533,16 +2547,31 @@ mod tests {
     fn huge_lines_are_dropped_oldest_first_past_the_budget() {
         let mut huge = Vec::new();
         let big = BUDGET / 3 + 1;
-        assert!(touch_huge(&mut huge, 1, big).is_empty());
-        assert!(touch_huge(&mut huge, 2, big).is_empty());
+        let free = u64::MAX;
+        assert!(touch_huge(&mut huge, 1, big, 0, free).is_empty());
+        assert!(touch_huge(&mut huge, 2, big, 0, free).is_empty());
         // Touching one again only moves it up.
-        assert!(touch_huge(&mut huge, 1, big).is_empty());
+        assert!(touch_huge(&mut huge, 1, big, 0, free).is_empty());
         // The third tips it over: the least recently used goes.
-        assert_eq!(touch_huge(&mut huge, 3, big), vec![2]);
+        assert_eq!(touch_huge(&mut huge, 3, big, 0, free), vec![2]);
         // A flood of keys, as when typing outruns frames, leaves two.
         for key in 10..100 {
-            touch_huge(&mut huge, key, 20 * BUDGET);
+            touch_huge(&mut huge, key, 20 * BUDGET, 0, free);
         }
-        assert_eq!(huge.iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![98, 99]);
+        let keys = |huge: &Vec<(u64, usize, u64)>| huge.iter().map(|(k, ..)| *k).collect::<Vec<_>>();
+        assert_eq!(keys(&huge), vec![98, 99]);
+    }
+
+    #[test]
+    fn huge_lines_the_drawn_frame_holds_stay() {
+        let mut huge = Vec::new();
+        let big = BUDGET / 2;
+        // Stale copies from typing between frames, then frame 5 draws three.
+        touch_huge(&mut huge, 1, big, 4, u64::MAX);
+        for key in 10..13 {
+            touch_huge(&mut huge, key, big, 5, 5);
+        }
+        let keys: Vec<u64> = huge.iter().map(|(k, ..)| *k).collect();
+        assert_eq!(keys, vec![10, 11, 12]);
     }
 }
