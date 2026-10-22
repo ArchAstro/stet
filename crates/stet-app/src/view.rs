@@ -147,9 +147,41 @@ struct Metrics {
     row: f32,
 }
 
+/// A line this long is tracked on its own: it costs tens of megabytes shaped.
+const HUGE: usize = 16 << 10;
+/// Most text the layout cache keeps between frames, in bytes.
+const BUDGET: usize = 1 << 20;
+
+/// Notes `key` as the most recently used huge line, used in frame `used`, and
+/// returns the keys of the oldest ones to drop to get back under `BUDGET`.
+/// Two always stay: the line being edited and one a pane still draws. None
+/// used in frame `floor` or later goes, as the frame being drawn holds them.
+fn touch_huge(huge: &mut Vec<(u64, usize, u64)>, key: u64, len: usize, used: u64, floor: u64) -> Vec<u64> {
+    huge.retain(|(k, ..)| *k != key);
+    huge.push((key, len, used));
+    let mut total: usize = huge.iter().map(|(_, len, _)| len).sum();
+    let mut dropped = Vec::new();
+    let mut at = 0;
+    while huge.len() > 2 && total > BUDGET && at < huge.len() {
+        if huge[at].2 < floor {
+            let (k, len, _) = huge.remove(at);
+            total -= len;
+            dropped.push(k);
+        } else {
+            at += 1;
+        }
+    }
+    dropped
+}
+
 pub struct View {
     pub fonts: Fonts,
     pub layouts: HashMap<u64, LineLayout>,
+    /// `(key, text bytes, frame used)` of the huge lines among `layouts`, least
+    /// recently used first.
+    huge: Vec<(u64, usize, u64)>,
+    /// Whether a frame is being drawn, and so holds the keys of its lines.
+    drawing: bool,
     pub images: Images,
     pub width: f32,
     pub height: f32,
@@ -222,6 +254,8 @@ impl View {
         View {
             fonts,
             layouts: HashMap::new(),
+            huge: Vec::new(),
+            drawing: false,
             images,
             width: 1000.0,
             height: 700.0,
@@ -404,6 +438,7 @@ impl View {
     /// Drops shaped lines, after anything that changes how text looks.
     pub fn invalidate(&mut self) {
         self.layouts.clear();
+        self.huge.clear();
         self.advance = None;
         self.mono_advance = None;
     }
@@ -646,7 +681,20 @@ impl View {
             layout
         });
         layout.last_used = self.frame;
+        let len = layout.text.len();
+        if len >= HUGE {
+            self.note_huge(key, len);
+        }
         key
+    }
+
+    /// Marks a huge line's layout as just used, and drops the oldest ones past
+    /// the budget. Edits arrive faster than frames, so this can't wait for one.
+    fn note_huge(&mut self, key: u64, len: usize) {
+        let floor = if self.drawing { self.frame } else { u64::MAX };
+        for old in touch_huge(&mut self.huge, key, len, self.frame, floor) {
+            self.layouts.remove(&old);
+        }
     }
 
     /// A single-row label, cached like any other line.
@@ -1027,6 +1075,7 @@ impl View {
     pub fn frame(&mut self, ed: &mut Editor) -> Frame {
         ed.refresh();
         self.frame += 1;
+        self.drawing = true;
         self.now = Instant::now();
         self.targets.clear();
         self.videos.clear();
@@ -1092,10 +1141,15 @@ impl View {
         self.context_menu(ed, &m, &mut frame.over);
         self.retouching(ed, m.ui, &mut frame.over);
         self.sheet(ed, &m, &mut frame.over);
-        if self.layouts.len() > 3000 {
+        // Bounded by text as well as count: a shaped line costs hundreds of
+        // bytes a character, and every edit to a long line leaves a copy.
+        if self.layouts.len() > 3000 || self.layouts.values().map(|layout| layout.text.len()).sum::<usize>() > BUDGET {
             let keep = self.frame - 1;
             self.layouts.retain(|_, layout| layout.last_used >= keep);
+            let layouts = &self.layouts;
+            self.huge.retain(|(k, ..)| layouts.contains_key(k));
         }
+        self.drawing = false;
         frame
     }
 
@@ -1422,6 +1476,7 @@ impl View {
                 if y < m.bottom {
                     let rect = [m.left, y + gap * 0.5, width, height];
                     layer.images.push((id, rect));
+                    self.images.touch(&source, Instant::now());
                     let (top, bottom) = (rect[1].max(m.top), (rect[1] + height).min(m.bottom));
                     let seen = [m.left, top, width, bottom - top];
                     match source.video() {
@@ -2482,5 +2537,42 @@ impl View {
             clip,
             c.status,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn huge_lines_are_dropped_oldest_first_past_the_budget() {
+        let mut huge = Vec::new();
+        let big = BUDGET / 3 + 1;
+        let free = u64::MAX;
+        assert!(touch_huge(&mut huge, 1, big, 0, free).is_empty());
+        assert!(touch_huge(&mut huge, 2, big, 0, free).is_empty());
+        // Touching one again only moves it up.
+        assert!(touch_huge(&mut huge, 1, big, 0, free).is_empty());
+        // The third tips it over: the least recently used goes.
+        assert_eq!(touch_huge(&mut huge, 3, big, 0, free), vec![2]);
+        // A flood of keys, as when typing outruns frames, leaves two.
+        for key in 10..100 {
+            touch_huge(&mut huge, key, 20 * BUDGET, 0, free);
+        }
+        let keys = |huge: &Vec<(u64, usize, u64)>| huge.iter().map(|(k, ..)| *k).collect::<Vec<_>>();
+        assert_eq!(keys(&huge), vec![98, 99]);
+    }
+
+    #[test]
+    fn huge_lines_the_drawn_frame_holds_stay() {
+        let mut huge = Vec::new();
+        let big = BUDGET / 2;
+        // Stale copies from typing between frames, then frame 5 draws three.
+        touch_huge(&mut huge, 1, big, 4, u64::MAX);
+        for key in 10..13 {
+            touch_huge(&mut huge, key, big, 5, 5);
+        }
+        let keys: Vec<u64> = huge.iter().map(|(k, ..)| *k).collect();
+        assert_eq!(keys, vec![10, 11, 12]);
     }
 }
