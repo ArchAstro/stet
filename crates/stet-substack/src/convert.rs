@@ -24,6 +24,9 @@ pub struct Options {
     pub code_block: CodeBlockNode,
     /// Show an image's alt text as its caption when it has no title.
     pub alt_as_caption: bool,
+    /// Local videos already hosted elsewhere, by the address they are written
+    /// with: a YouTube address here makes the video an embed, not a link.
+    pub videos: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -34,6 +37,8 @@ pub struct Document {
     pub body: Value,
     /// Things that were approximated or dropped.
     pub warnings: Vec<String>,
+    /// Addresses of local videos, in order, without repeats; hosted or not.
+    pub local_videos: Vec<String>,
 }
 
 /// A hosted image to swap in for a local one.
@@ -150,6 +155,7 @@ pub fn convert(markdown: &str, options: &Options) -> Document {
         pos: 0,
         options,
         warnings: Vec::new(),
+        local_videos: Vec::new(),
         numbers: HashMap::new(),
         refs: Vec::new(),
     };
@@ -167,6 +173,7 @@ struct Conv<'a> {
     pos: usize,
     options: &'a Options,
     warnings: Vec<String>,
+    local_videos: Vec<String>,
     /// Footnote label to its number, by first reference.
     numbers: HashMap<String, usize>,
     /// Labels referenced inside the top-level block being read.
@@ -230,6 +237,7 @@ impl<'a> Conv<'a> {
             subtitle: subtitle.filter(|s| !s.is_empty()),
             body: json!({"type": "doc", "content": content}),
             warnings: std::mem::take(&mut self.warnings),
+            local_videos: std::mem::take(&mut self.local_videos),
         }
     }
 
@@ -500,6 +508,12 @@ impl<'a> Conv<'a> {
 
     fn image(&mut self, src: &str, alt: &str, title: &str, href: Option<&str>) -> Vec<Seg> {
         if let Some(id) = youtube_id(src) {
+            return vec![Seg::Block(json!({"type": "youtube2", "attrs": {"videoId": id}}))];
+        }
+        if is_video(src) && !is_remote(src) && !self.local_videos.iter().any(|seen| seen == src) {
+            self.local_videos.push(src.to_string());
+        }
+        if let Some(id) = self.options.videos.get(src).and_then(|url| youtube_id(url)) {
             return vec![Seg::Block(json!({"type": "youtube2", "attrs": {"videoId": id}}))];
         }
         if is_video(src) {
@@ -981,6 +995,25 @@ mod tests {
         assert_eq!(d.body["content"][1]["content"][0]["text"], "x.webm");
         assert_eq!(d.warnings.len(), 2);
         assert!(d.local_images().is_empty());
+        assert_eq!(d.local_videos, ["clips/demo.MP4", "x.webm"]);
+    }
+
+    #[test]
+    fn a_hosted_local_video_becomes_an_embed() {
+        let options = Options {
+            videos: HashMap::from([("clips/demo.mp4".to_string(), "https://youtu.be/dQw4w9WgXcQ".to_string())]),
+            ..Options::default()
+        };
+        let d = convert(
+            "![demo](clips/demo.mp4)\n\n![](clips/demo.mp4)\n\n![](other.mov)",
+            &options,
+        );
+        let embed = json!({"type": "youtube2", "attrs": {"videoId": "dQw4w9WgXcQ"}});
+        assert_eq!(d.body["content"][0], embed);
+        assert_eq!(d.body["content"][1], embed);
+        assert_eq!(d.body["content"][2]["content"][0]["text"], "other.mov");
+        assert_eq!(d.warnings.len(), 1, "{:?}", d.warnings);
+        assert_eq!(d.local_videos, ["clips/demo.mp4", "other.mov"]);
     }
 
     #[test]

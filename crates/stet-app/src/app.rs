@@ -356,7 +356,9 @@ impl Running {
                 editor,
                 view,
                 #[cfg(feature = "substack")]
-                publish: crate::publish::Publisher::new(wake),
+                publish: crate::publish::Publisher::new(wake.clone()),
+                #[cfg(feature = "youtube")]
+                youtube: crate::youtube::Connector::new(wake),
             },
             gpu: Gpu::new(device, queue, format),
             surface,
@@ -439,6 +441,8 @@ impl Running {
         self.gpu.free_images(&stale);
         #[cfg(feature = "substack")]
         self.session.publish.poll(&mut self.session.editor);
+        #[cfg(feature = "youtube")]
+        self.session.youtube.poll(&mut self.session.editor);
         if !self.drawn {
             crate::timing("first redraw requested");
         }
@@ -543,7 +547,8 @@ impl Running {
             prose_font: editor.config.prose_font.first().cloned(),
             mono_font: editor.config.mono_font.first().cloned(),
             window: self.window.fullscreen().is_none().then_some((size.width, size.height)),
-            substack: platform::State::load().substack,
+            // Kept by the sheets that set them, not by the window.
+            ..platform::State::load()
         }
         .save();
     }
@@ -1207,11 +1212,19 @@ fn headless_session(args: &Args) -> Session {
         publish.offline = true;
         publish
     };
+    #[cfg(feature = "youtube")]
+    let youtube = {
+        let mut youtube = crate::youtube::Connector::new(no_wake());
+        youtube.offline = true;
+        youtube
+    };
     Session {
         editor,
         view,
         #[cfg(feature = "substack")]
         publish,
+        #[cfg(feature = "youtube")]
+        youtube,
     }
 }
 

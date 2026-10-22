@@ -105,6 +105,7 @@ const MENUS: &[(&str, &[(&str, &str)])] = &[
             ("Save", "<D-s>"),
             ("Save As…", "<D-S-s>"),
             ("Publish to Substack…", ":publish"),
+            ("Connect YouTube…", ":youtube"),
             ("", ""),
             ("Close Tab", "<D-w>"),
         ],

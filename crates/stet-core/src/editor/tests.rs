@@ -1862,6 +1862,8 @@ fn a_sheet_takes_the_keyboard_and_reports_its_buttons() {
     );
     keys(&mut ed, ":publish<CR>");
     assert_eq!(ed.take_effects(), vec![Effect::Publish]);
+    keys(&mut ed, ":youtube<CR>");
+    assert_eq!(ed.take_effects(), vec![Effect::YouTube]);
     let rows = vec![
         Row::note("about", "", "Words to read"),
         Row::secret("key", "Key", "paste it"),

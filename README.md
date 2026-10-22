@@ -491,8 +491,11 @@ takes you to it. Nothing is ever sent to readers from here: publishing stays a b
 you press on Substack.
 
 1. **Signing in.** Substack has no publishing API, so Stet uses the one its own editor does, with your session cookie. The first time, the menu asks for it: in your browser, on substack.com, DevTools → Application → Cookies → `substack.sid`. It is kept in the macOS login keychain and nowhere else, never shown, and sent only to Substack over HTTPS (to a custom domain only once Substack says the domain is yours).
-2. **What carries over.** Headings, emphasis, links, lists, quotes, code, pictures with captions, footnotes. A table goes up as preformatted text, and a local video as a link, because Substack's editor has neither; the menu says so before you send.
-3. **It may break.** This is Substack's private interface, undocumented and theirs to change.
+2. **What carries over.** Headings, emphasis, links, lists, quotes, code, pictures with captions, footnotes. A table goes up as preformatted text, because Substack's editor has none; the menu says so before you send.
+3. **Videos.** A YouTube address becomes an embed. A local video is either uploaded to YouTube and embedded, or left as a link: the menu's **Videos** line picks which. Each video is uploaded once. Stet remembers the file by its contents (in `youtube-uploads.json` beside its settings), so publishing the same post again, or another post with the same video, reuses the upload, and only uploads again if that video was deleted from YouTube.
+4. **It may break.** This is Substack's private interface, undocumented and theirs to change.
+
+**Connecting YouTube.** `:youtube` (File → Connect YouTube…) signs in with your own Google OAuth client. Make one first: in Google Cloud, enable the *YouTube Data API v3*, then Credentials → Create OAuth client ID → *Desktop app*. Paste its ID and secret, and **Sign in with Google** finishes in your browser. The client and the sign-in are kept in the macOS login keychain. Once you're signed in, the same page shows the channel and who sees uploads (Unlisted by default, which is enough for an embed). Google's rules apply: a project that has not passed YouTube's API audit can only upload private videos, and while its consent screen is in *Testing* the sign-in lapses after seven days.
 
 Pages like this one are how Stet asks for settings. They sit in the command menu's panel and work the way it does: ↑ and ↓ move, typing fills in the selected line, ← and → change a choice, Enter acts, Esc closes.
 

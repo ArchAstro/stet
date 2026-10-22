@@ -15,6 +15,8 @@ mod retouch;
 mod session;
 mod text;
 mod view;
+#[cfg(feature = "youtube")]
+mod youtube;
 
 use std::path::PathBuf;
 use std::sync::Arc;
