@@ -1,6 +1,6 @@
 [project]
 name = "stet-notebook"
-version = "0.4.0"
+version = "0.5.0"
 description = "Stet's side of a notebook kernel: tables, native charts, themed matplotlib, data refs. Stet loads it into kernels itself; install it only to import stet elsewhere."
 requires-python = ">=3.9"
 license = "MIT"
