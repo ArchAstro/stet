@@ -3,6 +3,7 @@
 
 mod app;
 mod ctl;
+mod data;
 mod gpu;
 mod images;
 #[cfg(target_os = "macos")]

@@ -3358,6 +3358,7 @@ dependencies = [
  "serde_json",
  "stet-chart",
  "stet-core",
+ "stet-data",
  "stet-kernel",
  "stet-substack",
  "stet-youtube",

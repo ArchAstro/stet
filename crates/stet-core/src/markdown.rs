@@ -78,6 +78,42 @@ pub struct Image {
     pub url: String,
 }
 
+/// A link reference definition that names a data file, such as
+/// `[signups]: data/signups.parquet` or `[users]: app.db#users`. A data
+/// ref: `[signups]` in the prose stands for the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataRef {
+    /// The label as written.
+    pub name: String,
+    /// The destination without its `#table`, relative to the document.
+    pub path: String,
+    /// The table of a database, after `#`.
+    pub table: Option<String>,
+    /// The definition's first line.
+    pub line: usize,
+}
+
+/// File extensions a data ref can name, lower case.
+pub const DATA_EXTENSIONS: &[&str] = &[
+    "csv", "tsv", "json", "jsonl", "ndjson", "parquet", "arrow", "feather", "ipc", "sqlite", "sqlite3", "db",
+];
+
+/// A destination that names a data file: by its extension, before any
+/// `#table`. URLs are not data refs.
+pub fn is_data_path(dest: &str) -> bool {
+    if dest.contains("://") {
+        return false;
+    }
+    let path = dest.split('#').next().unwrap_or(dest);
+    let extension = path.rsplit_once('.').map_or(
+        "",
+        |(stem, ext)| if stem.is_empty() || ext.contains('/') { "" } else { ext },
+    );
+    DATA_EXTENSIONS
+        .iter()
+        .any(|known| extension.eq_ignore_ascii_case(known))
+}
+
 /// Code with a known language: a fenced block, or front matter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeBlock {
@@ -109,6 +145,8 @@ pub struct Doc {
     /// The last analysis reused everything outside the edited blocks.
     pub incremental: bool,
     pub images: Vec<Image>,
+    /// Definitions that name data files, in document order.
+    pub data_refs: Vec<DataRef>,
     pub suggestions: Vec<Suggestion>,
     /// Top-level fenced code blocks, as line ranges.
     pub fences: Vec<Range<usize>>,
@@ -150,6 +188,57 @@ impl Doc {
     pub fn in_fence(&self, line: usize) -> bool {
         self.fences.iter().any(|fence| fence.contains(&line))
     }
+    /// The data ref `name` stands for, matched as CommonMark matches labels:
+    /// ignoring case and runs of space. The first definition wins.
+    pub fn data_ref(&self, name: &str) -> Option<&DataRef> {
+        let name = normal_label(name);
+        self.data_refs.iter().find(|data| normal_label(&data.name) == name)
+    }
+}
+
+fn normal_label(label: &str) -> String {
+    label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// The data refs among the definitions on `defs` (line ranges), read anew
+/// from just those lines.
+fn data_refs(text: &str, line_starts: &[usize], defs: &[Range<u32>]) -> Vec<DataRef> {
+    let mut refs: Vec<DataRef> = Vec::new();
+    for def in defs {
+        let start = line_starts.get(def.start as usize).copied().unwrap_or(text.len());
+        let end = line_starts.get(def.end as usize).copied().unwrap_or(text.len());
+        let lines = &text[start..end];
+        // Most definitions are links: skip them without parsing.
+        if !DATA_EXTENSIONS.iter().any(|ext| lines.contains(ext)) {
+            continue;
+        }
+        // The definitions on these lines, in the order they were written.
+        let parser = Parser::new_ext(lines, options());
+        let mut found: Vec<(usize, String, String)> = parser
+            .reference_definitions()
+            .iter()
+            .map(|(label, def)| (def.span.start, label.to_string(), def.dest.to_string()))
+            .collect();
+        found.sort();
+        for (at, name, dest) in found {
+            if !is_data_path(&dest) || refs.iter().any(|seen| normal_label(&seen.name) == normal_label(&name)) {
+                continue;
+            }
+            let (path, table) = match dest.split_once('#') {
+                Some((path, table)) if !table.is_empty() => (path.to_string(), Some(table.to_string())),
+                Some((path, _)) => (path.to_string(), None),
+                None => (dest, None),
+            };
+            let line = def.start as usize + lines[..at].matches('\n').count();
+            refs.push(DataRef {
+                name,
+                path,
+                table,
+                line,
+            });
+        }
+    }
+    refs
 }
 
 pub(crate) fn options() -> Options {
@@ -668,6 +757,7 @@ pub fn parse(text: &str) -> Doc {
     doc.defs = pass.defs;
     doc.def_text = pass.def_text;
     doc.line_starts = pass.line_starts;
+    doc.data_refs = data_refs(text, &doc.line_starts, &doc.defs);
     doc
 }
 
@@ -820,6 +910,7 @@ impl Change {
         doc.comments = self.critic.comments;
         doc.words = self.words;
         doc.chars = self.chars;
+        doc.data_refs = data_refs(text, &doc.line_starts, &doc.defs);
         doc.incremental = true;
         doc
     }
@@ -1093,6 +1184,40 @@ mod tests {
     }
 
     #[test]
+    fn data_refs_are_definitions_that_name_data_files() {
+        let source = "See [signups] and [Users].\n\n[signups]: data/signups.parquet\n[site]: https://x.io/a.csv\n[users]:\n  app.db#users\n[notes]: notes.md\n[SIGNUPS]: other.csv\n";
+        let doc = parse(source);
+        let names: Vec<(&str, &str, Option<&str>, usize)> = doc
+            .data_refs
+            .iter()
+            .map(|data| (data.name.as_str(), data.path.as_str(), data.table.as_deref(), data.line))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("signups", "data/signups.parquet", None, 2),
+                ("users", "app.db", Some("users"), 4)
+            ]
+        );
+        assert_eq!(doc.data_ref("USERS").unwrap().path, "app.db");
+        assert!(is_data_path("a/b.TSV") && !is_data_path("a.csv/readme") && !is_data_path(".csv"));
+
+        // Kept right through edits that are analysed in part.
+        let filler = "para\n\n".repeat(INCREMENTAL_FROM / 6);
+        let big = format!("{filler}{source}");
+        let edited = big.replacen("para", "para *x*", 1);
+        let next = reanalyse(parse(&big), &edited);
+        assert!(next.incremental);
+        same(&next, &parse(&edited), "an edit above data refs");
+        let edited = format!("x\n\n{edited}");
+        same(
+            &reanalyse(next, &edited),
+            &parse(&edited),
+            "a line added above data refs",
+        );
+    }
+
+    #[test]
     fn links_images_and_autolinks() {
         assert_eq!(
             styled("[text](http://x \"t\") <http://y>", 0),
@@ -1213,6 +1338,7 @@ mod tests {
         assert_eq!(a.tops, b.tops, "block starts: {context}");
         assert_eq!(a.defs, b.defs, "definitions: {context}");
         assert_eq!(a.def_text, b.def_text, "restated definitions: {context}");
+        assert_eq!(a.data_refs, b.data_refs, "data refs: {context}");
         assert_eq!(a.loose, b.loose, "loose openers: {context}");
     }
 

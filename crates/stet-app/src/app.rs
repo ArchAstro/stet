@@ -338,7 +338,11 @@ impl Running {
             editor.toggle_sidebar();
             editor.sidebar.focused = false;
         }
-        let mut view = View::new(fonts, Images::new(wake.clone(), platform::cache_dir()));
+        let mut view = View::new(
+            fonts,
+            Images::new(wake.clone(), platform::cache_dir()),
+            crate::data::Data::new(wake.clone()),
+        );
         view.scale = window.scale_factor() as f32;
         view.zoom = state.zoom.unwrap_or(1.0).clamp(0.5, 4.0);
         view.titlebar = if cfg!(target_os = "macos") {
@@ -799,6 +803,7 @@ impl Running {
             Some(Target::Sidebar) => editor.sidebar.focused = true,
             Some(Target::MenuHint) => editor.open_palette(PaletteKind::Help),
             Some(Target::Note(index)) => editor.open_note(index),
+            Some(Target::DataRef(index)) => session.view.toggle_preview(index),
             Some(Target::Sheet) => {}
             Some(Target::SheetScrim) => editor.close_sheet(),
             Some(Target::SheetRow(row)) => editor.sheet_click(row),
@@ -1214,7 +1219,9 @@ fn headless_session(args: &Args) -> Session {
     let (editor, font_dirs) = build_editor(args);
     let mut images = Images::new(no_wake(), None);
     images.blocking = true;
-    let mut view = View::new(Fonts::new(&editor.config, &font_dirs), images);
+    let mut data = crate::data::Data::new(no_wake());
+    data.blocking = true;
+    let mut view = View::new(Fonts::new(&editor.config, &font_dirs), images, data);
     view.scale = args.scale;
     view.width = (args.size.0 as f32 * args.scale).round();
     view.height = (args.size.1 as f32 * args.scale).round();

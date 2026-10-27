@@ -25,13 +25,13 @@ const MAX_TRACE: usize = 16;
 const MAX_ROWS: usize = 20;
 
 /// What an output needs to draw itself.
-struct Cx<'a> {
-    ed: &'a Editor,
-    m: &'a Metrics,
+pub(super) struct Cx<'a> {
+    pub ed: &'a Editor,
+    pub m: &'a Metrics,
     /// The notebook's output folder, for pictures kept as files.
-    files: Option<&'a std::path::Path>,
-    size: f32,
-    small: f32,
+    pub files: Option<&'a std::path::Path>,
+    pub size: f32,
+    pub small: f32,
 }
 
 /// Draws one form of an output into rows, or says it cannot (`false`).
@@ -51,6 +51,25 @@ const RENDERERS: &[(&str, Render)] = &[
     ("text/markdown", View::text_render),
     ("text/plain", View::text_render),
 ];
+
+/// The data refs a chart spec names (`data.ref`, or a `data.url` that is
+/// not a URL), at its top and in its layers.
+fn data_refs_named(spec: &Value) -> Vec<String> {
+    let mut names = Vec::new();
+    let layers = spec["layer"].as_array().into_iter().flatten();
+    for part in std::iter::once(spec).chain(layers) {
+        let data = &part["data"];
+        let name = data["ref"]
+            .as_str()
+            .or(data["url"].as_str().filter(|url| !url.contains("://")));
+        if let Some(name) = name
+            && !names.iter().any(|seen| seen == name)
+        {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
 
 /// One row of a cell's output area.
 pub(super) enum Row {
@@ -73,6 +92,20 @@ pub(super) enum Row {
 pub(super) struct Block {
     pub rows: Vec<Row>,
     pub height: f32,
+}
+
+impl Block {
+    pub fn of(rows: Vec<Row>) -> Block {
+        let height = rows
+            .iter()
+            .map(|row| match row {
+                Row::Text { height, .. } => *height,
+                Row::Picture(shown) => shown.height,
+                Row::Gap(gap) => *gap,
+            })
+            .sum();
+        Block { rows, height }
+    }
 }
 
 /// Text with ANSI colour codes taken out, and each line as a terminal would
@@ -142,7 +175,13 @@ fn status_line(slot: &Slot, stale: bool) -> String {
 
 impl View {
     /// The output area under `line`, if it closes a cell that has one.
+    /// What shows under `line`: a cell's outputs, a chart fence's chart,
+    /// or a data ref's first rows.
     pub(super) fn output_block(&mut self, ed: &Editor, line: usize, m: &Metrics) -> Option<Block> {
+        self.cell_block(ed, line, m).or_else(|| self.data_block(ed, line, m))
+    }
+
+    fn cell_block(&mut self, ed: &Editor, line: usize, m: &Metrics) -> Option<Block> {
         let book = ed.notebook()?;
         let cell = book.cell_ending_at(line)?;
         let (slot, stale) = book.output_of(cell)?;
@@ -226,18 +265,10 @@ impl View {
             }
         }
         rows.push(Row::Gap((m.line * 0.35).round()));
-        let height = rows
-            .iter()
-            .map(|row| match row {
-                Row::Text { height, .. } => *height,
-                Row::Picture(shown) => shown.height,
-                Row::Gap(gap) => *gap,
-            })
-            .sum();
-        Some(Block { rows, height })
+        Some(Block::of(rows))
     }
 
-    fn text_row(&mut self, ed: &Editor, text: &str, rgb: Rgb, size: f32, face: Face, bold: bool) -> Row {
+    pub(super) fn text_row(&mut self, ed: &Editor, text: &str, rgb: Rgb, size: f32, face: Face, bold: bool) -> Row {
         let key = self.label(ed, if text.is_empty() { " " } else { text }, rgb, size, face, bold);
         Row::Text {
             key,
@@ -270,21 +301,53 @@ impl View {
 
     /// A chart, drawn as SVG the width of the text in the editor's theme.
     /// One that cannot be drawn says why, and the next form down shows.
-    fn chart_rows(&mut self, cx: &Cx, _: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
+    pub(super) fn chart_rows(&mut self, cx: &Cx, _: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
         let inset = (cx.m.advance * 0.6).round();
         let width = ((cx.m.column - inset) / self.scale).floor().max(120.0);
         let theme = crate::notebook::chart_theme(cx.ed, cx.small / self.scale);
+        let c = cx.ed.theme.colors;
+        // Data refs the spec names, read first: the chart is drawn once
+        // every one has been.
+        let mut tables = std::collections::HashMap::new();
+        for name in data_refs_named(value) {
+            match self.chart_table(cx.ed, &name) {
+                Ok(Some(peek)) => {
+                    tables.insert(name, peek);
+                }
+                Ok(None) => {
+                    rows.push(self.text_row(cx.ed, &format!("reading {name}…"), c.muted, cx.small, Face::Ui, false));
+                    return true;
+                }
+                Err(err) => {
+                    rows.push(self.text_row(cx.ed, &format!("chart: {err}"), c.muted, cx.small, Face::Ui, false));
+                    return false;
+                }
+            }
+        }
         let key = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             value.to_string().hash(&mut hasher);
             (width as u32).hash(&mut hasher);
             format!("{theme:?}").hash(&mut hasher);
+            // A file read again is a new chart.
+            let mut read: Vec<(&String, usize)> = tables
+                .iter()
+                .map(|(n, p)| (n, std::sync::Arc::as_ptr(p) as usize))
+                .collect();
+            read.sort();
+            read.hash(&mut hasher);
             hasher.finish()
+        };
+        let mut resolve = |name: &str| {
+            tables.get(name).map(|peek| stet_chart::Table {
+                columns: peek.columns.iter().map(|column| column.name.clone()).collect(),
+                rows: peek.rows.clone(),
+            })
         };
         let url = match self.chart_keys.get(&key) {
             Some(url) => url.clone(),
-            None => match stet_chart::draw(value, &theme, width, &mut |_| None) {
+            None => match stet_chart::draw(value, &theme, width, &mut resolve) {
                 Ok(chart) => {
                     if self.charts.len() > 64 {
                         self.charts.clear();
@@ -299,7 +362,6 @@ impl View {
                     url
                 }
                 Err(err) => {
-                    let c = cx.ed.theme.colors;
                     rows.push(self.text_row(cx.ed, &format!("chart: {err}"), c.muted, cx.small, Face::Ui, false));
                     return false;
                 }
@@ -507,7 +569,7 @@ impl View {
 
     /// A table as aligned rows of the code face: a header with a rule under
     /// it, then the first rows on alternating bands.
-    fn table_rows(&mut self, ed: &Editor, table: &Value, size: f32, small: f32, rows: &mut Vec<Row>) {
+    pub(super) fn table_rows(&mut self, ed: &Editor, table: &Value, size: f32, small: f32, rows: &mut Vec<Row>) {
         let c = ed.theme.colors;
         let cell = |value: &Value| match value {
             Value::String(text) => text.replace('\n', " "),

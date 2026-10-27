@@ -2,6 +2,7 @@
 //! core cannot: display-line motion, hit testing and scrolling.
 
 pub(crate) mod outputs;
+mod refs;
 
 use crate::gpu::linear;
 use crate::images::{self, Decoded, Images};
@@ -67,6 +68,8 @@ pub enum Target {
     Video(usize),
     /// The handle above a table's column: `(a line of the table, column)`.
     TableColumn(usize, usize),
+    /// A data ref's chip; the index is into this frame's chips.
+    DataRef(usize),
     /// The handle beside a table's row, by its line.
     TableRow(usize),
     /// The strips that add a column or a row at the end of the table on this line.
@@ -232,6 +235,13 @@ pub struct View {
     charts: HashMap<String, stet_chart::Chart>,
     /// What the chart under the pointer reads there: the picture and its readout.
     chart_hover: Option<(String, stet_chart::Readout)>,
+    /// The files data refs name, read off the UI thread.
+    pub data: crate::data::Data,
+    /// Data ref chips drawn this frame, and the one under the pointer.
+    chips: Vec<refs::Chip>,
+    chip_hover: Option<refs::Chip>,
+    /// The data ref whose first rows show, by name, and under which line.
+    preview: Option<(String, usize)>,
 }
 
 /// A table on screen, in window coordinates.
@@ -258,7 +268,7 @@ enum Part {
 }
 
 impl View {
-    pub fn new(fonts: Fonts, images: Images) -> View {
+    pub fn new(fonts: Fonts, images: Images, data: crate::data::Data) -> View {
         View {
             fonts,
             layouts: HashMap::new(),
@@ -294,6 +304,10 @@ impl View {
             chart_keys: HashMap::new(),
             charts: HashMap::new(),
             chart_hover: None,
+            data,
+            chips: Vec::new(),
+            chip_hover: None,
+            preview: None,
         }
     }
 
@@ -304,7 +318,9 @@ impl View {
         let hover = self.table_hover();
         let chart = self.chart_hover();
         let chart_changed = std::mem::replace(&mut self.chart_hover, chart) != self.chart_hover;
-        (std::mem::replace(&mut self.hover, hover) != hover) | chart_changed
+        let chip = self.chip_hover();
+        let chip_changed = std::mem::replace(&mut self.chip_hover, chip) != self.chip_hover;
+        (std::mem::replace(&mut self.hover, hover) != hover) | chart_changed | chip_changed
     }
 
     /// True if the table under the pointer is in the pane without the keyboard.
@@ -1094,6 +1110,7 @@ impl View {
         self.targets.clear();
         self.videos.clear();
         self.pictures.clear();
+        self.chips.clear();
         if self.retouch.as_ref().is_some_and(|retouch| retouch.gone(self.now)) {
             self.retouch = None;
         }
@@ -1152,6 +1169,7 @@ impl View {
         self.tabs(ed, &m, &mut frame.base);
         self.sidebar(ed, &m, &mut frame.base);
         self.chart_readout(ed, &m, &mut frame.over);
+        self.chip_card(ed, &m, &mut frame.over);
         self.palette(ed, &m, &mut frame.over);
         self.context_menu(ed, &m, &mut frame.over);
         self.retouching(ed, m.ui, &mut frame.over);
@@ -1335,7 +1353,6 @@ impl View {
             let layout = &self.layouts[&key];
             let left = m.left - layout.hang.min(m.left - m.origin - m.advance);
             let (line_start, line_end) = (ed.buf.line_start(line), ed.buf.line_end(line));
-            let bytes = |chars: Range<usize>| layout.byte_of_col(chars.start)..layout.byte_of_col(chars.end);
 
             if !layout.edges.is_empty()
                 && let Some((lines, _)) = ed.table_at(line)
@@ -1376,6 +1393,11 @@ impl View {
                     Depth::Front => layer.front.push(quad),
                 }
             }
+            if !ed.doc().data_refs.is_empty() {
+                self.draw_chips(ed, line, key, left, y, &m, layer);
+            }
+            let layout = &self.layouts[&key];
+            let bytes = |chars: Range<usize>| layout.byte_of_col(chars.start)..layout.byte_of_col(chars.end);
             if let Some(matcher) = ed.search_highlight() {
                 for found in matcher.find_all(&layout.text) {
                     for (row, x0, x1) in layout.ranges(bytes(found)) {

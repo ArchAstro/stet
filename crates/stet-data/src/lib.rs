@@ -71,7 +71,7 @@ pub fn peek(path: &Path, table: Option<&str>, limit: usize) -> Result<Peek, Stri
         .to_ascii_lowercase();
     let name = path.display();
     if !path.exists() {
-        return Err(format!("{name} does not exist"));
+        return Err(format!("{name}: no such file"));
     }
     let result = match extension.as_str() {
         "csv" => csv_peek(path, b',', limit),
@@ -669,7 +669,7 @@ mod tests {
         assert!(
             peek(Path::new("/no/such/file.csv"), None, 1)
                 .unwrap_err()
-                .contains("does not exist")
+                .ends_with(": no such file")
         );
     }
 }

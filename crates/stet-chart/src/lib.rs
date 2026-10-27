@@ -12,7 +12,8 @@ pub mod spec;
 
 use scale::Linear;
 use serde_json::Value;
-use spec::{Aggregate, Channel, Kind, Layer, Mark, Spec, Table};
+pub use spec::Table;
+use spec::{Aggregate, Channel, Kind, Layer, Mark, Spec};
 use std::collections::HashMap;
 use std::fmt::Write;
 
