@@ -645,6 +645,7 @@ fn external_changes_are_never_clobbered_silently() {
     std::fs::write(&path, "mine\n").unwrap();
     let mut ed = editor("");
     ed.open(&path).unwrap();
+    assert!(!ed.changed_on_disk());
     // A clean buffer follows the disk.
     std::fs::write(&path, "theirs\n").unwrap();
     filetime_bump(&path, 5);
@@ -654,6 +655,7 @@ fn external_changes_are_never_clobbered_silently() {
     keys(&mut ed, "Ax<Esc>");
     std::fs::write(&path, "theirs again\n").unwrap();
     filetime_bump(&path, 10);
+    assert!(ed.changed_on_disk(), "what closing asks about again");
     ed.check_disk();
     assert!(ed.message.as_ref().unwrap().error);
     keys(&mut ed, ":w<CR>");
@@ -661,6 +663,7 @@ fn external_changes_are_never_clobbered_silently() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "theirs again\n");
     keys(&mut ed, ":w!<CR>");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "theirsx\n");
+    assert!(!ed.changed_on_disk());
     std::fs::remove_dir_all(dir).unwrap();
 }
 

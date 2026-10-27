@@ -601,6 +601,13 @@ impl Editor {
         Ok(())
     }
 
+    /// True if the file was written by something else since it was read or
+    /// saved here, so a plain save would refuse.
+    pub fn changed_on_disk(&self) -> bool {
+        let Some(path) = &self.path else { return false };
+        self.disk_mtime.is_some() && self.disk_mtime != mtime(path)
+    }
+
     /// Picks up external changes; call when the window regains focus.
     pub fn check_disk(&mut self) {
         if self.margin_active {

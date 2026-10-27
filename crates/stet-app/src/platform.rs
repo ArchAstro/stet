@@ -105,6 +105,22 @@ pub fn confirm_unsaved(name: &str) -> Unsaved {
     }
 }
 
+/// True if the user would write over a file that changed on disk.
+pub fn confirm_overwrite(name: &str) -> bool {
+    let answer = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("File changed on disk")
+        .set_description(format!(
+            "{name} was changed by something else since you opened it. Save your version over it?"
+        ))
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            "Save Over It".into(),
+            "Cancel".into(),
+        ))
+        .show();
+    answer == rfd::MessageDialogResult::Custom("Save Over It".into())
+}
+
 /// Downloaded images are kept here between runs.
 pub fn cache_dir() -> Option<PathBuf> {
     if std::env::var_os("STET_CONFIG_DIR").is_some() {

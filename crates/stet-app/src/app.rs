@@ -523,7 +523,22 @@ impl Running {
             Unsaved::Discard => true,
             Unsaved::Cancel => false,
             Unsaved::Save if self.session.editor.path.is_none() => self.save_as(),
-            Unsaved::Save => self.session.editor.save(None, false).is_ok(),
+            Unsaved::Save => {
+                let editor = &mut self.session.editor;
+                // Saying yes to saving is saying yes to closing; only a
+                // change made elsewhere is asked about again.
+                let force = editor.changed_on_disk();
+                if force && !platform::confirm_overwrite(&editor.file_name()) {
+                    return false;
+                }
+                match editor.save(None, force) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        editor.message = error(err);
+                        false
+                    }
+                }
+            }
         }
     }
 
