@@ -9,7 +9,8 @@ const WAIT: Duration = Duration::from_secs(60);
 
 fn python() -> Option<Kernel> {
     let specs = stet_kernel::kernelspecs();
-    let Some(spec) = stet_kernel::find(&specs, "python") else {
+    // A runner (plain `python3`) is not a kernel: these need ipykernel.
+    let Some(spec) = stet_kernel::find(&specs, "python").filter(|spec| spec.keeps_state) else {
         eprintln!(
             "skipped: no Python kernel installed (set JUPYTER_PATH to a directory holding kernels/<name>/kernel.json)"
         );
