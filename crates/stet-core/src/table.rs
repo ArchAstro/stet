@@ -112,6 +112,14 @@ pub struct Column {
     pub align: Align,
 }
 
+impl Column {
+    /// The narrowest it wraps to: never below a short word, or below what
+    /// it needs.
+    fn floor(&self) -> usize {
+        self.width.min(self.word.clamp(4, 14))
+    }
+}
+
 /// What a table's rows have in common.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Shape {
@@ -162,6 +170,11 @@ impl Shape {
         Some(Shape { columns })
     }
 
+    /// The fewest cells of content the table can be squeezed into.
+    pub fn least(&self) -> usize {
+        self.columns.iter().map(Column::floor).sum()
+    }
+
     /// Column widths that fit `available` cells of content: every column at
     /// its natural width if there is room, otherwise the wide ones give way
     /// first and wrap.
@@ -170,9 +183,7 @@ impl Shape {
         if natural <= available {
             return self.columns.iter().map(|column| column.width).collect();
         }
-        // No column is squeezed below a short word, or below what it needs.
-        let floor = |column: &Column| column.width.min(column.word.clamp(4, 14));
-        let mut widths: Vec<usize> = self.columns.iter().map(floor).collect();
+        let mut widths: Vec<usize> = self.columns.iter().map(Column::floor).collect();
         let mut spare = available.saturating_sub(widths.iter().sum());
         while spare > 0 {
             let narrowest = widths
@@ -329,6 +340,7 @@ mod tests {
         assert_eq!(shape.fit(44), [4, 20, 20]);
         // Never below what a word needs, even when that overflows.
         assert_eq!(shape.fit(10), [4, 9, 7]);
+        assert_eq!(shape.least(), 20);
     }
 
     #[test]

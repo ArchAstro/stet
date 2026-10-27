@@ -629,14 +629,15 @@ impl View {
             let advance = self.mono_advance(ed, m);
             let pad = advance.round();
             let count = shape.columns.len() as f32;
-            let natural: usize = shape.columns.iter().map(|column| column.width).sum();
             let fits = |width: f32| ((width - count * pad * 2.0 - 2.0) / advance).floor().max(0.0) as usize;
-            // A table too wide for the column may use the space beside it.
+            // A table keeps to the column and wraps its cells there; only one
+            // that cannot wrap narrow enough uses the space beside it, and
+            // only as much of it as it needs.
             let beside = (m.left - m.origin).min(m.right - m.left - m.column) - advance * 2.0;
-            let room = if natural <= fits(m.column) {
+            let room = if shape.least() <= fits(m.column) {
                 fits(m.column)
             } else {
-                fits(m.column + beside.max(0.0) * 2.0)
+                shape.least().min(fits(m.column + beside.max(0.0) * 2.0))
             };
             let widths: Vec<f32> = shape.fit(room).iter().map(|cells| *cells as f32 * advance).collect();
             let aligns: Vec<stet_core::table::Align> = shape.columns.iter().map(|column| column.align).collect();
