@@ -551,7 +551,11 @@ impl<'a> Painter<'a> {
         if legend {
             top += line_gap;
         }
-        let y_title = first.y.as_ref().map(Channel::title).filter(|_| !self.across);
+        let y_title = first
+            .y
+            .as_ref()
+            .map(Channel::title)
+            .filter(|title| !self.across && !title.is_empty());
         if y_title.is_some() {
             top += line_gap * 0.85;
         }

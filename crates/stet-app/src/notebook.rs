@@ -30,6 +30,8 @@ struct Started {
     runs: HashMap<RunId, u64>,
     /// Quiet runs an assistant asked for, and what they printed so far.
     probes: HashMap<RunId, Probe>,
+    /// The theme a Python kernel last drew in, by name.
+    theme: String,
 }
 
 struct Probe {
@@ -107,13 +109,13 @@ impl Kernels {
             return ed.notebook_finished(doc, run.uid, Status::Error, None, None);
         };
         let spec = spec.clone();
-        let started = self.kernel_for(doc, cwd, &spec);
+        let started = self.kernel_for(ed, doc, cwd, &spec);
         let id = started.kernel.execute(&run.code);
         started.runs.insert(id, run.uid);
     }
 
     /// The document's kernel for `spec`, started if it is not yet.
-    fn kernel_for(&mut self, doc: u64, cwd: Option<PathBuf>, spec: &Spec) -> &mut Started {
+    fn kernel_for(&mut self, ed: &Editor, doc: u64, cwd: Option<PathBuf>, spec: &Spec) -> &mut Started {
         let at = match self
             .started
             .iter()
@@ -135,7 +137,10 @@ impl Kernels {
                     },
                     runs: HashMap::new(),
                     probes: HashMap::new(),
+                    theme: String::new(),
                 });
+                let started = self.started.last_mut().expect("just pushed");
+                boot(ed, started);
                 self.started.len() - 1
             }
         };
@@ -152,7 +157,7 @@ impl Kernels {
         let spec = stet_kernel::find(specs, name)
             .ok_or_else(|| format!("no kernel or runner is called {name} (stet ctl kernel list)"))?
             .clone();
-        self.kernel_for(doc, cwd, &spec);
+        self.kernel_for(ed, doc, cwd, &spec);
         self.publish_state(ed, doc);
         Ok(())
     }
@@ -280,6 +285,7 @@ impl Kernels {
     pub fn restart(&mut self, ed: &mut Editor, doc: u64) {
         for started in self.started.iter_mut().filter(|started| started.doc == doc) {
             started.kernel.restart();
+            boot(ed, started);
             started.state.starting = started.kernel.spec().keeps_state;
             started.state.dead = None;
         }
@@ -300,6 +306,21 @@ impl Kernels {
                     self.start_run(ed, doc, cwd, run);
                 }
                 changed = true;
+            }
+        }
+        // A Python kernel draws in the editor's theme; tell it of a new one.
+        for started in self
+            .started
+            .iter_mut()
+            .filter(|started| is_python(started.kernel.spec()))
+        {
+            if started.theme != ed.theme.name {
+                started.theme = ed.theme.name.clone();
+                let args = json!({ "theme": theme_json(ed) }).to_string();
+                started.kernel.execute_quietly(&format!(
+                    "__import__('stet')._attach(**__import__('json').loads({}))",
+                    json!(args)
+                ));
             }
         }
         for closed in ed.closed_notebooks() {
@@ -406,6 +427,79 @@ fn apply(ed: &mut Editor, started: &mut Started, event: Event) {
             started.state.dead = Some(why.lines().next().unwrap_or("the kernel stopped").to_string());
         }
     }
+}
+
+/// The module Python kernels get: Stet's formatters, theme and data refs.
+const STET_PY: &str = include_str!("../python/stet/__init__.py");
+
+fn is_python(spec: &Spec) -> bool {
+    spec.keeps_state && spec.language.eq_ignore_ascii_case("python")
+}
+
+/// A chart's look, from the editor's theme: series in the theme's accents.
+pub fn chart_theme(ed: &Editor, size: f32) -> stet_chart::Theme {
+    let (c, p) = (ed.theme.colors, ed.theme.palette);
+    let rgb = |rgb: stet_core::theme::Rgb| [rgb.0, rgb.1, rgb.2];
+    stet_chart::Theme {
+        background: rgb(c.background),
+        text: rgb(c.text),
+        muted: rgb(c.muted),
+        grid: rgb(c.text.mix(c.background, 0.1)),
+        series: [p.blue, p.peach, p.green, p.mauve, p.red, p.teal, p.yellow, p.pink]
+            .into_iter()
+            .map(rgb)
+            .collect(),
+        // Named faces: the system UI font (San Francisco) is a variable
+        // font that draws nothing in an SVG.
+        font: "'Helvetica Neue', Helvetica, 'Segoe UI', Arial, 'DejaVu Sans', sans-serif".into(),
+        size: size.round().max(9.0),
+    }
+}
+
+/// The theme as the kernel's `stet` module takes it: colours as `#rrggbb`.
+fn theme_json(ed: &Editor) -> Value {
+    let theme = chart_theme(ed, 11.0);
+    let hex = |color: stet_chart::Color| format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
+    json!({
+        "background": hex(theme.background),
+        "text": hex(theme.text),
+        "muted": hex(theme.muted),
+        "grid": hex(theme.grid),
+        "series": theme.series.into_iter().map(hex).collect::<Vec<_>>(),
+    })
+}
+
+/// Give a Python kernel the `stet` module, before anything else runs on it:
+/// the one installed if it is Stet's, else the one built in.
+fn boot(ed: &Editor, started: &mut Started) {
+    if !is_python(started.kernel.spec()) {
+        return;
+    }
+    started.theme = ed.theme.name.clone();
+    let root = ed.notebook_of(started.doc).and_then(|book| {
+        book.path
+            .as_deref()?
+            .parent()
+            .map(|dir| dir.to_string_lossy().into_owned())
+    });
+    let args = json!({ "theme": theme_json(ed), "root": root }).to_string();
+    // JSON strings are Python strings too.
+    let code = format!(
+        r#"def __stet_boot(source, args):
+    import json, sys, types
+    module = sys.modules.get("stet")
+    if module is None or not hasattr(module, "_attach"):
+        module = types.ModuleType("stet")
+        module.__file__ = "<stet>"
+        sys.modules["stet"] = module
+        exec(compile(source, "<stet>", "exec"), module.__dict__)
+    module._attach(**json.loads(args))
+__stet_boot({}, {})
+del __stet_boot"#,
+        json!(STET_PY),
+        json!(args)
+    );
+    started.kernel.execute_quietly(&code);
 }
 
 /// Takes an event that belongs to a probe. `Some` if it did.

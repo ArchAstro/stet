@@ -75,26 +75,6 @@ pub(super) struct Block {
     pub height: f32,
 }
 
-/// A chart's look, from the editor's theme: series in the theme's accents.
-fn chart_theme(ed: &Editor, size: f32) -> stet_chart::Theme {
-    let (c, p) = (ed.theme.colors, ed.theme.palette);
-    let rgb = |rgb: Rgb| [rgb.0, rgb.1, rgb.2];
-    stet_chart::Theme {
-        background: rgb(c.background),
-        text: rgb(c.text),
-        muted: rgb(c.muted),
-        grid: rgb(c.text.mix(c.background, 0.1)),
-        series: [p.blue, p.peach, p.green, p.mauve, p.red, p.teal, p.yellow, p.pink]
-            .into_iter()
-            .map(rgb)
-            .collect(),
-        // Named faces: the system UI font (San Francisco) is a variable
-        // font that draws nothing in an SVG.
-        font: "'Helvetica Neue', Helvetica, 'Segoe UI', Arial, 'DejaVu Sans', sans-serif".into(),
-        size: size.round().max(9.0),
-    }
-}
-
 /// Text with ANSI colour codes taken out, and each line as a terminal would
 /// leave it after carriage returns (progress bars redraw with `\r`).
 pub(crate) fn plain_lines(text: &str) -> Vec<String> {
@@ -293,7 +273,7 @@ impl View {
     fn chart_rows(&mut self, cx: &Cx, _: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
         let inset = (cx.m.advance * 0.6).round();
         let width = ((cx.m.column - inset) / self.scale).floor().max(120.0);
-        let theme = chart_theme(cx.ed, cx.small / self.scale);
+        let theme = crate::notebook::chart_theme(cx.ed, cx.small / self.scale);
         let key = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
