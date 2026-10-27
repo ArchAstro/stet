@@ -25,6 +25,7 @@ pub const USAGE: &str = r#"stet ctl <command>   control the running stet (replie
   keys <notation>                press keys, in vim notation (ggVG, <D-/>, <Esc>)
   type <text>                    type text as the keyboard would
   click X Y [right]              click at a point in the window (points from the top left)
+  move X Y                       move the pointer there, as for a chart's readout
   drag X Y TO_X TO_Y             press at one point, move to another, and let go
   shot <file.png>                save a picture of what the window shows
   images [--doc D]               list the document's pictures: where each file is, and its size in pixels
@@ -488,14 +489,14 @@ fn build(args: &[String]) -> Result<Value, String> {
             request.insert(field.into(), json!(files.join(" ")));
             command.as_str()
         }
-        "click" => {
+        "click" | "move" => {
             let point: Vec<f64> = files.iter().filter_map(|value| value.parse().ok()).collect();
             let [x, y] = point[..] else {
-                return Err("click expects X Y".to_string());
+                return Err(format!("{command} expects X Y"));
             };
             request.insert("x".into(), json!(x));
             request.insert("y".into(), json!(y));
-            "click"
+            command.as_str()
         }
         "drag" => {
             let points: Vec<f64> = files.iter().filter_map(|value| value.parse().ok()).collect();

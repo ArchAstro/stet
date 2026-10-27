@@ -639,6 +639,7 @@ impl Running {
             "keys" => Some(format!("keys {}", text("keys"))),
             "type" => Some(format!("text {}", text("text"))),
             "click" => Some(format!("click {} {} {}", number("x"), number("y"), text("button")).replace(" right", "")),
+            "move" => Some(format!("move {} {}", number("x"), number("y"))),
             "drag" => Some(format!(
                 "drag {} {} {} {}",
                 number("x"),

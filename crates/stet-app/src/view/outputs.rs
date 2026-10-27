@@ -334,6 +334,143 @@ impl View {
         }
     }
 
+    /// The readout of the chart under the pointer, from the pictures of the
+    /// last frame.
+    pub(super) fn chart_hover(&self) -> Option<(String, stet_chart::Readout)> {
+        let (x, y) = self.pointer;
+        let picture = self.pictures.iter().find(|picture| {
+            let [left, top, width, height] = picture.seen;
+            x >= left && x < left + width && y >= top && y < top + height
+        })?;
+        let chart = self.charts.get(&picture.url)?;
+        // The picture may be shown smaller than the chart was laid out.
+        let points = chart.width / picture.rect[2];
+        let readout = chart.readout((x - picture.rect[0]) * points, (y - picture.rect[1]) * points)?;
+        Some((picture.url.clone(), readout))
+    }
+
+    /// Over a chart: a guide down it, a dot on each value read, and a card
+    /// with the values beside the pointer.
+    pub(super) fn chart_readout(&mut self, ed: &Editor, m: &Metrics, layer: &mut Layer) {
+        let Some((url, readout)) = self.chart_hover.clone() else {
+            return;
+        };
+        let Some(picture) = self.pictures.iter().find(|picture| picture.url == url).cloned() else {
+            return;
+        };
+        let Some(chart) = self.charts.get(&url) else { return };
+        let px = picture.rect[2] / chart.width;
+        let [left, top, _, height] = picture.rect;
+        let c = ed.theme.colors;
+        let rgb = |color: stet_chart::Color| Rgb(color[0], color[1], color[2]);
+        let line = self.scale.round().max(1.0);
+        if let Some(guide) = readout.guide {
+            layer.back.push(Quad {
+                rect: [(left + guide * px - line / 2.0).round(), top, line, height],
+                color: linear(c.muted, 0.6),
+                radius: 0.0,
+            });
+        }
+        let dot = (4.0 * self.scale).round();
+        for row in &readout.rows {
+            if let Some((x, y)) = row.at {
+                let (x, y) = (left + x * px, top + y * px);
+                layer.back.push(Quad {
+                    rect: [
+                        x - dot / 2.0 - line,
+                        y - dot / 2.0 - line,
+                        dot + 2.0 * line,
+                        dot + 2.0 * line,
+                    ],
+                    color: linear(c.background, 1.0),
+                    radius: dot,
+                });
+                layer.back.push(Quad {
+                    rect: [x - dot / 2.0, y - dot / 2.0, dot, dot],
+                    color: linear(rgb(row.color), 1.0),
+                    radius: dot,
+                });
+            }
+        }
+        // The card: the title, then a swatch, a name and a value a row.
+        let small = (m.font * 0.74).round();
+        let pad = (8.0 * self.scale).round();
+        let swatch = (small * 0.7).round();
+        let title = self.label(ed, &readout.title, c.text, small, Face::Ui, true);
+        let mut lines = Vec::new();
+        for row in &readout.rows {
+            let name = self.label(ed, &row.label, c.muted, small, Face::Ui, false);
+            let value = self.label(ed, &row.value, c.text, small, Face::Ui, true);
+            lines.push((row.color, name, value));
+        }
+        let width_of = |view: &View, key: u64| view.layouts[&key].rows.first().map_or(0.0, |row| row.width);
+        let row_height = self.layouts[&title].height;
+        let names = lines
+            .iter()
+            .map(|(_, name, _)| width_of(self, *name))
+            .fold(0.0, f32::max);
+        let values = lines
+            .iter()
+            .map(|(.., value)| width_of(self, *value))
+            .fold(0.0, f32::max);
+        let inner = (swatch + pad * 0.6 + names + pad + values).max(width_of(self, title));
+        let (w, h) = (inner + pad * 2.0, pad * 2.0 + row_height * (1 + lines.len()) as f32);
+        let (x, y) = self.pointer;
+        let mut card_x = x + pad * 2.0;
+        if card_x + w > m.right {
+            card_x = x - pad * 2.0 - w;
+        }
+        let card_y = (y - h / 2.0).clamp(m.top, (m.bottom - h).max(m.top));
+        let (card_x, card_y) = (card_x.round(), card_y.round());
+        layer.back.push(Quad {
+            rect: [card_x - line, card_y - line, w + 2.0 * line, h + 2.0 * line],
+            color: linear(c.rule, 1.0),
+            radius: pad * 0.75,
+        });
+        layer.back.push(Quad {
+            rect: [card_x, card_y, w, h],
+            color: linear(c.panel, 1.0),
+            radius: pad * 0.75,
+        });
+        let clip = [card_x, card_y, card_x + w, card_y + h];
+        let mut text_y = card_y + pad;
+        layer.texts.push(TextItem {
+            key: title,
+            left: card_x + pad,
+            top: text_y,
+            clip,
+            color: color(c.text),
+        });
+        for (swatch_color, name, value) in lines {
+            text_y += row_height;
+            layer.back.push(Quad {
+                rect: [
+                    card_x + pad,
+                    (text_y + (row_height - swatch) / 2.0).round(),
+                    swatch,
+                    swatch,
+                ],
+                color: linear(rgb(swatch_color), 1.0),
+                radius: swatch * 0.25,
+            });
+            layer.texts.push(TextItem {
+                key: name,
+                left: card_x + pad + swatch + pad * 0.6,
+                top: text_y,
+                clip,
+                color: color(c.muted),
+            });
+            let value_width = width_of(self, value);
+            layer.texts.push(TextItem {
+                key: value,
+                left: (card_x + w - pad - value_width).round(),
+                top: text_y,
+                clip,
+                color: color(c.text),
+            });
+        }
+    }
+
     /// A picture until it has loaded is no picture: the next form down
     /// shows meanwhile.
     fn picture_rows(&mut self, cx: &Cx, mime: &str, value: &Value, rows: &mut Vec<Row>) -> bool {

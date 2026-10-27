@@ -230,6 +230,8 @@ pub struct View {
     /// layout, by the picture it was drawn as.
     chart_keys: HashMap<u64, String>,
     charts: HashMap<String, stet_chart::Chart>,
+    /// What the chart under the pointer reads there: the picture and its readout.
+    chart_hover: Option<(String, stet_chart::Readout)>,
 }
 
 /// A table on screen, in window coordinates.
@@ -291,15 +293,18 @@ impl View {
             hover: None,
             chart_keys: HashMap::new(),
             charts: HashMap::new(),
+            chart_hover: None,
         }
     }
 
-    /// Notes where the mouse is. True if what it is over in a table
-    /// changed, so the frame needs drawing again.
+    /// Notes where the mouse is. True if what it is over in a table or a
+    /// chart changed, so the frame needs drawing again.
     pub fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
         let hover = self.table_hover();
-        std::mem::replace(&mut self.hover, hover) != hover
+        let chart = self.chart_hover();
+        let chart_changed = std::mem::replace(&mut self.chart_hover, chart) != self.chart_hover;
+        (std::mem::replace(&mut self.hover, hover) != hover) | chart_changed
     }
 
     /// True if the table under the pointer is in the pane without the keyboard.
@@ -1146,6 +1151,7 @@ impl View {
         self.status(ed, &m, &mut frame.base);
         self.tabs(ed, &m, &mut frame.base);
         self.sidebar(ed, &m, &mut frame.base);
+        self.chart_readout(ed, &m, &mut frame.over);
         self.palette(ed, &m, &mut frame.over);
         self.context_menu(ed, &m, &mut frame.over);
         self.retouching(ed, m.ui, &mut frame.over);
