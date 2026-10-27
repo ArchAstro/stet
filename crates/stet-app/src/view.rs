@@ -226,6 +226,10 @@ pub struct View {
     tables: Vec<TableBox>,
     /// What of a table the pointer is over: `(first line, row line, column, part)`.
     hover: Option<(usize, usize, usize, Part)>,
+    /// Charts laid out, by what they were drawn from; and each one's
+    /// layout, by the picture it was drawn as.
+    chart_keys: HashMap<u64, String>,
+    charts: HashMap<String, stet_chart::Chart>,
 }
 
 /// A table on screen, in window coordinates.
@@ -285,6 +289,8 @@ impl View {
             pointer: (-1.0, -1.0),
             tables: Vec::new(),
             hover: None,
+            chart_keys: HashMap::new(),
+            charts: HashMap::new(),
         }
     }
 

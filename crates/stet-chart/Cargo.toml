@@ -1,0 +1,12 @@
+[package]
+name = "stet-chart"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Charts for stet's notebook mode: a Vega-Lite-shaped spec drawn as themed SVG, with hover readouts"
+
+[dependencies]
+serde_json = "1"

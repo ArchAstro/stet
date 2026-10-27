@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/stet-core", "crates/stet-app", "crates/stet-kernel", "crates/stet-substack", "crates/stet-youtube"]
+members = ["crates/stet-core", "crates/stet-app", "crates/stet-kernel", "crates/stet-chart", "crates/stet-substack", "crates/stet-youtube"]
 
 [workspace.package]
 version = "0.4.0"

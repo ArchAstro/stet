@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 stet-core = { path = "../stet-core" }
 stet-kernel = { path = "../stet-kernel" }
+stet-chart = { path = "../stet-chart" }
 winit = "0.30"
 wgpu = "30"
 glyphon = "0.12"

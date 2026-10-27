@@ -2925,6 +2925,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "stet-chart",
  "stet-core",
  "stet-kernel",
  "stet-substack",
@@ -2933,6 +2934,13 @@ dependencies = [
  "ureq",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "stet-chart"
+version = "0.4.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

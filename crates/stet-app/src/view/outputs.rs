@@ -37,8 +37,12 @@ struct Cx<'a> {
 /// Draws one form of an output into rows, or says it cannot (`false`).
 type Render = fn(&mut View, &Cx, &str, &Value, &mut Vec<Row>) -> bool;
 
-/// Every form of output that can be drawn, richest first.
+/// Every form of output that can be drawn, richest first. A type ending in
+/// `*` stands for every type that starts with what comes before it.
 const RENDERERS: &[(&str, Render)] = &[
+    (stet_chart::MIME, View::chart_rows),
+    // Altair's, in every version: `v5+json`, `v6.json`.
+    ("application/vnd.vegalite.v*", View::chart_rows),
     ("image/png", View::picture_rows),
     ("image/jpeg", View::picture_rows),
     ("image/gif", View::picture_rows),
@@ -69,6 +73,26 @@ pub(super) enum Row {
 pub(super) struct Block {
     pub rows: Vec<Row>,
     pub height: f32,
+}
+
+/// A chart's look, from the editor's theme: series in the theme's accents.
+fn chart_theme(ed: &Editor, size: f32) -> stet_chart::Theme {
+    let (c, p) = (ed.theme.colors, ed.theme.palette);
+    let rgb = |rgb: Rgb| [rgb.0, rgb.1, rgb.2];
+    stet_chart::Theme {
+        background: rgb(c.background),
+        text: rgb(c.text),
+        muted: rgb(c.muted),
+        grid: rgb(c.text.mix(c.background, 0.1)),
+        series: [p.blue, p.peach, p.green, p.mauve, p.red, p.teal, p.yellow, p.pink]
+            .into_iter()
+            .map(rgb)
+            .collect(),
+        // Named faces: the system UI font (San Francisco) is a variable
+        // font that draws nothing in an SVG.
+        font: "'Helvetica Neue', Helvetica, 'Segoe UI', Arial, 'DejaVu Sans', sans-serif".into(),
+        size: size.round().max(9.0),
+    }
 }
 
 /// Text with ANSI colour codes taken out, and each line as a terminal would
@@ -207,8 +231,12 @@ impl View {
                     lines(self, &mut rows, headline.trim_end_matches([':', ' ']), c.error, true, 4);
                 }
                 Item::Display { data } | Item::Result { data } => {
-                    for (mime, render) in RENDERERS {
-                        if let Some(value) = data.get(*mime)
+                    for (pattern, render) in RENDERERS {
+                        let found = match pattern.strip_suffix('*') {
+                            Some(prefix) => data.iter().find(|(mime, _)| mime.starts_with(prefix)),
+                            None => data.get_key_value(*pattern),
+                        };
+                        if let Some((mime, value)) = found
                             && render(self, &cx, mime, value, &mut rows)
                         {
                             break;
@@ -260,6 +288,52 @@ impl View {
         true
     }
 
+    /// A chart, drawn as SVG the width of the text in the editor's theme.
+    /// One that cannot be drawn says why, and the next form down shows.
+    fn chart_rows(&mut self, cx: &Cx, _: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
+        let inset = (cx.m.advance * 0.6).round();
+        let width = ((cx.m.column - inset) / self.scale).floor().max(120.0);
+        let theme = chart_theme(cx.ed, cx.small / self.scale);
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value.to_string().hash(&mut hasher);
+            (width as u32).hash(&mut hasher);
+            format!("{theme:?}").hash(&mut hasher);
+            hasher.finish()
+        };
+        let url = match self.chart_keys.get(&key) {
+            Some(url) => url.clone(),
+            None => match stet_chart::draw(value, &theme, width, &mut |_| None) {
+                Ok(chart) => {
+                    if self.charts.len() > 64 {
+                        self.charts.clear();
+                        self.chart_keys.clear();
+                    }
+                    let url = format!(
+                        "data:image/svg+xml;base64,{}",
+                        notebook::base64_encode(chart.svg.as_bytes())
+                    );
+                    self.charts.insert(url.clone(), chart);
+                    self.chart_keys.insert(key, url.clone());
+                    url
+                }
+                Err(err) => {
+                    let c = cx.ed.theme.colors;
+                    rows.push(self.text_row(cx.ed, &format!("chart: {err}"), c.muted, cx.small, Face::Ui, false));
+                    return false;
+                }
+            },
+        };
+        match self.shown_at(url, 1.0, cx.m) {
+            Some(shown) => {
+                rows.push(Row::Picture(shown));
+                true
+            }
+            None => false,
+        }
+    }
+
     /// A picture until it has loaded is no picture: the next form down
     /// shows meanwhile.
     fn picture_rows(&mut self, cx: &Cx, mime: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
@@ -289,12 +363,16 @@ impl View {
             (None, Some(encoded)) => format!("data:{mime};base64,{}", encoded.replace(['\n', '\r'], "")),
             _ => return None,
         };
+        // Kernels draw figures for a 2x screen at most; a drawing's size is
+        // in points already.
+        self.shown_at(url, if svg { 1.0 } else { 2.0 }, m)
+    }
+
+    /// The picture at `url`, `density` pixels to the point, shown at its
+    /// size in points and never wider than the text.
+    fn shown_at(&mut self, url: String, density: f32, m: &Metrics) -> Option<Shown> {
         let source = images::resolve(&url, None, false)?;
         let (id, width, height) = self.images.get(&source)?;
-        // Kernels draw figures for a 2x screen at most; show them at their
-        // size in points, never wider than the text. A drawing's size is
-        // in points already.
-        let density = if svg { 1.0 } else { 2.0 };
         let (width, height) = (
             width as f32 * self.scale / density,
             height as f32 * self.scale / density,
