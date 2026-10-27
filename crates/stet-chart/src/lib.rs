@@ -781,7 +781,16 @@ impl<'a> Painter<'a> {
             };
             mix(self.color(0), t.background, 0.12 + 0.88 * t_)
         };
-        for layer in &self.layers {
+        // Filled marks first, so lines and points stay on top of them.
+        let mut order: Vec<&Prepared> = self.layers.iter().collect();
+        order.sort_by_key(|layer| match layer.mark {
+            Mark::Heatmap => 0,
+            Mark::Bar => 1,
+            Mark::Area => 2,
+            Mark::Line => 3,
+            Mark::Point => 4,
+        });
+        for layer in order {
             let mut by_series: Vec<Vec<&Datum>> = vec![Vec::new(); self.series.len().max(1)];
             let last = by_series.len() - 1;
             for datum in &layer.data {
