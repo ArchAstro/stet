@@ -13,6 +13,7 @@ ropey = "1"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html", "simd"] }
 unicode-segmentation = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "1"
 regex = "1"
 syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy"] }

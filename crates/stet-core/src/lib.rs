@@ -10,6 +10,7 @@ pub mod highlight;
 pub mod html;
 pub mod input;
 pub mod markdown;
+pub mod notebook;
 pub mod table;
 pub mod theme;
 

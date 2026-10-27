@@ -2840,6 +2840,7 @@ dependencies = [
  "regex",
  "ropey",
  "serde",
+ "serde_json",
  "syntect",
  "toml",
  "two-face",
