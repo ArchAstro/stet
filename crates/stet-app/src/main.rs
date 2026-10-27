@@ -6,6 +6,7 @@ mod ctl;
 mod data;
 mod gpu;
 mod images;
+mod ipynb;
 #[cfg(target_os = "macos")]
 mod macos;
 mod motion;
@@ -40,7 +41,10 @@ const USAGE: &str = "stet [options] [file]
   -V, --version           print the version
   -h, --help              this text
 
-stet ctl ...                control the running stet from another program (stet ctl --help)";
+stet ctl ...                control the running stet from another program (stet ctl --help)
+stet import nb.ipynb        a Jupyter notebook as markdown, its outputs kept beside it
+stet export doc.md --ipynb|--html
+                            the document and its outputs as a Jupyter notebook, or a page to read";
 
 #[derive(Default)]
 pub struct Args {
@@ -203,6 +207,9 @@ fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if raw.first().is_some_and(|first| first == "ctl") {
         std::process::exit(ctl::cli(&raw[1..]));
+    }
+    if let Some(command) = raw.first().filter(|first| *first == "import" || *first == "export") {
+        std::process::exit(ipynb::cli(command, &raw[1..]));
     }
     let args = match parse_args() {
         Ok(args) => args,

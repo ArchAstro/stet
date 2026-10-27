@@ -3352,6 +3352,7 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "open",
  "pollster 1.0.1",
+ "pulldown-cmark",
  "resvg",
  "rfd",
  "serde",

@@ -17,6 +17,7 @@ stet-core = { path = "../stet-core" }
 stet-kernel = { path = "../stet-kernel" }
 stet-chart = { path = "../stet-chart" }
 stet-data = { path = "../stet-data" }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html", "simd"] }
 winit = "0.30"
 wgpu = "30"
 glyphon = "0.12"

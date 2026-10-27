@@ -253,12 +253,20 @@ impl Item {
             Value::Array(parts) => parts.iter().filter_map(Value::as_str).collect(),
             _ => String::new(),
         };
+        // Text kept as a list of lines, as nbformat may, is joined: other
+        // types (JSON) can be lists in their own right.
         let data = |value: &Value| {
-            value
+            let mut data = value
                 .get("data")
                 .and_then(Value::as_object)
                 .cloned()
-                .unwrap_or_default()
+                .unwrap_or_default();
+            for (mime, value) in data.iter_mut() {
+                if (mime.starts_with("text/") || mime == "image/svg+xml") && value.is_array() {
+                    *value = Value::String(text(value));
+                }
+            }
+            data
         };
         Some(match value.get("output_type")?.as_str()? {
             "stream" => Item::Stream {
@@ -852,6 +860,17 @@ mod tests {
         assert_eq!(back.slots[0].outputs, notebook.slots[0].outputs);
         assert_eq!((back.slots[0].status, back.slots[0].count), (Status::Error, Some(3)));
         assert!(back.matching(&remaining)[0].is_some());
+
+        // nbformat's text as lines reads as one string; JSON lists stay lists.
+        let listed = json!({"output_type": "execute_result", "data": {
+            "text/plain": ["   a\n", "0  1"], "application/json": [1, 2]}});
+        let Some(Item::Result { data }) = Item::from_json(&listed) else {
+            panic!()
+        };
+        assert_eq!(
+            (data["text/plain"].clone(), data["application/json"].clone()),
+            (json!("   a\n0  1"), json!([1, 2]))
+        );
     }
 
     #[test]
