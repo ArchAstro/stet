@@ -170,14 +170,14 @@ fn columns_from(names: Vec<String>, rows: &[Vec<Value>]) -> Vec<Column> {
 fn count_lines(path: &Path) -> Option<u64> {
     use std::io::Read;
     let mut file = std::fs::File::open(path).ok()?;
-    let mut buffer = vec![0u8; 1 << 20];
+    let mut buffer = vec![0u8; 4 << 20];
     let (mut count, mut last) = (0u64, b'\n');
     loop {
         let read = file.read(&mut buffer).ok()?;
         if read == 0 {
             break;
         }
-        count += buffer[..read].iter().filter(|byte| **byte == b'\n').count() as u64;
+        count += memchr::memchr_iter(b'\n', &buffer[..read]).count() as u64;
         last = buffer[read - 1];
     }
     Some(count + u64::from(last != b'\n'))

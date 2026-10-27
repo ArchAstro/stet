@@ -9,6 +9,7 @@ homepage.workspace = true
 description = "A first look at data files for stet: schema, row count and first rows of CSV, JSON, Parquet, Arrow and SQLite"
 
 [dependencies]
+memchr = "2.7"
 serde_json = "1"
 csv = "1.4"
 parquet = { version = "60", default-features = false, features = ["arrow", "snap", "zstd", "flate2-rust_backend", "lz4"] }

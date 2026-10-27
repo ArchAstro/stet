@@ -3404,6 +3404,7 @@ dependencies = [
  "arrow-ipc",
  "arrow-schema",
  "csv",
+ "memchr",
  "parquet",
  "rusqlite",
  "serde_json",

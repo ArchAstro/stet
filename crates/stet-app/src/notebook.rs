@@ -646,3 +646,61 @@ fn item(output: Output) -> Item {
         Output::Clear { .. } => unreachable!("clears are applied, not kept"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn editor(text: &str) -> Editor {
+        let mut ed = Editor::new(
+            stet_core::Config::default(),
+            Box::new(stet_core::MemoryClipboard::default()),
+        );
+        ed.set_text(text);
+        ed.refresh();
+        ed
+    }
+
+    #[test]
+    fn a_published_table_is_offered_as_a_ref_once() {
+        let mut ed = editor("# A\n\n[signups]: data/s.csv\n\nSome prose.\n");
+        let doc = ed.doc_id();
+        let published = json!({ "name": "clean", "path": ".stet/data/clean.parquet", "rows": 3 });
+        offer_ref(&mut ed, doc, &published);
+        ed.refresh();
+        let text = ed.buf.text();
+        assert_eq!(ed.doc().suggestions.len(), 1, "{text}");
+        // Beside the other refs, as a suggestion by stet.publish.
+        assert!(
+            text.contains("[signups]: data/s.csv\n{++[clean]: .stet/data/clean.parquet\n++}"),
+            "{text}"
+        );
+        assert!(text.contains("by:stet.publish"), "{text}");
+
+        // A document that already names it is left alone.
+        let mut ed = editor("[clean]: .stet/data/clean.parquet\n");
+        let doc = ed.doc_id();
+        offer_ref(&mut ed, doc, &published);
+        ed.refresh();
+        assert!(ed.doc().suggestions.is_empty());
+
+        // With no refs yet, it goes at the end, after a blank line.
+        let mut ed = editor("Some prose.\n");
+        let doc = ed.doc_id();
+        offer_ref(&mut ed, doc, &published);
+        let text = ed.buf.text();
+        assert!(
+            text.starts_with("Some prose.\n{++\n[clean]: .stet/data/clean.parquet\n++}"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn refs_name_files_beside_the_document() {
+        let mut ed = editor("[signups]: data/s.csv\n[site]: https://x.io/a.csv\n");
+        ed.path = Some(PathBuf::from("/notes/a.md"));
+        let doc = ed.doc_id();
+        assert_eq!(refs_json(&mut ed, doc), Some(json!({ "signups": "/notes/data/s.csv" })));
+        assert_eq!(refs_json(&mut ed, doc + 1000), None);
+    }
+}
