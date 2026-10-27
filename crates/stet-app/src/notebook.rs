@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use stet_core::Editor;
-use stet_core::editor::{CellRun, KernelState};
+use stet_core::editor::{CellRun, KernelState, RemoteEdit, Target};
 use stet_core::notebook::{Item, Status};
 use stet_kernel::{Event, Kernel, Output, RunId, Spec};
 
@@ -32,6 +32,8 @@ struct Started {
     probes: HashMap<RunId, Probe>,
     /// The theme a Python kernel last drew in, by name.
     theme: String,
+    /// The data refs a Python kernel was last given: name to file.
+    refs: Value,
 }
 
 struct Probe {
@@ -138,6 +140,7 @@ impl Kernels {
                     runs: HashMap::new(),
                     probes: HashMap::new(),
                     theme: String::new(),
+                    refs: Value::Null,
                 });
                 let started = self.started.last_mut().expect("just pushed");
                 boot(ed, started);
@@ -314,9 +317,20 @@ impl Kernels {
             .iter_mut()
             .filter(|started| is_python(started.kernel.spec()))
         {
+            let mut args = serde_json::Map::new();
             if started.theme != ed.theme.name {
                 started.theme = ed.theme.name.clone();
-                let args = json!({ "theme": theme_json(ed) }).to_string();
+                args.insert("theme".into(), theme_json(ed));
+            }
+            // And of the data refs its document names, as they change.
+            if let Some(refs) = refs_json(ed, started.doc)
+                && refs != started.refs
+            {
+                started.refs = refs.clone();
+                args.insert("refs".into(), refs);
+            }
+            if !args.is_empty() {
+                let args = Value::Object(args).to_string();
                 started.kernel.execute_quietly(&format!(
                     "__import__('stet')._attach(**__import__('json').loads({}))",
                     json!(args)
@@ -397,6 +411,11 @@ fn apply(ed: &mut Editor, started: &mut Started, event: Event) {
         }
         Event::Output(run, output) => {
             let Some(&uid) = started.runs.get(&run) else { return };
+            if let Output::Display(data) = &output
+                && let Some(published) = data.get(PUBLISH)
+            {
+                offer_ref(ed, doc, published);
+            }
             match output {
                 Output::Clear { wait } => ed.notebook_clear(doc, uid, wait),
                 output => ed.notebook_output(doc, uid, item(output)),
@@ -482,7 +501,9 @@ fn boot(ed: &Editor, started: &mut Started) {
             .parent()
             .map(|dir| dir.to_string_lossy().into_owned())
     });
-    let args = json!({ "theme": theme_json(ed), "root": root }).to_string();
+    let refs = refs_json(ed, started.doc).unwrap_or(Value::Null);
+    started.refs = refs.clone();
+    let args = json!({ "theme": theme_json(ed), "root": root, "refs": refs }).to_string();
     // JSON strings are Python strings too.
     let code = format!(
         r#"def __stet_boot(source, args):
@@ -500,6 +521,76 @@ del __stet_boot"#,
         json!(args)
     );
     started.kernel.execute_quietly(&code);
+}
+
+/// What `stet.publish` shows: `{name, path, rows}`.
+const PUBLISH: &str = "application/vnd.stet.publish+json";
+
+/// The data refs of document `doc` as its kernel takes them, a name to a
+/// file. `None` unless that document is the one in front, where its refs
+/// are at hand.
+fn refs_json(ed: &Editor, doc: u64) -> Option<Value> {
+    if ed.doc_id() != doc || ed.in_margin() {
+        return None;
+    }
+    let refs: serde_json::Map<String, Value> = ed
+        .doc()
+        .data_refs
+        .iter()
+        .map(|data| {
+            let file = crate::data::resolve(&data.path, ed.path.as_deref());
+            (data.name.clone(), json!(file))
+        })
+        .collect();
+    Some(Value::Object(refs))
+}
+
+/// A kernel published a table: offer its document a ref to it, as a
+/// suggestion to accept. Nothing if the document already names it there.
+fn offer_ref(ed: &mut Editor, doc: u64, published: &Value) {
+    let (Some(name), Some(path)) = (published["name"].as_str(), published["path"].as_str()) else {
+        return;
+    };
+    let Some(index) = (0..ed.tab_count()).find(|&index| ed.with_pane(index, false, |ed| ed.doc_id()) == Some(doc))
+    else {
+        return;
+    };
+    let placed = ed.with_pane(index, false, |ed| {
+        ed.refresh();
+        if ed.doc().data_ref(name).is_some_and(|data| data.path == path) {
+            return None;
+        }
+        // Beside the other refs; else at the end, after a blank line, as a
+        // definition cannot follow a paragraph.
+        Some(match ed.doc().data_refs.last() {
+            Some(last) => (Target::Line(last.line + 1), format!("[{name}]: {path}\n")),
+            None => {
+                let count = ed.buf.line_count();
+                let filled = |line: usize| !ed.buf.line_text(line).trim().is_empty();
+                let blank = if filled(count - 1) {
+                    "\n\n"
+                } else if count >= 2 && filled(count - 2) {
+                    "\n"
+                } else {
+                    ""
+                };
+                (Target::End, format!("{blank}[{name}]: {path}\n"))
+            }
+        })
+    });
+    let Some(Some((target, text))) = placed else { return };
+    let edit = RemoteEdit {
+        target,
+        text,
+        suggest: true,
+        author: "stet.publish".into(),
+    };
+    if let Err(err) = ed.remote_edit(index, false, &edit) {
+        ed.message = Some(stet_core::editor::Message {
+            text: format!("publish {name}: {err}"),
+            error: true,
+        });
+    }
 }
 
 /// Takes an event that belongs to a probe. `Some` if it did.

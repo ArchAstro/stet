@@ -68,6 +68,7 @@ def _attach(theme=None, refs=None, root=None):
         ("plotly.graph_objs._figure", "Figure", _plotly_chart),
     ])
     shell.user_ns.setdefault("refs", refs_object)
+    shell.user_ns.setdefault("stet", sys.modules.get("stet") or sys.modules[__name__])
     # matplotlib's inline backend takes figures from every formatter when
     # it starts and resets its look: start it now, ahead of the writer's
     # code, and put figures back before each cell's figures are shown.

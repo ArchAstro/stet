@@ -14,7 +14,10 @@ use stet_core::editor::{Book, Which};
 use stet_core::notebook::{self, Item, Slot, Status};
 
 /// The `stet ctl` commands answered here.
-pub const COMMANDS: &[&str] = &["cells", "run", "output", "kernel", "vars"];
+pub const COMMANDS: &[&str] = &["cells", "run", "output", "kernel", "vars", "data"];
+
+/// Rows `data peek` shows unless asked for more.
+const PEEK_ROWS: usize = 20;
 
 /// A long reply is cut to this many characters of text per output.
 const TEXT_LIMIT: usize = 4000;
@@ -124,8 +127,77 @@ fn answer(
             kernels.probe(id, doc, text("kernel").as_deref(), VARS, reply.clone())?;
             Ok(None)
         }
+        "data" => {
+            let action = text("action").unwrap_or_else(|| "list".into());
+            let (refs, path) = in_doc_refs(ed, index)?;
+            if action == "list" {
+                let refs: Vec<Value> = refs
+                    .iter()
+                    .map(|data| {
+                        json!({
+                            "name": data.name,
+                            "path": data.path,
+                            "file": crate::data::resolve(&data.path, path.as_deref()),
+                            "table": data.table,
+                            "line": data.line + 1,
+                        })
+                    })
+                    .collect();
+                return Ok(Some(json!({ "ok": true, "refs": refs })));
+            }
+            let name = text("name").ok_or("say which ref: data peek NAME")?;
+            let data = refs
+                .iter()
+                .find(|data| data.name.eq_ignore_ascii_case(&name))
+                .ok_or_else(|| format!("no data ref [{name}] in this document"))?
+                .clone();
+            let rows = match action.as_str() {
+                "peek" => request
+                    .get("rows")
+                    .and_then(Value::as_u64)
+                    .map_or(PEEK_ROWS, |rows| rows as usize),
+                // Rows to judge the types by, left out of the answer.
+                "schema" => crate::data::PREVIEW_ROWS,
+                other => return Err(format!("data does not {other}: list, peek or schema")),
+            };
+            let file = crate::data::resolve(&data.path, path.as_deref());
+            let schema = action == "schema";
+            let reply = reply.clone();
+            // Off the UI thread: counting a large CSV's rows takes a while.
+            std::thread::spawn(move || {
+                let answer = match stet_data::peek(&file, data.table.as_deref(), rows) {
+                    Ok(peek) => {
+                        let mut answer = peek.to_json();
+                        answer["ok"] = json!(true);
+                        answer["name"] = json!(data.name);
+                        answer["file"] = json!(file);
+                        answer["format"] = json!(peek.format);
+                        if peek.table.is_some() {
+                            answer["table"] = json!(peek.table);
+                            answer["tables"] = json!(peek.tables);
+                        }
+                        if schema {
+                            answer.as_object_mut().map(|object| object.remove("rows"));
+                        }
+                        answer
+                    }
+                    Err(err) => fail(err),
+                };
+                let _ = reply.send(answer.to_string());
+            });
+            Ok(None)
+        }
         other => Err(format!("unknown command `{other}`")),
     }
+}
+
+/// The data refs of document `index`, and where the document is.
+fn in_doc_refs(ed: &mut Editor, index: usize) -> Result<(Vec<stet_core::markdown::DataRef>, Option<PathBuf>), String> {
+    ed.with_pane(index, false, |ed| {
+        ed.refresh();
+        (ed.doc().data_refs.clone(), ed.path.clone())
+    })
+    .ok_or_else(|| "that document is not open".into())
 }
 
 fn book(ed: &Editor) -> Result<&Book, String> {

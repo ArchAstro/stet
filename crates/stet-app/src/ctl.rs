@@ -46,6 +46,9 @@ notebooks (fenced code blocks are cells; a cell is named by number, from 1, or b
                                  what can run here and what runs for the document; restart forgets
                                  every variable, interrupt stops the run in progress
   vars [--doc D] [--kernel NAME] the variables a Python kernel holds: name, type, size, and a short repr
+  data [list|peek NAME|schema NAME] [--rows N] [--doc D]
+                                 the document's data refs ([name]: file.csv), and a file's columns, types,
+                                 row count and first rows (20 unless --rows), read without a kernel
 
 targets (one of):
   --old TEXT --new TEXT          replace TEXT, which must occur exactly once (or add --occurrence N)
@@ -416,6 +419,13 @@ fn build(args: &[String]) -> Result<Value, String> {
             "--old" | "--new" | "--text" | "--author" | "--at" | "--name" | "--cell" | "--kernel" => {
                 request.insert(arg[2..].to_string(), json!(value(next(arg)?)?));
             }
+            "--rows" => {
+                let rows = next("--rows")?;
+                request.insert(
+                    "rows".into(),
+                    json!(rows.parse::<u64>().map_err(|_| "--rows expects a number")?),
+                );
+            }
             "--ops" => {
                 let ops: Value =
                     serde_json::from_str(&value(next(arg)?)?).map_err(|err| format!("--ops is not JSON: {err}"))?;
@@ -475,6 +485,14 @@ fn build(args: &[String]) -> Result<Value, String> {
                 request.entry("cell").or_insert(json!(cell));
             }
             "run"
+        }
+        "data" => {
+            let mut words = files.iter();
+            request.insert("action".into(), json!(words.next().map_or("list", String::as_str)));
+            if let Some(name) = words.next() {
+                request.insert("name".into(), json!(name));
+            }
+            "data"
         }
         "kernel" => {
             let mut words = files.iter();
@@ -549,7 +567,7 @@ pub fn cli(args: &[String]) -> i32 {
         }
     };
     // These are answered when the writer, or a kernel, is done.
-    let patient = request["cmd"] == "wait" || request["cmd"] == "vars" || request["wait"] == json!(true);
+    let patient = ["wait", "vars", "data"].iter().any(|cmd| request["cmd"] == *cmd) || request["wait"] == json!(true);
     let Some(reply) = platform::request(&request.to_string(), patient) else {
         println!("{}", fail("stet is not running; start it with `stet <file>`"));
         return 1;
@@ -586,5 +604,10 @@ mod tests {
             json!({ "cmd": "kernel", "action": "start", "name": "python3" })
         );
         assert_eq!(built("vars --kernel py"), json!({ "cmd": "vars", "kernel": "py" }));
+        assert_eq!(built("data"), json!({ "cmd": "data", "action": "list" }));
+        assert_eq!(
+            built("data peek signups --rows 5"),
+            json!({ "cmd": "data", "action": "peek", "name": "signups", "rows": 5 })
+        );
     }
 }
