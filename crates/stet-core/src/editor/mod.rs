@@ -2,6 +2,7 @@
 //! shell feeds it `KeyEvent`s, text and mouse positions, then drains `Effect`s
 //! for the things only a shell can do (layout-aware motion, dialogs, quitting).
 
+mod cells;
 mod command;
 mod links;
 mod margin;
@@ -21,6 +22,7 @@ mod vim;
 #[cfg(test)]
 mod tests;
 
+pub use cells::{Book, CellRun, KernelState, Which};
 pub use links::{Backlink, Link, link_in, rewrite_destinations};
 pub use margin::margin_path;
 pub use menu::{ContextMenu, MenuAt, MenuItem};
@@ -157,6 +159,21 @@ pub enum Effect {
     /// Font size step; 0 resets.
     Zoom(i32),
     ToggleFullscreen,
+    /// Run these cells of document `doc`, in order, from `cwd` (the
+    /// document's folder, if it has one).
+    Run {
+        doc: u64,
+        cwd: Option<PathBuf>,
+        runs: Vec<CellRun>,
+    },
+    /// Stop the runs of document `doc`.
+    Interrupt {
+        doc: u64,
+    },
+    /// Start the kernels of document `doc` afresh.
+    RestartKernels {
+        doc: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,6 +302,10 @@ pub struct Editor {
     code_cache: RefCell<CodeCache>,
     /// Tables of the current analysis.
     table_cache: RefCell<tables::TableCache>,
+    /// Notebook state of each document, by document id.
+    books: HashMap<u64, Book>,
+    /// Fence tags the shell can run; `None` until it knows.
+    runnable_tags: Option<Vec<String>>,
 }
 
 impl Editor {
@@ -353,6 +374,8 @@ impl Editor {
             highlighter: RefCell::new(Highlighter::default()),
             code_cache: RefCell::new((None, HashMap::new())),
             table_cache: RefCell::new((None, Vec::new())),
+            books: HashMap::new(),
+            runnable_tags: None,
             config,
         }
     }
@@ -376,6 +399,7 @@ impl Editor {
             // Block indices belong to this analysis only.
             self.code_cache.borrow_mut().1.clear();
         }
+        self.refresh_book();
     }
 
     pub fn doc(&self) -> &Doc {
@@ -849,6 +873,10 @@ impl Editor {
         // A sheet takes every key until it is put away.
         if self.sheet.is_some() {
             return self.sheet_key(event);
+        }
+        let free = self.context_menu.is_none() && self.palette.is_none() && !self.sidebar.focused;
+        if free && self.notebook_key(&event) {
+            return self.after_input();
         }
         let shortcut = self.shortcut(&event);
         if self.context_menu.is_some() {
