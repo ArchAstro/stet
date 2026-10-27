@@ -50,6 +50,21 @@ impl Book {
         Some((&self.notebook.slots[found.slot], found.stale))
     }
 
+    /// A cell named the way an assistant names one: `#id` or `id`, or its
+    /// number among the document's cells, from 1.
+    pub fn find_cell(&self, name: &str) -> Result<usize, String> {
+        let name = name.trim();
+        let id = name.strip_prefix('#').unwrap_or(name);
+        if let Some(at) = self.cells.iter().position(|cell| cell.info.id.as_deref() == Some(id)) {
+            return Ok(at);
+        }
+        match name.parse::<usize>() {
+            Ok(n) if (1..=self.cells.len()).contains(&n) => Ok(n - 1),
+            Ok(n) => Err(format!("there is no cell {n}; the document has {}", self.cells.len())),
+            Err(_) => Err(format!("no cell has the id {id}")),
+        }
+    }
+
     /// The cell whose output goes under `line`, the closing fence.
     pub fn cell_ending_at(&self, line: usize) -> Option<usize> {
         let at = self.cells.partition_point(|cell| cell.last_line() < line);
@@ -178,7 +193,7 @@ impl Editor {
     }
 
     /// `:notebook`: turn notebook mode on or off for this document.
-    pub(super) fn toggle_notebook(&mut self, on: Option<bool>) {
+    pub fn toggle_notebook(&mut self, on: Option<bool>) {
         self.refresh();
         let Some(book) = self.books.get_mut(&self.doc_id) else {
             return self.error("the margin cannot be a notebook");
@@ -488,6 +503,18 @@ mod editor_tests {
         assert_eq!(ed.buf.text(), DOC.replace('|', ""), "the text is untouched");
         let book = ed.notebook().unwrap();
         assert_eq!(book.output_of(1).unwrap().0.status, Status::Queued);
+    }
+
+    #[test]
+    fn cells_are_found_by_id_or_number() {
+        let mut ed = editor(&DOC.replace("```python", "```python {#load}"));
+        ed.refresh();
+        let book = ed.notebook().unwrap();
+        assert_eq!(book.find_cell("#load"), Ok(0));
+        assert_eq!(book.find_cell("load"), Ok(0));
+        assert_eq!(book.find_cell("2"), Ok(1));
+        assert!(book.find_cell("9").unwrap_err().contains("has 3"));
+        assert!(book.find_cell("nope").unwrap_err().contains("nope"));
     }
 
     #[test]

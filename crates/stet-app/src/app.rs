@@ -707,6 +707,11 @@ impl Running {
             }
             return self.agent_changed();
         }
+        if crate::notebook::agent::COMMANDS.contains(&parsed["cmd"].as_str().unwrap_or("")) {
+            crate::notebook::agent::request(&mut self.session, id, &parsed, reply);
+            let effects = self.session.settle();
+            return self.effects(effects, event_loop);
+        }
         let (answer, raise) = crate::ctl::handle(&mut self.session.editor, request);
         let _ = reply.send(answer.to_string());
         let effects = self.session.settle();
@@ -1184,6 +1189,7 @@ impl ApplicationHandler<Wake> for App {
             Wake::Request(id, request, reply) => running.request(id, &request, reply, event_loop),
             Wake::Gone(id) => {
                 running.waiters.retain(|waiter| waiter.id != id);
+                running.session.kernels.forget(id);
                 running.agent_changed();
             }
         }

@@ -48,7 +48,7 @@ pub(super) struct Block {
 
 /// Text with ANSI colour codes taken out, and each line as a terminal would
 /// leave it after carriage returns (progress bars redraw with `\r`).
-fn plain_lines(text: &str) -> Vec<String> {
+pub(crate) fn plain_lines(text: &str) -> Vec<String> {
     let mut clean = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {

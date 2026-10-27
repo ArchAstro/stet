@@ -17,7 +17,8 @@ pub const USAGE: &str = r#"stet ctl <command>   control the running stet (replie
   suggest [--doc D] <target> ... propose an edit as a suggestion the writer accepts or rejects
   edit    [--doc D] <target> ... change the text directly
   wait [--name NAME]             connect as an assistant: blocks until the writer sends a message from
-                                 stet (Cmd/Ctrl-Shift-A or ga), prints it with their selection, and exits
+                                 stet (Cmd/Ctrl-Shift-A or ga), prints it with their selection (and, in
+                                 a notebook, the cell they are in with its outputs), and exits
   say --text TEXT                show one line in stet's status bar
   open <file>...                 open files as tabs
   command <command>              run an editor command, as typed after `:` (theme nord, sidebar, w)
@@ -32,6 +33,18 @@ pub const USAGE: &str = r#"stet ctl <command>   control the running stet (replie
                                  beside the original and the text refers to it (undo brings it back).
                                  --preview FILE writes the result there and leaves the document alone
   call                           send one JSON request read from stdin
+
+notebooks (fenced code blocks are cells; a cell is named by number, from 1, or by its {#id}):
+  cells [--doc D]                every cell: language, lines, status, execution count, whether its code
+                                 changed since it ran, who ran it, and a line of what it said
+  run [--doc D] [CELL|all|stale] [--wait] [--author NAME]
+                                 run cells (all by default) on the document's kernels, turning notebook
+                                 mode on; --wait blocks until they finish and prints their outputs
+  output [--doc D] CELL          a cell's outputs as Jupyter JSON; pictures are written out as files
+  kernel [list|start NAME|restart|interrupt] [--doc D]
+                                 what can run here and what runs for the document; restart forgets
+                                 every variable, interrupt stops the run in progress
+  vars [--doc D] [--kernel NAME] the variables a Python kernel holds: name, type, size, and a short repr
 
 targets (one of):
   --old TEXT --new TEXT          replace TEXT, which must occur exactly once (or add --occurrence N)
@@ -68,8 +81,18 @@ fn session_json(session: &Session) -> Value {
     })
 }
 
-fn fail(message: impl Into<String>) -> Value {
+pub fn fail(message: impl Into<String>) -> Value {
     json!({ "ok": false, "error": message.into() })
+}
+
+/// The tab a request's `doc` names, or the one in front.
+pub fn doc_index(editor: &mut Editor, request: &Value) -> Result<usize, String> {
+    match request.get("doc") {
+        None | Some(Value::Null) => Ok(editor.active),
+        Some(Value::Number(tab)) => editor.find_session(&tab.to_string()),
+        Some(Value::String(spec)) => editor.find_session(spec),
+        Some(_) => Err("`doc` is a tab number, file name or path".to_string()),
+    }
 }
 
 /// Runs one request against the editor. Returns the reply, and whether the
@@ -80,12 +103,7 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
     };
     let text = |key: &str| request.get(key).and_then(Value::as_str);
     let number = |key: &str| request.get(key).and_then(Value::as_u64).map(|value| value as usize);
-    let doc = match request.get("doc") {
-        None | Some(Value::Null) => Ok(editor.active),
-        Some(Value::Number(tab)) => editor.find_session(&tab.to_string()),
-        Some(Value::String(spec)) => editor.find_session(spec),
-        Some(_) => Err("`doc` is a tab number, file name or path".to_string()),
-    };
+    let doc = doc_index(editor, &request);
     // `margin` addresses the document's scratch pane instead of its text.
     let margin = request.get("margin").and_then(Value::as_bool).unwrap_or(false);
     match text("cmd").unwrap_or("") {
@@ -342,6 +360,12 @@ pub fn message(editor: &mut Editor, text: &str, selection: Option<(std::ops::Ran
         .snapshot(editor.active, in_margin)
         .expect("the pane with the keyboard exists");
     let line = snapshot.session.cursor.0;
+    // In a notebook, the cell the writer is in and how its last run went:
+    // a question about an error should not need a second round trip.
+    let cell = (!in_margin)
+        .then(|| editor.cell_at_cursor())
+        .flatten()
+        .and_then(|at| Some(crate::notebook::agent::cell_json(editor.notebook()?, at, true)));
     json!({
         "ok": true,
         "message": text,
@@ -351,6 +375,7 @@ pub fn message(editor: &mut Editor, text: &str, selection: Option<(std::ops::Ran
         "line_text": snapshot.text.split('\n').nth(line).unwrap_or(""),
         "in_margin": in_margin,
         "selection": selection.map(|(range, text)| json!({ "start": range.start, "end": range.end, "text": text })),
+        "cell": cell,
     })
 }
 
@@ -384,7 +409,10 @@ fn build(args: &[String]) -> Result<Value, String> {
                 let doc = next("--doc")?;
                 request.insert("doc".into(), doc.parse::<u64>().map_or(json!(doc), |tab| json!(tab)));
             }
-            "--old" | "--new" | "--text" | "--author" | "--at" | "--name" => {
+            "--wait" => {
+                request.insert("wait".into(), json!(true));
+            }
+            "--old" | "--new" | "--text" | "--author" | "--at" | "--name" | "--cell" | "--kernel" => {
                 request.insert(arg[2..].to_string(), json!(value(next(arg)?)?));
             }
             "--ops" => {
@@ -435,7 +463,26 @@ fn build(args: &[String]) -> Result<Value, String> {
         }
     }
     let cmd = match command.as_str() {
-        "sessions" | "read" | "wait" | "say" | "images" | "annotate" => command.as_str(),
+        "sessions" | "read" | "wait" | "say" | "images" | "annotate" | "cells" | "output" | "vars" => {
+            if let (Some(cell), "output") = (files.first(), command.as_str()) {
+                request.entry("cell").or_insert(json!(cell));
+            }
+            command.as_str()
+        }
+        "run" => {
+            if let Some(cell) = files.first() {
+                request.entry("cell").or_insert(json!(cell));
+            }
+            "run"
+        }
+        "kernel" => {
+            let mut words = files.iter();
+            request.insert("action".into(), json!(words.next().map_or("list", String::as_str)));
+            if let Some(name) = words.next() {
+                request.insert("name".into(), json!(name));
+            }
+            "kernel"
+        }
         "command" | "keys" | "type" => {
             let field = if command == "type" { "text" } else { command.as_str() };
             request.insert(field.into(), json!(files.join(" ")));
@@ -500,11 +547,43 @@ pub fn cli(args: &[String]) -> i32 {
             return 2;
         }
     };
-    let Some(reply) = platform::request(&request.to_string(), request["cmd"] == "wait") else {
+    // These are answered when the writer, or a kernel, is done.
+    let patient = request["cmd"] == "wait" || request["cmd"] == "vars" || request["wait"] == json!(true);
+    let Some(reply) = platform::request(&request.to_string(), patient) else {
         println!("{}", fail("stet is not running; start it with `stet <file>`"));
         return 1;
     };
     let parsed: Value = serde_json::from_str(&reply).unwrap_or_else(|_| fail("stet sent a reply that is not JSON"));
     println!("{}", serde_json::to_string_pretty(&parsed).unwrap_or(reply));
     if parsed["ok"] == json!(true) { 0 } else { 1 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn built(line: &str) -> Value {
+        let args: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+        build(&args).unwrap()
+    }
+
+    #[test]
+    fn notebook_commands_take_their_cell_from_a_word_or_a_flag() {
+        assert_eq!(
+            built("run 3 --wait"),
+            json!({ "cmd": "run", "cell": "3", "wait": true })
+        );
+        assert_eq!(built("run --cell #load"), json!({ "cmd": "run", "cell": "#load" }));
+        assert_eq!(built("run"), json!({ "cmd": "run" }));
+        assert_eq!(
+            built("output plot --doc 2"),
+            json!({ "cmd": "output", "cell": "plot", "doc": 2 })
+        );
+        assert_eq!(built("kernel"), json!({ "cmd": "kernel", "action": "list" }));
+        assert_eq!(
+            built("kernel start python3"),
+            json!({ "cmd": "kernel", "action": "start", "name": "python3" })
+        );
+        assert_eq!(built("vars --kernel py"), json!({ "cmd": "vars", "kernel": "py" }));
+    }
 }

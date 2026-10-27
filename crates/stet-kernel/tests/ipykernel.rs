@@ -106,6 +106,21 @@ fn runs_code_and_streams_its_outputs() {
 }
 
 #[test]
+fn quiet_runs_print_but_leave_no_trace() {
+    let Some(kernel) = python() else { return };
+    assert_eq!(finish(&kernel, kernel.execute("x = 5")).count, Some(1));
+    let ran = finish(&kernel, kernel.execute_quietly("print(x)\nx"));
+    assert_eq!(stdout(&ran), "5\n");
+    assert!(
+        !ran.outputs.iter().any(|output| matches!(output, Output::Result(_))),
+        "no result is published"
+    );
+    // The writer's count does not move.
+    assert_eq!(finish(&kernel, kernel.execute("x")).count, Some(2));
+    kernel.shutdown();
+}
+
+#[test]
 fn rich_displays_arrive_as_bundles() {
     let Some(kernel) = python() else { return };
     let run = kernel.execute(

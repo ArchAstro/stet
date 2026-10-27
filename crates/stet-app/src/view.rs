@@ -1,7 +1,7 @@
 //! Turns editor state into a `Frame`, and answers the layout questions the
 //! core cannot: display-line motion, hit testing and scrolling.
 
-mod outputs;
+pub(crate) mod outputs;
 
 use crate::gpu::linear;
 use crate::images::{self, Decoded, Images};

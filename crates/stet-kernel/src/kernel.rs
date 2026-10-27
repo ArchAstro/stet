@@ -87,7 +87,9 @@ pub enum Event {
 }
 
 pub(crate) enum Command {
-    Execute(RunId, String),
+    /// A run, and whether it is quiet: kept out of the history and the
+    /// execution count, with no result published.
+    Execute(RunId, String, bool),
     Interrupt,
     Restart,
     Shutdown,
@@ -138,7 +140,16 @@ impl Kernel {
     /// arrive as events carrying the returned id.
     pub fn execute(&self, code: &str) -> RunId {
         let run = self.next_run.fetch_add(1, Ordering::Relaxed);
-        let _ = self.commands.send(Command::Execute(run, code.to_string()));
+        let _ = self.commands.send(Command::Execute(run, code.to_string(), false));
+        run
+    }
+
+    /// Queue code to run behind the writer's back: a Jupyter kernel keeps it
+    /// out of its history and execution count and publishes no result, only
+    /// what it prints. For looking at the kernel's state, not changing it.
+    pub fn execute_quietly(&self, code: &str) -> RunId {
+        let run = self.next_run.fetch_add(1, Ordering::Relaxed);
+        let _ = self.commands.send(Command::Execute(run, code.to_string(), true));
         run
     }
 
@@ -225,7 +236,7 @@ fn work(spec: Spec, cwd: PathBuf, mut inbox: UnboundedReceiver<Command>, emit: E
                     loop {
                         match inbox.recv().await {
                             Some(Command::Restart) => break,
-                            Some(Command::Execute(run, _)) => emit.send(aborted(run)),
+                            Some(Command::Execute(run, ..)) => emit.send(aborted(run)),
                             Some(Command::Interrupt) => {}
                             Some(Command::Shutdown) | None => return,
                         }
@@ -504,7 +515,7 @@ impl Session {
         loop {
             tokio::select! {
                 command = inbox.recv() => match command {
-                    Some(Command::Execute(run, code)) => self.execute(run, code, emit).await,
+                    Some(Command::Execute(run, code, quiet)) => self.execute(run, code, quiet, emit).await,
                     Some(Command::Interrupt) => self.interrupt().await,
                     Some(Command::Restart) => {
                         self.abort_all(emit);
@@ -532,11 +543,11 @@ impl Session {
         }
     }
 
-    async fn execute(&mut self, run: RunId, code: String, emit: &Emit) {
+    async fn execute(&mut self, run: RunId, code: String, quiet: bool, emit: &Emit) {
         let request: JupyterMessage = ExecuteRequest {
             code,
-            silent: false,
-            store_history: true,
+            silent: quiet,
+            store_history: !quiet,
             user_expressions: None,
             // No `input()` prompts yet: a kernel asking for input would wait forever.
             allow_stdin: false,

@@ -1,14 +1,18 @@
 //! The kernels behind notebook mode. Each document gets its own kernel per
 //! language, started when one of its cells first runs, so two notebooks
-//! never share variables. Runs come in as [`Effect::Run`]s; what the
+//! never share variables. Runs come in as [`stet_core::editor::Effect::Run`]s; what the
 //! kernels say goes back to the editor by document and slot.
 //!
 //! Finding what is installed means reading kernel directories and asking
 //! `jupyter`, which can take a moment, so it happens on a thread at start.
 //! Runs asked for before it is done wait for it.
 
+pub mod agent;
+
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use stet_core::Editor;
 use stet_core::editor::{CellRun, KernelState};
@@ -24,6 +28,23 @@ struct Started {
     state: KernelState,
     /// Which slot each of its runs reports to.
     runs: HashMap<RunId, u64>,
+    /// Quiet runs an assistant asked for, and what they printed so far.
+    probes: HashMap<RunId, Probe>,
+}
+
+struct Probe {
+    request: u64,
+    reply: Sender<String>,
+    printed: String,
+    failed: Option<String>,
+}
+
+/// An assistant waiting for runs to finish.
+struct Watch {
+    request: u64,
+    doc: u64,
+    uids: Vec<u64>,
+    reply: Sender<String>,
 }
 
 pub struct Kernels {
@@ -33,6 +54,7 @@ pub struct Kernels {
     started: Vec<Started>,
     /// Runs asked for before the kernels were found.
     waiting: Vec<(u64, Option<PathBuf>, CellRun)>,
+    watches: Vec<Watch>,
 }
 
 impl Kernels {
@@ -53,6 +75,7 @@ impl Kernels {
             found,
             started: Vec::new(),
             waiting: Vec::new(),
+            watches: Vec::new(),
         }
     }
 
@@ -83,6 +106,14 @@ impl Kernels {
             );
             return ed.notebook_finished(doc, run.uid, Status::Error, None, None);
         };
+        let spec = spec.clone();
+        let started = self.kernel_for(doc, cwd, &spec);
+        let id = started.kernel.execute(&run.code);
+        started.runs.insert(id, run.uid);
+    }
+
+    /// The document's kernel for `spec`, started if it is not yet.
+    fn kernel_for(&mut self, doc: u64, cwd: Option<PathBuf>, spec: &Spec) -> &mut Started {
         let at = match self
             .started
             .iter()
@@ -103,13 +134,141 @@ impl Kernels {
                         dead: None,
                     },
                     runs: HashMap::new(),
+                    probes: HashMap::new(),
                 });
                 self.started.len() - 1
             }
         };
-        let started = &mut self.started[at];
-        let id = started.kernel.execute(&run.code);
-        started.runs.insert(id, run.uid);
+        &mut self.started[at]
+    }
+
+    /// `stet ctl kernel start NAME`: start a kernel for the document before
+    /// any of its cells run.
+    pub fn start(&mut self, ed: &mut Editor, doc: u64, cwd: Option<PathBuf>, name: &str) -> Result<(), String> {
+        let specs = self
+            .specs
+            .as_deref()
+            .ok_or("still looking for kernels; ask again in a moment")?;
+        let spec = stet_kernel::find(specs, name)
+            .ok_or_else(|| format!("no kernel or runner is called {name} (stet ctl kernel list)"))?
+            .clone();
+        self.kernel_for(doc, cwd, &spec);
+        self.publish_state(ed, doc);
+        Ok(())
+    }
+
+    /// `stet ctl kernel list`: what can run here, and what runs for the document.
+    pub fn list(&self, ed: &Editor, doc: u64) -> Value {
+        let installed: Option<Vec<Value>> = self.specs.as_ref().map(|specs| {
+            specs
+                .iter()
+                .map(|spec| {
+                    json!({
+                        "name": spec.name,
+                        "display_name": spec.display_name,
+                        "language": spec.language,
+                        "keeps_state": spec.keeps_state,
+                    })
+                })
+                .collect()
+        });
+        let running: Vec<Value> = ed
+            .notebook_of(doc)
+            .map(|book| book.kernels.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|state| {
+                let status = match (&state.dead, state.starting, state.busy) {
+                    (Some(_), ..) => "stopped",
+                    (None, true, _) => "starting",
+                    (None, false, true) => "busy",
+                    (None, false, false) => "idle",
+                };
+                json!({ "name": state.name, "status": status, "why": state.dead })
+            })
+            .collect();
+        json!({ "ok": true, "installed": installed, "running": running })
+    }
+
+    /// Answer `reply` once every run in `uids` has finished, with their cells.
+    pub fn watch(&mut self, ed: &Editor, request: u64, doc: u64, uids: Vec<u64>, reply: Sender<String>) {
+        self.watches.push(Watch {
+            request,
+            doc,
+            uids,
+            reply,
+        });
+        self.answer_watches(ed);
+    }
+
+    fn answer_watches(&mut self, ed: &Editor) {
+        self.watches.retain(|watch| {
+            let Some(book) = ed.notebook_of(watch.doc) else {
+                let _ = watch
+                    .reply
+                    .send(crate::ctl::fail("the document was closed").to_string());
+                return false;
+            };
+            let done = |uid: &u64| book.notebook.slot(*uid).is_none_or(|slot| slot.status.is_done());
+            if !watch.uids.iter().all(done) {
+                return true;
+            }
+            // The cells the runs belong to, as they now stand.
+            let cells: Vec<Value> = (0..book.cells.len())
+                .filter(|&at| {
+                    book.output_of(at)
+                        .is_some_and(|(slot, _)| watch.uids.contains(&slot.uid))
+                })
+                .map(|at| agent::cell_json(book, at, true))
+                .collect();
+            let failed = cells.iter().filter(|cell| cell["status"] != "ok").count();
+            let answer = json!({ "ok": true, "ran": cells.len(), "failed": failed, "cells": cells });
+            let _ = watch.reply.send(answer.to_string());
+            false
+        });
+    }
+
+    /// Run `code` quietly on the document's kernel for `language` (or the
+    /// one named), and answer `reply` with the JSON it prints last.
+    pub fn probe(
+        &mut self,
+        request: u64,
+        doc: u64,
+        name: Option<&str>,
+        code: &str,
+        reply: Sender<String>,
+    ) -> Result<(), String> {
+        let started = self
+            .started
+            .iter_mut()
+            .filter(|started| started.doc == doc && started.kernel.spec().keeps_state)
+            .find(|started| {
+                let spec = started.kernel.spec();
+                match name {
+                    Some(name) => spec.name == name,
+                    None => spec.language.eq_ignore_ascii_case("python"),
+                }
+            })
+            .ok_or("no Python kernel is running for this document; run one of its cells first")?;
+        let run = started.kernel.execute_quietly(code);
+        started.probes.insert(
+            run,
+            Probe {
+                request,
+                reply,
+                printed: String::new(),
+                failed: None,
+            },
+        );
+        Ok(())
+    }
+
+    /// The caller of request `id` hung up: stop waiting on its behalf.
+    pub fn forget(&mut self, id: u64) {
+        self.watches.retain(|watch| watch.request != id);
+        for started in &mut self.started {
+            started.probes.retain(|_, probe| probe.request != id);
+        }
     }
 
     pub fn interrupt(&mut self, doc: u64) {
@@ -163,6 +322,9 @@ impl Kernels {
         for doc in touched {
             self.publish_state(ed, doc);
         }
+        if changed {
+            self.answer_watches(ed);
+        }
         changed
     }
 
@@ -199,6 +361,9 @@ impl Kernels {
 
 fn apply(ed: &mut Editor, started: &mut Started, event: Event) {
     let doc = started.doc;
+    if let Some(answer) = probed(started, &event) {
+        return answer;
+    }
     match event {
         Event::Ready { .. } => {
             started.state.starting = false;
@@ -232,10 +397,40 @@ fn apply(ed: &mut Editor, started: &mut Started, event: Event) {
             }
         }
         Event::Died(why) => {
+            for (_, probe) in started.probes.drain() {
+                let _ = probe
+                    .reply
+                    .send(crate::ctl::fail(format!("the kernel stopped: {why}")).to_string());
+            }
             started.state.starting = false;
             started.state.dead = Some(why.lines().next().unwrap_or("the kernel stopped").to_string());
         }
     }
+}
+
+/// Takes an event that belongs to a probe. `Some` if it did.
+fn probed(started: &mut Started, event: &Event) -> Option<()> {
+    let run = match event {
+        Event::Started(run) | Event::Output(run, _) | Event::Finished { run, .. } => *run,
+        _ => return None,
+    };
+    let probe = started.probes.get_mut(&run)?;
+    match event {
+        Event::Output(_, Output::Stream { stderr: false, text }) => probe.printed.push_str(text),
+        Event::Output(_, Output::Error { name, value, .. }) => probe.failed = Some(format!("{name}: {value}")),
+        Event::Finished { .. } => {
+            let probe = started.probes.remove(&run)?;
+            let last = probe.printed.lines().last().unwrap_or("");
+            let answer = match (probe.failed, serde_json::from_str::<Value>(last)) {
+                (Some(failed), _) => crate::ctl::fail(failed),
+                (None, Ok(vars)) => json!({ "ok": true, "vars": vars }),
+                (None, Err(_)) => crate::ctl::fail("the kernel's answer was not JSON"),
+            };
+            let _ = probe.reply.send(answer.to_string());
+        }
+        _ => {}
+    }
+    Some(())
 }
 
 fn item(output: Output) -> Item {

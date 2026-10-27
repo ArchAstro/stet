@@ -45,7 +45,7 @@ pub(crate) fn work(spec: Spec, cwd: PathBuf, mut inbox: UnboundedReceiver<Comman
             let (run, code) = match queue.pop_front() {
                 Some(next) => next,
                 None => match inbox.recv().await {
-                    Some(Command::Execute(run, code)) => (run, code),
+                    Some(Command::Execute(run, code, _)) => (run, code),
                     Some(Command::Interrupt) => continue,
                     Some(Command::Restart) => {
                         emit.send(ready.clone());
@@ -167,7 +167,7 @@ async fn execute(
                 None => stderr = None,
             },
             command = inbox.recv(), if matches!(after, Next::Continue) => match command {
-                Some(Command::Execute(next, code)) => queue.push_back((next, code)),
+                Some(Command::Execute(next, code, _)) => queue.push_back((next, code)),
                 Some(Command::Interrupt) => {
                     signal(&mut child, pid, Signal::Interrupt);
                     interrupted = true;
