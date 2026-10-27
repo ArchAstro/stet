@@ -2821,6 +2821,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stet-core",
+ "stet-kernel",
  "stet-substack",
  "stet-youtube",
  "toml",
