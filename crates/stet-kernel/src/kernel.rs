@@ -15,7 +15,7 @@
 //! reads the events sees runs one at a time, in the order they were queued.
 
 use crate::output::Output;
-use crate::spec::Spec;
+use crate::spec::{Backend, Spec};
 use jupyter_protocol::{
     ConnectionInfo, ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
     KernelInfoRequest, ReplyStatus, ShutdownRequest, connection_info::Transport,
@@ -84,7 +84,7 @@ pub enum Event {
     Died(String),
 }
 
-enum Command {
+pub(crate) enum Command {
     Execute(RunId, String),
     Interrupt,
     Restart,
@@ -113,7 +113,10 @@ impl Kernel {
             let cwd = cwd.to_path_buf();
             std::thread::Builder::new()
                 .name(format!("kernel {}", spec.name))
-                .spawn(move || work(spec, cwd, inbox, emit))
+                .spawn(move || match &spec.backend {
+                    Backend::Jupyter(_) => work(spec, cwd, inbox, emit),
+                    Backend::Runner { .. } => crate::runner::work(spec, cwd, inbox, emit),
+                })
                 .ok()
         };
         Kernel {
@@ -173,13 +176,13 @@ impl Drop for Kernel {
     }
 }
 
-struct Emit {
+pub(crate) struct Emit {
     outbox: mpsc::Sender<Event>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl Emit {
-    fn send(&self, event: Event) {
+    pub(crate) fn send(&self, event: Event) {
         if self.outbox.send(event).is_ok() {
             (self.wake)();
         }
@@ -231,7 +234,7 @@ fn work(spec: Spec, cwd: PathBuf, mut inbox: UnboundedReceiver<Command>, emit: E
     });
 }
 
-fn aborted(run: RunId) -> Event {
+pub(crate) fn aborted(run: RunId) -> Event {
     Event::Finished {
         run,
         status: Status::Aborted,
@@ -310,8 +313,10 @@ impl Session {
             .await
             .map_err(|error| format!("could not write {}: {error}", connection_file.display()))?;
 
-        let mut command = spec
-            .dir
+        let Backend::Jupyter(dir) = &spec.backend else {
+            return Err("not a Jupyter kernel".to_string().into());
+        };
+        let mut command = (**dir)
             .clone()
             .command(&connection_file, Some(Stdio::piped()), Some(Stdio::null()))
             .map_err(|error| error.to_string())?;

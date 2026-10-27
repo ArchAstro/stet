@@ -2854,6 +2854,7 @@ dependencies = [
  "jupyter-protocol",
  "jupyter-zmq-client",
  "libc",
+ "serde",
  "serde_json",
  "tokio",
  "uuid",

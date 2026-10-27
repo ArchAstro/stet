@@ -11,6 +11,7 @@ description = "Run code for stet's notebook mode: Jupyter kernels over ZeroMQ, b
 [dependencies]
 jupyter-protocol = "2.0.3"
 jupyter-zmq-client = "2.0.0"
+serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "sync", "time", "process", "io-util", "fs", "net"] }
 uuid = { version = "1", features = ["v4"] }

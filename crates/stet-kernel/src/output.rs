@@ -49,6 +49,59 @@ impl Output {
     }
 }
 
+/// The MIME type of a table: `{"columns": [..], "rows": [[..], ..],
+/// "total": n}`, where `rows` may hold only the first of `total` rows.
+pub const TABLE: &str = "application/vnd.stet.table+json";
+
+/// Rows shown in a table's plain-text form.
+const PLAIN_ROWS: usize = 40;
+
+/// A table bundle, with a plain-text form beside it for anything that cannot
+/// draw tables.
+pub fn table(columns: Vec<String>, rows: Vec<Vec<Value>>) -> Bundle {
+    let cell = |value: &Value| match value {
+        Value::String(text) => text.clone(),
+        Value::Null => "NULL".to_string(),
+        other => other.to_string(),
+    };
+    let shown: Vec<Vec<String>> = rows
+        .iter()
+        .take(PLAIN_ROWS)
+        .map(|row| row.iter().map(cell).collect())
+        .collect();
+    let widths: Vec<usize> = (0..columns.len())
+        .map(|i| {
+            shown
+                .iter()
+                .filter_map(|row| row.get(i))
+                .chain(std::iter::once(&columns[i]))
+                .map(|text| text.chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let line = |cells: &[String]| {
+        let padded: Vec<String> = cells
+            .iter()
+            .zip(&widths)
+            .map(|(text, &width)| format!("{text:<width$}"))
+            .collect();
+        padded.join("  ").trim_end().to_string()
+    };
+    let mut plain = vec![line(&columns)];
+    plain.extend(shown.iter().map(|row| line(row)));
+    if rows.len() > PLAIN_ROWS {
+        plain.push(format!("… {} rows in all", rows.len()));
+    }
+    let mut bundle = Bundle::new();
+    bundle.insert("text/plain".into(), Value::String(plain.join("\n")));
+    bundle.insert(
+        TABLE.into(),
+        serde_json::json!({ "columns": columns, "total": rows.len(), "rows": rows }),
+    );
+    bundle
+}
+
 fn bundle(media: &jupyter_protocol::Media) -> Bundle {
     match serde_json::to_value(media) {
         Ok(Value::Object(map)) => map,
@@ -99,6 +152,16 @@ mod tests {
             traceback: vec!["line 1".into()],
         }));
         assert!(matches!(out, Some(Output::Error { name, .. }) if name == "ZeroDivisionError"));
+    }
+
+    #[test]
+    fn tables_carry_a_plain_form() {
+        let bundle = table(
+            vec!["plan".into(), "n".into()],
+            vec![vec!["free".into(), 120.into()], vec!["team".into(), Value::Null]],
+        );
+        assert_eq!(bundle["text/plain"], "plan  n\nfree  120\nteam  NULL");
+        assert_eq!(bundle[TABLE]["total"], 2);
     }
 
     #[test]

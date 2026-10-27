@@ -19,8 +19,9 @@
 
 mod kernel;
 mod output;
+mod runner;
 mod spec;
 
 pub use kernel::{Event, Kernel, RunId, Status};
-pub use output::{Bundle, Output};
+pub use output::{Bundle, Output, TABLE, table};
 pub use spec::{Spec, find, kernelspecs};
