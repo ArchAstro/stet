@@ -80,6 +80,8 @@ pub enum Target {
     SheetScrim,
     SheetRow(usize),
     SheetButton(usize),
+    /// The line between the document and the margin, dragged to move it.
+    Divider,
     /// The dimmed area around the menu.
     Scrim,
     MenuHint,
@@ -202,6 +204,9 @@ pub struct View {
     mono_advance: Option<(u32, f32)>,
     focus: Option<Range<usize>>,
     targets: Vec<([f32; 4], Target)>,
+    /// How much of the width beside the sidebar the document takes when
+    /// the margin is open.
+    split_share: f32,
     /// What each video drawn this frame opens.
     videos: Vec<String>,
     /// The pictures drawn this frame.
@@ -288,6 +293,7 @@ impl View {
             mono_advance: None,
             focus: None,
             targets: Vec::new(),
+            split_share: 0.58,
             videos: Vec::new(),
             pictures: Vec::new(),
             retouch: None,
@@ -496,7 +502,22 @@ impl View {
     fn split(&self, ed: &Editor) -> Option<f32> {
         let chrome = self.sidebar_width(ed);
         ed.margin_visible()
-            .then(|| (chrome + (self.width - chrome) * 0.58).round())
+            .then(|| (chrome + (self.width - chrome) * self.split_share).round())
+    }
+
+    /// Moves the line between the document and the margin to window x
+    /// position `x`, leaving each pane room to write in.
+    pub fn drag_split(&mut self, ed: &Editor, x: f32) {
+        let chrome = self.sidebar_width(ed);
+        let room = (self.width - chrome).max(1.0);
+        let least = (240.0 * self.scale / room).min(0.5);
+        self.split_share = ((x - chrome) / room).clamp(least, 1.0 - least);
+    }
+
+    /// True if the margin is drawn as notes beside their pins, which move
+    /// with the document and not on their own.
+    pub fn notes_beside(&self, ed: &Editor) -> bool {
+        ed.margin_visible() && !ed.in_margin() && ed.config.pinned_notes && self.pins.iter().any(|pin| pin.pinned())
     }
 
     /// True if a window x position is over the pane that does not have the
@@ -1151,7 +1172,7 @@ impl View {
             self.body(ed, &mut frame.base, true);
             if ed.margin_visible() {
                 let mut layer = std::mem::take(&mut frame.base);
-                let beside = ed.config.pinned_notes && self.pins.iter().any(|pin| pin.pinned());
+                let beside = self.notes_beside(ed);
                 ed.with_other_pane(|margin| {
                     margin.refresh();
                     if beside {
@@ -1167,6 +1188,13 @@ impl View {
             }
         }
         let m = self.metrics(ed);
+        if let Some(split) = self.split(ed) {
+            let reach = (4.0 * self.scale).round();
+            self.targets.push((
+                [split - reach, m.top, reach * 2.0, self.height - m.top],
+                Target::Divider,
+            ));
+        }
         frame.base.image_clip = [m.chrome, m.top, self.width - m.chrome, m.bottom - m.top];
         self.table_controls(ed, &mut frame.base);
 

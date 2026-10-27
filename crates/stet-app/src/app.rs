@@ -19,7 +19,7 @@ use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
-use winit::window::{Fullscreen, Window, WindowId};
+use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
 /// Unsaved text is snapshotted this long after the last keystroke.
 const RECOVERY_DELAY: Duration = Duration::from_millis(800);
@@ -54,6 +54,8 @@ struct Running {
     mods: ModifiersState,
     mouse: (f32, f32),
     dragging: bool,
+    /// The line between the document and the margin is being dragged.
+    splitting: bool,
     last_click: Option<(Instant, (f32, f32), u8)>,
     title: String,
     ime_allowed: bool,
@@ -372,6 +374,7 @@ impl Running {
             mods: ModifiersState::empty(),
             mouse: (0.0, 0.0),
             dragging: false,
+            splitting: false,
             last_click: None,
             title: String::new(),
             ime_allowed: false,
@@ -804,6 +807,7 @@ impl Running {
             Some(Target::MenuHint) => editor.open_palette(PaletteKind::Help),
             Some(Target::Note(index)) => editor.open_note(index),
             Some(Target::DataRef(index)) => session.view.toggle_preview(index),
+            Some(Target::Divider) => self.splitting = true,
             Some(Target::Sheet) => {}
             Some(Target::SheetScrim) => editor.close_sheet(),
             Some(Target::SheetRow(row)) => editor.sheet_click(row),
@@ -899,9 +903,21 @@ impl Running {
             }
             return;
         }
+        if self.splitting {
+            let session = &mut self.session;
+            session.view.drag_split(&session.editor, x);
+            self.window.request_redraw();
+            return;
+        }
         if self.session.view.pointer_moved(x, y) {
             self.window.request_redraw();
         }
+        let over = matches!(self.session.view.target_at(x, y), Some(Target::Divider));
+        self.window.set_cursor(if over {
+            CursorIcon::ColResize
+        } else {
+            CursorIcon::Default
+        });
         if self.dragging {
             let session = &mut self.session;
             let pos = session.view.hit(&mut session.editor, x, y);
@@ -912,6 +928,7 @@ impl Running {
 
     fn mouse_release(&mut self) {
         self.dragging = false;
+        self.splitting = false;
         if let Some(retouch) = &mut self.session.view.retouch {
             return retouch.release();
         }
@@ -930,7 +947,10 @@ impl Running {
                 &mut session.editor,
                 if rows == 0 { pixels.signum() as isize } else { rows },
             );
-        } else if session.view.over_other_pane(&session.editor, self.mouse.0) {
+        } else if session.view.over_other_pane(&session.editor, self.mouse.0)
+            && !session.view.notes_beside(&session.editor)
+        {
+            // Notes beside their pins ride on the document, so it scrolls instead.
             let view = &mut session.view;
             session.editor.with_other_pane(|other| view.scroll_by(other, pixels));
         } else {
