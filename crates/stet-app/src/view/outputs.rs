@@ -3,7 +3,8 @@
 //! long outputs are cut to their first lines, with a count of the rest.
 //!
 //! An output offers several forms of itself by MIME type; the richest that
-//! can be drawn wins: a picture, then a table, then plain text.
+//! can be drawn wins. [`RENDERERS`] lists them, richest first: a new kind
+//! of output is a new entry there.
 
 use super::{Layer, Metrics, Quad, Shown, TextItem, View};
 use crate::gpu::linear;
@@ -22,6 +23,30 @@ const MAX_LINES: usize = 40;
 const MAX_TRACE: usize = 16;
 /// Most table rows shown.
 const MAX_ROWS: usize = 20;
+
+/// What an output needs to draw itself.
+struct Cx<'a> {
+    ed: &'a Editor,
+    m: &'a Metrics,
+    /// The notebook's output folder, for pictures kept as files.
+    files: Option<&'a std::path::Path>,
+    size: f32,
+    small: f32,
+}
+
+/// Draws one form of an output into rows, or says it cannot (`false`).
+type Render = fn(&mut View, &Cx, &str, &Value, &mut Vec<Row>) -> bool;
+
+/// Every form of output that can be drawn, richest first.
+const RENDERERS: &[(&str, Render)] = &[
+    ("image/png", View::picture_rows),
+    ("image/jpeg", View::picture_rows),
+    ("image/gif", View::picture_rows),
+    ("image/svg+xml", View::picture_rows),
+    (TABLE, View::table_render),
+    ("text/markdown", View::text_render),
+    ("text/plain", View::text_render),
+];
 
 /// One row of a cell's output area.
 pub(super) enum Row {
@@ -122,6 +147,13 @@ impl View {
         let c = ed.theme.colors;
         let size = (m.font * 0.86).round();
         let small = (m.font * 0.74).round();
+        let cx = Cx {
+            ed,
+            m,
+            files: files.as_deref(),
+            size,
+            small,
+        };
 
         let mut rows = vec![Row::Gap((m.line * 0.25).round())];
         let tone = match slot.status {
@@ -175,16 +207,12 @@ impl View {
                     lines(self, &mut rows, headline.trim_end_matches([':', ' ']), c.error, true, 4);
                 }
                 Item::Display { data } | Item::Result { data } => {
-                    if let Some(shown) = self.output_picture(data, files.as_deref(), m) {
-                        rows.push(Row::Picture(shown));
-                    } else if let Some(table) = data.get(TABLE) {
-                        self.table_rows(ed, table, size, small, &mut rows);
-                    } else if let Some(text) = data
-                        .get("text/markdown")
-                        .or(data.get("text/plain"))
-                        .and_then(Value::as_str)
-                    {
-                        lines(self, &mut rows, text, c.text, false, MAX_LINES);
+                    for (mime, render) in RENDERERS {
+                        if let Some(value) = data.get(*mime)
+                            && render(self, &cx, mime, value, &mut rows)
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -213,27 +241,64 @@ impl View {
         }
     }
 
+    fn text_render(&mut self, cx: &Cx, _: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
+        let Some(text) = value.as_str() else { return false };
+        let c = cx.ed.theme.colors;
+        let lines = plain_lines(text);
+        for line in lines.iter().take(MAX_LINES) {
+            rows.push(self.text_row(cx.ed, line, c.text, cx.size, Face::Mono, false));
+        }
+        if lines.len() > MAX_LINES {
+            let more = format!("… {} more lines", lines.len() - MAX_LINES);
+            rows.push(self.text_row(cx.ed, &more, c.muted, cx.small, Face::Ui, false));
+        }
+        true
+    }
+
+    fn table_render(&mut self, cx: &Cx, _: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
+        self.table_rows(cx.ed, value, cx.size, cx.small, rows);
+        true
+    }
+
+    /// A picture until it has loaded is no picture: the next form down
+    /// shows meanwhile.
+    fn picture_rows(&mut self, cx: &Cx, mime: &str, value: &Value, rows: &mut Vec<Row>) -> bool {
+        match self.output_picture(mime, value, cx.files, cx.m) {
+            Some(shown) => {
+                rows.push(Row::Picture(shown));
+                true
+            }
+            None => false,
+        }
+    }
+
     /// A picture from an output bundle: a file in the notebook's output
-    /// folder, or base64 inline for a document not yet saved.
+    /// folder, or inline (base64, or SVG's own text) for a document not yet
+    /// saved.
     fn output_picture(
         &mut self,
-        data: &serde_json::Map<String, Value>,
+        mime: &str,
+        value: &Value,
         files: Option<&std::path::Path>,
         m: &Metrics,
     ) -> Option<Shown> {
-        let url = ["image/png", "image/jpeg", "image/gif"].iter().find_map(|mime| {
-            let value = data.get(*mime)?;
-            match (notebook::file_ref(value), value.as_str()) {
-                (Some(name), _) => Some(files?.join(name).to_string_lossy().into_owned()),
-                (None, Some(encoded)) => Some(format!("data:{mime};base64,{}", encoded.replace(['\n', '\r'], ""))),
-                _ => None,
-            }
-        })?;
+        let svg = mime == "image/svg+xml";
+        let url = match (notebook::file_ref(value), value.as_str()) {
+            (Some(name), _) => files?.join(name).to_string_lossy().into_owned(),
+            (None, Some(text)) if svg => format!("data:{mime};base64,{}", notebook::base64_encode(text.as_bytes())),
+            (None, Some(encoded)) => format!("data:{mime};base64,{}", encoded.replace(['\n', '\r'], "")),
+            _ => return None,
+        };
         let source = images::resolve(&url, None, false)?;
         let (id, width, height) = self.images.get(&source)?;
         // Kernels draw figures for a 2x screen at most; show them at their
-        // size in points, never wider than the text.
-        let (width, height) = (width as f32 * self.scale / 2.0, height as f32 * self.scale / 2.0);
+        // size in points, never wider than the text. A drawing's size is
+        // in points already.
+        let density = if svg { 1.0 } else { 2.0 };
+        let (width, height) = (
+            width as f32 * self.scale / density,
+            height as f32 * self.scale / density,
+        );
         let max_height = (self.height * 0.6).max(m.line);
         let fit = (m.column / width).min(max_height / height).min(1.0);
         Some(Shown {

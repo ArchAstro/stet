@@ -28,6 +28,8 @@ pub struct Decoded {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// Pixels per point: 2 for a drawing rasterized for a 2x screen.
+    pub density: u32,
 }
 
 enum State {
@@ -207,6 +209,9 @@ fn load(source: &Source, cache: Option<&Path>) -> Option<Vec<u8>> {
 }
 
 fn decode(bytes: &[u8], id: u64) -> Option<Decoded> {
+    if is_svg(bytes) {
+        return decode_svg(bytes, id);
+    }
     // Absurd sizes (a tiny file that inflates to gigabytes) are refused.
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -228,6 +233,68 @@ fn decode(bytes: &[u8], id: u64) -> Option<Decoded> {
         width: rgba.width(),
         height: rgba.height(),
         rgba: rgba.into_raw(),
+        density: 1,
+    })
+}
+
+/// SVG is text: an `<svg` element near the start, after any XML prolog,
+/// comments or doctype.
+fn is_svg(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]);
+    let head = head.trim_start_matches('\u{feff}').trim_start();
+    head.starts_with('<') && head.contains("<svg")
+}
+
+/// Drawing is drawn at twice its size, as a figure from a kernel is, so it
+/// stays sharp on a 2x screen.
+const SVG_SCALE: f32 = 2.0;
+
+fn decode_svg(bytes: &[u8], id: u64) -> Option<Decoded> {
+    use resvg::{tiny_skia, usvg};
+    // Text in a drawing needs fonts; finding them takes a moment, once.
+    static FONTS: std::sync::OnceLock<std::sync::Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    let fonts = FONTS.get_or_init(|| {
+        let mut fonts = usvg::fontdb::Database::new();
+        fonts.load_system_fonts();
+        std::sync::Arc::new(fonts)
+    });
+    let options = usvg::Options {
+        fontdb: fonts.clone(),
+        ..usvg::Options::default()
+    };
+    let tree = usvg::Tree::from_data(bytes, &options).ok()?;
+    let size = tree.size();
+    // A drawing too big to draw at twice its size is drawn at its own.
+    let scale = if size.width().max(size.height()) * SVG_SCALE > MAX_SIDE as f32 {
+        1.0
+    } else {
+        SVG_SCALE
+    };
+    let (width, height) = (
+        (size.width() * scale).ceil() as u32,
+        (size.height() * scale).ceil() as u32,
+    );
+    let mut pixmap = tiny_skia::Pixmap::new(width.max(1), height.max(1))?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    // tiny-skia keeps colour premultiplied by alpha; pictures here are not.
+    let rgba = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let color = pixel.demultiply();
+            [color.red(), color.green(), color.blue(), color.alpha()]
+        })
+        .collect();
+    Some(Decoded {
+        id,
+        width: pixmap.width(),
+        height: pixmap.height(),
+        rgba,
+        density: scale as u32,
     })
 }
 
@@ -290,6 +357,7 @@ fn poster(source: &Source, id: u64) -> Option<Decoded> {
         width: rgba.width(),
         height: rgba.height(),
         rgba: rgba.into_raw(),
+        density: 1,
     })
 }
 
@@ -456,10 +524,11 @@ impl Images {
         let mut ready = Vec::new();
         while let Ok((source, decoded)) = self.receiver.try_recv() {
             let state = match &decoded {
+                // Sizes are kept in points; the texture has every pixel.
                 Some(image) => State::Ready {
                     id: image.id,
-                    width: image.width,
-                    height: image.height,
+                    width: image.width.div_ceil(image.density.max(1)),
+                    height: image.height.div_ceil(image.density.max(1)),
                     used: Instant::now(),
                 },
                 None => State::Failed,
@@ -594,5 +663,24 @@ mod tests {
         let bytes = load(&Source::Data(pixel.into()), None).unwrap();
         let image = decode(&bytes, 7).unwrap();
         assert_eq!((image.id, image.width, image.height), (7, 1, 1));
+    }
+
+    #[test]
+    fn drawings_are_drawn_sharp_and_sized_in_points() {
+        let svg = br##"<?xml version="1.0"?>
+<!-- a comment -->
+<svg xmlns="http://www.w3.org/2000/svg" width="30" height="10"><rect width="30" height="10" fill="#ff0000"/></svg>"##;
+        assert!(is_svg(svg));
+        assert!(!is_svg(b"\x89PNG\r\n"));
+        let image = decode(svg, 3).unwrap();
+        assert_eq!((image.width, image.height, image.density), (60, 20, 2));
+        assert_eq!(&image.rgba[..4], &[255, 0, 0, 255]);
+        // The texture has every pixel; layout sees the drawing's own size.
+        let mut images = Images::new(Arc::new(|| {}), None);
+        let source = Source::File("/drawing.svg".into());
+        images.states.insert(source.clone(), State::Loading);
+        images.sender.send((source.clone(), Some(image))).unwrap();
+        assert_eq!(images.poll()[0].width, 60);
+        assert_eq!(images.get(&source), Some((3, 30, 10)));
     }
 }

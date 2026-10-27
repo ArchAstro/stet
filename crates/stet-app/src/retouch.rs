@@ -735,6 +735,7 @@ impl Retouch {
             width: picture.width(),
             height: picture.height(),
             rgba: picture.into_raw(),
+            density: 1,
         })
     }
 
