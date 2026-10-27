@@ -126,11 +126,13 @@ async fn execute(
                 run,
                 status: Status::Error,
                 count: None,
+                took: None,
             });
             return Next::Abort;
         }
     };
     let pid = child.id();
+    let began = std::time::Instant::now();
     emit.send(Event::Started(run));
 
     // The code goes in on its own task, so a program that prints a lot
@@ -223,6 +225,7 @@ async fn execute(
         run,
         status,
         count: (status != Status::Aborted).then_some(count),
+        took: Some(began.elapsed()),
     });
     match (after, status) {
         (Next::Continue, Status::Ok) => Next::Continue,

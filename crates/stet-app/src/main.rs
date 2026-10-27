@@ -8,6 +8,7 @@ mod images;
 #[cfg(target_os = "macos")]
 mod macos;
 mod motion;
+mod notebook;
 mod platform;
 #[cfg(feature = "substack")]
 mod publish;

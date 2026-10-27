@@ -482,6 +482,13 @@ impl Notebook {
         slot.clear_on_next = false;
     }
 
+    /// Set how long a run took, as measured where it ran.
+    pub fn took(&mut self, uid: u64, ms: u64) {
+        if let Some(slot) = self.slot_mut(uid) {
+            slot.took_ms = Some(ms);
+        }
+    }
+
     /// Runs that have not finished.
     pub fn busy(&self) -> impl Iterator<Item = &Slot> {
         self.slots.iter().filter(|slot| !slot.status.is_done())

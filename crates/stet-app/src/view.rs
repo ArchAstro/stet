@@ -1,6 +1,8 @@
 //! Turns editor state into a `Frame`, and answers the layout questions the
 //! core cannot: display-line motion, hit testing and scrolling.
 
+mod outputs;
+
 use crate::gpu::linear;
 use crate::images::{self, Decoded, Images};
 use crate::motion::{self, Tween};
@@ -790,7 +792,8 @@ impl View {
             .iter()
             .map(|shown| shown.height + Self::image_gap(m))
             .sum();
-        self.layouts[&key].height + images
+        let outputs = self.output_block(ed, line, m).map_or(0.0, |block| block.height);
+        self.layouts[&key].height + images + outputs
     }
 
     /// Keeps the scroll position valid, and the end of the document from
@@ -1490,6 +1493,9 @@ impl View {
                 }
                 y += height + gap;
             }
+            if let Some(block) = self.output_block(ed, line, &m) {
+                y += self.draw_output(ed, block, line, y, &m, layer);
+            }
             line += 1;
         }
     }
@@ -1576,8 +1582,26 @@ impl View {
             Some(agent) => format!("◌ {} working    ", agent.name),
             None => String::new(),
         };
+        // The notebook's kernels: idle, busy, starting or stopped.
+        let kernels: String = ed
+            .notebook()
+            .map(|book| {
+                book.kernels
+                    .iter()
+                    .map(|kernel| {
+                        let state = match () {
+                            _ if kernel.dead.is_some() => "stopped",
+                            _ if kernel.starting => "starting",
+                            _ if kernel.busy => "busy",
+                            _ => "idle",
+                        };
+                        format!("{} {state}    ", kernel.name)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let right_text = format!(
-            "{pending}    {agent}{suggestions}{}{dirty}    {} words    {}:{}    {hint}",
+            "{pending}    {agent}{kernels}{suggestions}{}{dirty}    {} words    {}:{}    {hint}",
             ed.file_name(),
             ed.doc().words,
             line + 1,

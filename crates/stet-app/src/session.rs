@@ -10,6 +10,7 @@ use stet_core::{Editor, Effect, Key, KeyEvent};
 pub struct Session {
     pub editor: Editor,
     pub view: View,
+    pub kernels: crate::notebook::Kernels,
     #[cfg(feature = "substack")]
     pub publish: crate::publish::Publisher,
     #[cfg(feature = "youtube")]
@@ -150,6 +151,9 @@ impl Session {
                     self.view.set_zoom(step);
                     rest.push(Effect::Zoom(step));
                 }
+                Effect::Run { doc, cwd, runs } => self.kernels.run(&mut self.editor, doc, cwd, runs),
+                Effect::Interrupt { doc } => self.kernels.interrupt(doc),
+                Effect::RestartKernels { doc } => self.kernels.restart(&mut self.editor, doc),
                 other => rest.push(other),
             }
         }

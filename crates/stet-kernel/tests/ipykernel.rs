@@ -52,7 +52,9 @@ fn finish(kernel: &Kernel, run: RunId) -> Ran {
         match kernel.next_event(Duration::from_millis(200)) {
             Some(Event::Started(id)) if id == run => ran.started = true,
             Some(Event::Output(id, output)) if id == run => ran.outputs.push(output),
-            Some(Event::Finished { run: id, status, count }) if id == run => {
+            Some(Event::Finished {
+                run: id, status, count, ..
+            }) if id == run => {
                 ran.status = status;
                 ran.count = count;
                 return ran;

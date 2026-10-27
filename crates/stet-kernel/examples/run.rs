@@ -38,7 +38,9 @@ fn main() {
             }
             Event::Output(_, Output::Error { name, value, .. }) => println!("{name}: {value}"),
             Event::Output(_, Output::Clear { .. }) | Event::Started(_) => {}
-            Event::Finished { run: id, status, count } if Some(id) == run => {
+            Event::Finished {
+                run: id, status, count, ..
+            } if Some(id) == run => {
                 eprintln!("· {status:?} [{}]", count.map_or("-".into(), |count| count.to_string()));
                 break;
             }

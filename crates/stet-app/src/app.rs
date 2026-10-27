@@ -355,6 +355,7 @@ impl Running {
             session: Session {
                 editor,
                 view,
+                kernels: crate::notebook::Kernels::new(wake.clone()),
                 #[cfg(feature = "substack")]
                 publish: crate::publish::Publisher::new(wake.clone()),
                 #[cfg(feature = "youtube")]
@@ -443,6 +444,7 @@ impl Running {
         self.session.publish.poll(&mut self.session.editor);
         #[cfg(feature = "youtube")]
         self.session.youtube.poll(&mut self.session.editor);
+        self.session.kernels.poll(&mut self.session.editor);
         if !self.drawn {
             crate::timing("first redraw requested");
         }
@@ -1174,7 +1176,10 @@ impl ApplicationHandler<Wake> for App {
                     }
                 }
             },
-            Wake::Redraw => running.window.request_redraw(),
+            Wake::Redraw => {
+                running.session.kernels.poll(&mut running.session.editor);
+                running.window.request_redraw()
+            }
             Wake::Drive(line) => running.drive(&line, event_loop),
             Wake::Request(id, request, reply) => running.request(id, &request, reply, event_loop),
             Wake::Gone(id) => {
@@ -1221,6 +1226,7 @@ fn headless_session(args: &Args) -> Session {
     Session {
         editor,
         view,
+        kernels: crate::notebook::Kernels::new(no_wake()),
         #[cfg(feature = "substack")]
         publish,
         #[cfg(feature = "youtube")]
@@ -1245,6 +1251,9 @@ pub fn screenshot(args: &Args) -> Result<(), String> {
     for key in parse_keys(&args.keys) {
         session.key(key);
     }
+    session
+        .kernels
+        .settle(&mut session.editor, std::time::Duration::from_secs(120));
     // The first frame requests images; the second has them.
     session.view.frame(&mut session.editor);
     for image in session.view.uploads() {

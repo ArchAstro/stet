@@ -374,9 +374,21 @@ impl Editor {
         }
     }
 
-    pub fn notebook_finished(&mut self, doc: u64, uid: u64, status: Status, count: Option<usize>) {
+    /// A run is over. `took_ms`, as the kernel measured it, beats the time
+    /// between reports, which arrive in batches.
+    pub fn notebook_finished(
+        &mut self,
+        doc: u64,
+        uid: u64,
+        status: Status,
+        count: Option<usize>,
+        took_ms: Option<u64>,
+    ) {
         let Some(book) = self.books.get_mut(&doc) else { return };
         book.notebook.finished(uid, status, count, now_ms());
+        if let Some(took) = took_ms {
+            book.notebook.took(uid, took);
+        }
         book.matches = book.notebook.matching(&book.cells);
         if book.notebook.busy().next().is_none() {
             self.save_book(doc);
@@ -502,7 +514,7 @@ mod editor_tests {
                 text: "1\n".into(),
             },
         );
-        ed.notebook_finished(doc, uid, Status::Ok, Some(1));
+        ed.notebook_finished(doc, uid, Status::Ok, Some(1), None);
         let (slot, stale) = ed.notebook().unwrap().output_of(0).unwrap();
         assert_eq!(
             (slot.status, slot.count, stale, slot.ran_by.as_deref()),
@@ -548,7 +560,7 @@ mod editor_tests {
                 text: "a\n".into(),
             },
         );
-        ed.notebook_finished(doc, uid, Status::Ok, Some(1));
+        ed.notebook_finished(doc, uid, Status::Ok, Some(1), None);
         assert!(notebook::outputs_path(&path).exists());
 
         let mut again = editor("");

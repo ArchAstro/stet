@@ -78,6 +78,8 @@ pub enum Event {
         run: RunId,
         status: Status,
         count: Option<usize>,
+        /// How long it ran, from starting to its last output, if it started.
+        took: Option<Duration>,
     },
     /// The kernel could not start, or exited. Runs it had are finished as
     /// [`Status::Aborted`] first. [`Kernel::restart`] starts it again.
@@ -239,6 +241,7 @@ pub(crate) fn aborted(run: RunId) -> Event {
         run,
         status: Status::Aborted,
         count: None,
+        took: None,
     }
 }
 
@@ -274,6 +277,9 @@ struct Pending {
     idle: bool,
     /// Events that came before the runs ahead of this one finished.
     held: Vec<Event>,
+    /// When the kernel said it began, and when it went idle.
+    began: Option<Instant>,
+    ended: Option<Instant>,
 }
 
 struct Session {
@@ -555,6 +561,7 @@ impl Session {
                         reply: Some((Status::Aborted, None)),
                         idle: true,
                         held: vec![Event::Output(run, failed)],
+                        ..Pending::default()
                     },
                 );
                 self.settle(emit);
@@ -596,10 +603,16 @@ impl Session {
         let Some(run) = self.run_of(&message) else { return };
         let event = match &message.content {
             JupyterMessageContent::Status(status) => match status.execution_state {
-                ExecutionState::Busy => Event::Started(run),
+                ExecutionState::Busy => {
+                    if let Some(pending) = self.runs.get_mut(&run) {
+                        pending.began = Some(Instant::now());
+                    }
+                    Event::Started(run)
+                }
                 ExecutionState::Idle => {
                     if let Some(pending) = self.runs.get_mut(&run) {
                         pending.idle = true;
+                        pending.ended = Some(Instant::now());
                     }
                     return self.settle(emit);
                 }
@@ -637,9 +650,18 @@ impl Session {
             let (true, Some((status, count))) = (first.get().idle, first.get().reply) else {
                 return;
             };
+            let took = first
+                .get()
+                .began
+                .map(|began| first.get().ended.unwrap_or_else(Instant::now) - began);
             let run = first.remove_entry().0;
             self.requests.retain(|_, waiting| *waiting != run);
-            emit.send(Event::Finished { run, status, count });
+            emit.send(Event::Finished {
+                run,
+                status,
+                count,
+                took,
+            });
         }
     }
 
