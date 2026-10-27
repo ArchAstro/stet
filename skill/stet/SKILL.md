@@ -1,6 +1,6 @@
 ---
 name: stet
-description: Work with the user inside their Stet markdown editor - see what they have open, read the live (unsaved) text, propose edits as suggestions they accept or reject, insert text or images at their cursor, and take requests they send from the editor. Also covers installing Stet and this skill. Use when the user asks for help writing or editing a document they have open in Stet, says "my editor/draft/doc", asks you to listen for requests from Stet, or asks to install or set up Stet.
+description: Work with the user inside their Stet markdown editor - see what they have open, read the live (unsaved) text, propose edits as suggestions they accept or reject, insert text or images at their cursor, run the code cells of a notebook and read their outputs, and take requests they send from the editor. Also covers installing Stet and this skill. Use when the user asks for help writing or editing a document they have open in Stet, mentions their notebook, cells, kernel or a cell's output, says "my editor/draft/doc", asks you to listen for requests from Stet, or asks to install or set up Stet.
 ---
 
 # Working in the user's Stet editor
@@ -155,6 +155,43 @@ stet ctl edit --margin --old "TODO check date" --new "Confirmed: March 2021"
 - A message from the editor carries `"in_margin": true` when the user wrote
   it from the margin pane.
 
+## Notebooks
+
+A markdown document is a notebook when its front matter says `kernel: python3`
+(or `notebook: true`), or after `:notebook`. Its fenced code blocks are
+cells; outputs show under them and are kept in `.stet/<name>.out.json`, never
+in the text. A cell is named by its number, from 1, or by an id written
+` ```python {#load}`. ` {kernel=NAME}` picks a kernel; `.norun` skips one.
+
+```sh
+stet ctl cells                   # every cell: lang, lines, status, count, stale, who ran it, a summary
+stet ctl run 3 --wait            # run cell 3 and wait; prints its outputs
+stet ctl run stale --wait        # cells whose code changed since they ran (or never ran)
+stet ctl run --wait              # all of them, top to bottom
+stet ctl output load             # one cell's outputs (Jupyter JSON)
+stet ctl vars                    # what the Python kernel holds: name, type, size, repr
+stet ctl kernel list             # what can run here, and what runs for this document
+stet ctl kernel interrupt        # stop the run in progress
+stet ctl kernel restart          # forget every variable (ask first: it loses their state)
+```
+
+- Python, R and Julia cells run on Jupyter kernels and share variables
+  within the document. `sh`, `node`, `sql` (duckdb, sqlite3), `ruby` and the
+  like run each cell as a fresh process.
+- Runs are attributed: the output says "run by Claude" (`--author` changes
+  it). Prefer `run N` over `run` when one cell answers the question; a full
+  run can be slow and changes what the user sees.
+- A failure stops the queue behind it; those cells come back `aborted`.
+  Read the error's `traceback`, propose the fix as a suggestion, and rerun
+  only once they accept it (or when they asked you to fix it directly).
+- Pictures come back as `{"path": ...}`: open the file to look at a chart.
+  Tables come as `application/vnd.stet.table+json` (`columns`, `rows`,
+  `total`). Long text is cut at 4000 characters.
+- `vars` runs quietly and moves no execution counts; use it rather than
+  adding a cell to print things.
+- To add analysis, suggest a new fenced cell, then run it by number once it
+  is accepted (`cells` gives the new numbering).
+
 ## 4. Direct edits (only when asked)
 
 ```sh
@@ -228,6 +265,9 @@ stet ctl wait --name Claude
   cursor or where they said.
 - When you have acted, tell them in one line:
   `stet ctl say --text "Suggested a tighter opening - accept or reject it."`
+- In a notebook the message also has `cell`: the cell their cursor is in,
+  its status and its outputs (see Notebooks). "Why does this fail?" is
+  answered from that, without another call.
 - Then run `stet ctl wait` again to stay connected. Stop when the user tells
   you to, or when Stet is no longer running.
 
@@ -258,5 +298,6 @@ stet ctl shot /tmp/stet.png           # a picture of what the window shows right
 2. Never write the document's file on disk, and never save it for them.
 3. Do not accept or reject suggestions, yours or theirs.
 4. One request, one focused change. Say what you did in a line.
-5. If something fails twice, tell the user what happened instead of working
+5. Do not restart a notebook's kernel or run every cell unless asked.
+6. If something fails twice, tell the user what happened instead of working
    around it.
