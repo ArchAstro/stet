@@ -130,8 +130,20 @@ def _quietly(function):
     return formatter
 
 
-def _before_run(_info):
+def _before_run(info):
     """Before each cell: libraries imported since get Stet's settings."""
+    # A cell that imports Altair and shows a chart at once would show it
+    # before Altair heard of Stet: import it first.
+    source = getattr(info, "raw_cell", None) or ""
+    for name in ("altair", "plotly"):
+        if name not in sys.modules and name in source and _installed(name):
+            try:
+                __import__(name)
+            except Exception:
+                pass
+    if "plotly" in sys.modules and not getattr(_before_run, "plotly", False):
+        _before_run.plotly = True
+        _plotly_setup()
     if "matplotlib" in sys.modules and not getattr(_before_run, "matplotlib", False):
         _before_run.matplotlib = True
         _matplotlib_setup()
@@ -196,6 +208,7 @@ def _matplotlib_theme():
         "axes.titlecolor": text,
         "axes.grid": True,
         "axes.grid.axis": "y",
+        "axes.axisbelow": True,
         "grid.color": grid,
         "axes.spines.top": False,
         "axes.spines.right": False,
@@ -205,6 +218,8 @@ def _matplotlib_theme():
         "legend.frameon": False,
         "font.family": "sans-serif",
         "font.sans-serif": ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
+        # "Jan", "Feb", not "2024-01-15" labels that run into each other.
+        "date.converter": "concise",
     }
     if _theme.get("series"):
         rc["axes.prop_cycle"] = cycler(color=_theme["series"])
@@ -245,7 +260,9 @@ def table(columns, rows, total=None):
 
 def _frame_table(frame):
     head = frame.head(TABLE_ROWS)
-    columns = [str(column) for column in head.columns]
+    # A column under two levels (`agg(["mean", "max"])`) is "free mean".
+    columns = [" ".join(str(part) for part in column if part != "") if isinstance(column, tuple)
+               else str(column) for column in head.columns]
     rows = head.itertuples(index=False, name=None)
     index = head.index
     named = any(name is not None for name in getattr(index, "names", [None]))
@@ -317,7 +334,12 @@ def _figure_chart(figure):
             continue
         if any(patch.get_y() != 0 for patch in patches) or any(patch.get_height() < 0 for patch in patches):
             return None  # stacked by hand, or across: SVG draws it as drawn
-        rows = [{"x": _x_value(patch.get_x() + patch.get_width() / 2, dates, categories),
+        # Bars at numbers (a histogram's bins) are named by their middles,
+        # to the places their widths need.
+        places = None if dates or categories else max(0, 1 - math.floor(math.log10(min(
+            (patch.get_width() for patch in patches if patch.get_width() > 0), default=1))))
+        middle = lambda patch: patch.get_x() + patch.get_width() / 2
+        rows = [{"x": _x_value(middle(patch) if places is None else round(middle(patch), places), dates, categories),
                  "y": _plain(patch.get_height())} for patch in patches]
         parts.append(("bar", name_of(container.get_label()), rows))
     for collection in ax.collections:
@@ -395,44 +417,66 @@ def _tick_categories(ax):
 # --- Charts: Plotly ------------------------------------------------------------
 
 
+def _plotly_setup():
+    """Plotly shows a figure itself (`_ipython_display_`), past every
+    formatter, as HTML Stet cannot draw: show it as a chart when it can be."""
+    try:
+        from plotly.basedatatypes import BaseFigure
+        from IPython.display import display
+    except Exception:
+        return
+    shown = BaseFigure._ipython_display_
+
+    def _ipython_display_(figure):
+        try:
+            spec = _plotly_chart(figure)
+        except Exception:
+            spec = None
+        if spec is None:
+            return shown(figure)
+        display({CHART: spec, "text/plain": "<plotly figure>"}, raw=True)
+
+    BaseFigure._ipython_display_ = _ipython_display_
+
+
+
 def _plotly_chart(figure):
     """Scatter and bar traces as a native chart."""
-    data = figure.to_plotly_json()
-    traces = data.get("data", [])
+    # Traces, not `to_plotly_json()`: Plotly 6 packs arrays as base64 there.
+    traces = list(figure.data)
     if not traces:
         return None
     values, marks = [], []
     for at, trace in enumerate(traces):
-        kind = trace.get("type", "scatter")
+        kind = trace.type or "scatter"
         if kind not in ("scatter", "scattergl", "bar"):
             return None
-        name = trace.get("name") or "trace %d" % (at + 1)
-        xs, ys = trace.get("x"), trace.get("y")
+        name = trace.name or "trace %d" % (at + 1)
+        xs, ys = trace.x, trace.y
         if ys is None:
             return None
         if xs is None:
             xs = range(len(ys))
-        if trace.get("orientation") == "h":
+        if getattr(trace, "orientation", None) == "h":
             return None
         for x, y in zip(list(xs), list(ys)):
             values.append({"x": _plain(x), "y": _plain(y), "series": name})
-        mode = trace.get("mode") or "lines"
+        mode = getattr(trace, "mode", None) or "lines"
         marks.append("bar" if kind == "bar" else ("line" if "lines" in mode else "point"))
     x_type = "nominal" if any(isinstance(v["x"], str) and not _looks_like_date(v["x"]) for v in values) else (
         "temporal" if any(isinstance(v["x"], str) for v in values) else "quantitative")
     if "bar" in marks and x_type == "quantitative":
         x_type = "ordinal"
-    layout = data.get("layout", {})
-    title = layout.get("title")
-    title = title.get("text") if isinstance(title, dict) else title
-    axis_title = lambda axis: ((layout.get(axis) or {}).get("title") or {}).get("text")
+    layout = figure.layout
+    title = layout.title.text
+    axis_title = lambda axis: getattr(layout, axis).title.text
     encoding = {"x": {"field": "x", "type": x_type}, "y": {"field": "y", "type": "quantitative"}}
     if axis_title("xaxis"):
         encoding["x"]["title"] = axis_title("xaxis")
     if axis_title("yaxis"):
         encoding["y"]["title"] = axis_title("yaxis")
     if len(traces) > 1:
-        encoding["color"] = {"field": "series", "type": "nominal"}
+        encoding["color"] = {"field": "series", "type": "nominal", "title": layout.legend.title.text or ""}
     spec = {"data": {"values": values}, "encoding": encoding}
     if len(set(marks)) == 1:
         spec["mark"] = marks[0]
@@ -450,7 +494,7 @@ def _plotly_chart(figure):
 def _expand(marks, traces):
     """Each value's mark, in the order values were gathered."""
     for mark, trace in zip(marks, traces):
-        for _ in trace.get("y") or []:
+        for _ in trace.y if trace.y is not None else []:
             yield mark
 
 

@@ -78,6 +78,31 @@ def test_refs_load_lazily_and_publish_saves():
     assert list(stet.refs.clean.columns) == ["z"]
 
 
+def test_histograms_name_bins_briefly():
+    fig, ax = plt.subplots()
+    ax.hist([0.1234567, 0.2, 0.35, 0.9], bins=4)
+    xs = [row["x"] for row in stet._figure_chart(fig)["data"]["values"]]
+    plt.close(fig)
+    assert xs == [0.22, 0.41, 0.61, 0.8], xs
+
+
+def test_two_level_columns_read_as_words():
+    frame = pd.DataFrame({"n": [1.0, 2.0]})
+    frame.columns = pd.MultiIndex.from_tuples([("free", "mean")])
+    assert stet._frame_table(frame)["columns"][-1] == "free mean"
+
+
+def test_plotly_figures_are_charts():
+    try:
+        import plotly.express as px
+    except ImportError:
+        return
+    spec = stet._plotly_chart(px.line(pd.DataFrame({"x": [1, 2], "y": [3.5, 4.0], "k": ["a", "b"]}),
+                                      x="x", y="y", color="k"))
+    assert [v["y"] for v in spec["data"]["values"]] == [3.5, 4.0]
+    assert spec["encoding"]["color"]["title"] == "k"
+
+
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:

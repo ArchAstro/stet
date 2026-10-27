@@ -52,6 +52,30 @@ const RENDERERS: &[(&str, Render)] = &[
     ("text/plain", View::text_render),
 ];
 
+/// How many decimal places a column of numbers is shown to: what its
+/// largest number leaves of six significant digits (as pandas shows them),
+/// fewer when every number needs fewer. `None` when none has a fraction.
+fn decimal_places(numbers: impl Iterator<Item = f64>) -> Option<usize> {
+    let numbers: Vec<f64> = numbers.filter(|number| number.is_finite()).collect();
+    if numbers.iter().all(|number| number.fract() == 0.0) {
+        return None;
+    }
+    let largest = numbers.iter().fold(0.0f64, |most, number| most.max(number.abs()));
+    let whole = if largest >= 1.0 {
+        largest.log10().floor() as usize + 1
+    } else {
+        0
+    };
+    let most = 6usize.saturating_sub(whole).max(1);
+    let exact = |places: usize| {
+        let scale = 10f64.powi(places as i32);
+        numbers
+            .iter()
+            .all(|number| ((number * scale).round() - number * scale).abs() < 1e-6)
+    };
+    Some((1..most).find(|&places| exact(places)).unwrap_or(most))
+}
+
 /// The data refs a chart spec names (`data.ref`, or a `data.url` that is
 /// not a URL), at its top and in its layers.
 fn data_refs_named(spec: &Value) -> Vec<String> {
@@ -250,16 +274,19 @@ impl View {
                     lines(self, &mut rows, headline.trim_end_matches([':', ' ']), c.error, true, 4);
                 }
                 Item::Display { data } | Item::Result { data } => {
-                    for (pattern, render) in RENDERERS {
+                    let drawn = RENDERERS.iter().any(|(pattern, render)| {
                         let found = match pattern.strip_suffix('*') {
                             Some(prefix) => data.iter().find(|(mime, _)| mime.starts_with(prefix)),
                             None => data.get_key_value(*pattern),
                         };
-                        if let Some((mime, value)) = found
-                            && render(self, &cx, mime, value, &mut rows)
-                        {
-                            break;
-                        }
+                        found.is_some_and(|(mime, value)| render(self, &cx, mime, value, &mut rows))
+                    });
+                    // Nothing Stet can draw (Plotly's HTML, a widget): say
+                    // so, rather than leave the output blank.
+                    if !drawn && !data.is_empty() {
+                        let forms: Vec<&str> = data.keys().map(String::as_str).collect();
+                        let note = format!("no view for {}", forms.join(", "));
+                        rows.push(self.text_row(ed, &note, c.muted, cx.small, Face::Ui, false));
                     }
                 }
             }
@@ -580,19 +607,31 @@ impl View {
             .as_array()
             .map(|columns| columns.iter().map(cell).collect())
             .unwrap_or_default();
-        let body: Vec<Vec<String>> = table["rows"]
+        let shown: &[Value] = table["rows"]
             .as_array()
-            .map(|rows| {
-                rows.iter()
-                    .take(MAX_ROWS)
-                    .map(|row| {
-                        row.as_array()
-                            .map(|cells| cells.iter().map(cell).collect())
-                            .unwrap_or_default()
+            .map_or(&[], |rows| &rows[..rows.len().min(MAX_ROWS)]);
+        let places: Vec<Option<usize>> = (0..columns.len())
+            .map(|i| decimal_places(shown.iter().filter_map(|row| row[i].as_f64())))
+            .collect();
+        let body: Vec<Vec<String>> = shown
+            .iter()
+            .map(|row| {
+                row.as_array()
+                    .map(|cells| {
+                        cells
+                            .iter()
+                            .enumerate()
+                            .map(|(i, value)| match (value.as_f64(), places.get(i).copied().flatten()) {
+                                (Some(number), Some(places)) if !value.is_i64() && !value.is_u64() => {
+                                    format!("{number:.places$}")
+                                }
+                                _ => cell(value),
+                            })
+                            .collect()
                     })
-                    .collect()
+                    .unwrap_or_default()
             })
-            .unwrap_or_default();
+            .collect();
         let width = |i: usize| {
             body.iter()
                 .filter_map(|row| row.get(i))
@@ -761,5 +800,16 @@ mod tests {
         assert_eq!(seconds(120), "120 ms");
         assert_eq!(seconds(4200), "4.2s");
         assert_eq!(seconds(125_000), "2m 5s");
+    }
+
+    #[test]
+    fn numbers_keep_the_places_their_column_needs() {
+        assert_eq!(decimal_places([58.16367648554073, 1.5].into_iter()), Some(4));
+        assert_eq!(decimal_places([0.5936032404079788, -1.2].into_iter()), Some(5));
+        assert_eq!(decimal_places([0.5936032404079788].into_iter()), Some(6));
+        assert_eq!(decimal_places([44.8, 50.0, 30.5].into_iter()), Some(1));
+        assert_eq!(decimal_places([12.5, 0.0, 48.0].into_iter()), Some(1));
+        assert_eq!(decimal_places([1200.0, 340.0].into_iter()), None);
+        assert_eq!(decimal_places([1234567.25].into_iter()), Some(1));
     }
 }
