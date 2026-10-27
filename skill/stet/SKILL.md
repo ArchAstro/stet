@@ -191,6 +191,46 @@ stet ctl kernel restart          # forget every variable (ask first: it loses th
   adding a cell to print things.
 - To add analysis, suggest a new fenced cell, then run it by number once it
   is accepted (`cells` gives the new numbering).
+- Charts come back as `application/vnd.stet.chart+json` (a Vega-Lite
+  subset): matplotlib, Altair and plotly figures are drawn natively. Prefer
+  a simple `plt.plot`/`bar` or Altair to a custom-styled figure.
+
+### Data refs
+
+A link reference definition that names a data file is a data ref:
+
+```markdown
+Signups come from [signups]; the users table is [users].
+
+[signups]: data/signups.parquet
+[users]: app.db#users
+```
+
+`.csv .tsv .json .jsonl .parquet .arrow .sqlite/.db` (`#table` picks a
+database table). In the window `[signups]` is a chip with the file's shape.
+
+```sh
+stet ctl data                    # every ref: name, path, file, line
+stet ctl data schema signups     # columns, types, row count; no kernel needed
+stet ctl data peek signups --rows 5
+```
+
+- Read the schema with `data` before writing code against a file.
+- In Python cells `refs.signups` is the file as a DataFrame (loaded lazily,
+  reloaded when it changes). `stet.publish(df, "clean")` saves it to
+  `.stet/data/clean.parquet` and suggests `[clean]: ...` for the user to
+  accept.
+- A ` ```chart ` fence holding a JSON spec with `"data": {"ref": "signups"}`
+  draws a chart with no kernel. Suggest one when a plain chart of a ref
+  answers the question.
+
+### Jupyter files
+
+```sh
+stet import nb.ipynb             # nb.md, outputs kept beside it (.stet/)
+stet export doc.md --ipynb       # back to Jupyter, last outputs included
+stet export doc.md --html        # one page to share: prose, code, outputs, charts
+```
 
 ## 4. Direct edits (only when asked)
 
@@ -282,6 +322,7 @@ stet ctl keys "<D-/>"                 # keys in vim notation; <D-…> is Cmd, <C
 stet ctl type "some text"             # typed as the keyboard would
 stet ctl click 320 200                # a click at a point in the window; add `right` for the menu
 stet ctl drag 320 200 480 260         # press, move and let go
+stet ctl move 320 200                 # the pointer there: a chart's readout, a data ref's schema
 stet ctl shot /tmp/stet.png           # a picture of what the window shows right now
 ```
 
