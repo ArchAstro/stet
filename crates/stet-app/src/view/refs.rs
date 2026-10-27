@@ -149,6 +149,9 @@ impl View {
                 });
                 let seen = clip(rect);
                 if seen[3] > 0.0 {
+                    if self.preview_at.is_none() && self.preview.as_ref() == Some(&(name.clone(), line)) {
+                        self.preview_at = Some(seen);
+                    }
                     self.targets.push((seen, Target::DataRef(self.chips.len())));
                     self.chips.push(Chip {
                         rect: seen,
@@ -191,6 +194,9 @@ impl View {
                 .map(|d| d.name.clone());
             if let Some(name) = name {
                 let seen = clip(rect);
+                if self.preview_at.is_none() && self.preview.as_ref() == Some(&(name.clone(), line)) {
+                    self.preview_at = Some(seen);
+                }
                 self.targets.push((seen, Target::DataRef(self.chips.len())));
                 self.chips.push(Chip { rect: seen, name, line });
             }
@@ -209,10 +215,14 @@ impl View {
             .cloned()
     }
 
-    /// Shows the first rows of the chip's file under its line, or hides
-    /// them if they are showing.
+    /// Shows the first rows of the chip's file in the margin beside it, or
+    /// hides them if they are showing. Any other index (the panel itself)
+    /// hides them.
     pub fn toggle_preview(&mut self, index: usize) {
-        let Some(chip) = self.chips.get(index) else { return };
+        let Some(chip) = self.chips.get(index) else {
+            self.preview = None;
+            return;
+        };
         let preview = (chip.name.clone(), chip.line);
         self.preview = match self.preview.take() {
             Some(open) if open == preview => None,
@@ -323,43 +333,127 @@ impl View {
     }
 
     /// What shows under `line` that is not a cell's output: a chart fence's
-    /// chart, or the preview of a data ref.
+    /// chart.
     pub(super) fn data_block(&mut self, ed: &Editor, line: usize, m: &Metrics) -> Option<Block> {
+        let spec = chart_fence(ed, line)?;
         let size = (m.font * 0.86).round();
         let small = (m.font * 0.74).round();
         let c = ed.theme.colors;
         let mut rows = vec![Row::Gap((m.line * 0.25).round())];
-        if let Some(spec) = chart_fence(ed, line) {
-            let cx = Cx {
-                ed,
-                m,
-                files: None,
-                size,
-                small,
-            };
-            match serde_json::from_str::<Value>(&spec) {
-                Ok(spec) => {
-                    self.chart_rows(&cx, "", &spec, &mut rows);
-                }
-                Err(err) => rows.push(self.text_row(ed, &format!("chart: {err}"), c.error, small, Face::Ui, false)),
+        let cx = Cx {
+            ed,
+            m,
+            files: None,
+            size,
+            small,
+        };
+        match serde_json::from_str::<Value>(&spec) {
+            Ok(spec) => {
+                self.chart_rows(&cx, "", &spec, &mut rows);
             }
-        } else {
-            let (name, at) = self.preview.clone()?;
-            if at != line {
-                return None;
-            }
-            let Some(data) = ed.doc().data_ref(&name).cloned() else {
-                self.preview = None;
-                return None;
-            };
-            match self.peek_ref(ed, &data, data::PREVIEW_ROWS) {
-                Ok(Some(peek)) => self.table_rows(ed, &peek.to_json(), size, small, &mut rows),
-                Ok(None) => rows.push(self.text_row(ed, "reading…", c.muted, small, Face::Ui, false)),
-                Err(err) => rows.push(self.text_row(ed, &err, c.error, small, Face::Ui, false)),
-            }
+            Err(err) => rows.push(self.text_row(ed, &format!("chart: {err}"), c.error, small, Face::Ui, false)),
         }
         rows.push(Row::Gap((m.line * 0.35).round()));
         Some(Block::of(rows))
+    }
+
+    /// The first rows of the data ref clicked, in the margin beside its
+    /// chip: right of the text, or in the notes pane when it is open. A
+    /// window too narrow for it has it over the text's right edge.
+    pub(super) fn preview_panel(&mut self, ed: &Editor, m: &Metrics, layer: &mut Layer) {
+        let Some(anchor) = self.preview_at else { return };
+        let Some((name, _)) = self.preview.clone() else { return };
+        let Some(data) = ed.doc().data_ref(&name).cloned() else {
+            self.preview = None;
+            return;
+        };
+        let c = ed.theme.colors;
+        let small = (m.font * 0.74).round();
+        let mut rows = Vec::new();
+        let title = match self.peek_ref(ed, &data, data::PREVIEW_ROWS) {
+            Ok(Some(peek)) => {
+                self.table_rows(ed, &peek.to_json(), small, small, &mut rows);
+                format!("{}  ·  {}", data.name, shape(&peek))
+            }
+            Ok(None) => format!("{}  ·  reading…", data.name),
+            Err(err) => format!("{}  ·  {}", data.name, err.rsplit(": ").next().unwrap_or(&err)),
+        };
+        rows.insert(0, self.text_row(ed, &title, c.text, small, Face::Ui, true));
+        rows.insert(1, Row::Gap((small * 0.4).round()));
+        let pad = (10.0 * self.scale).round();
+        let line = self.scale.round().max(1.0);
+        let width_of = |view: &View, row: &Row| match row {
+            Row::Text { key, span, .. } => span.unwrap_or(view.layouts[key].rows[0].width),
+            _ => 0.0,
+        };
+        let inner = rows.iter().map(|row| width_of(self, row)).fold(0.0, f32::max);
+        let height: f32 = rows
+            .iter()
+            .map(|row| match row {
+                Row::Text { height, .. } => *height,
+                Row::Gap(gap) => *gap,
+                Row::Picture(shown) => shown.height,
+            })
+            .sum();
+        let (w, h) = (inner + pad * 2.0, height + pad * 2.0);
+        let beside = match self.split(ed) {
+            Some(split) => split + pad * 2.0,
+            None => m.left + m.column + m.advance * 2.0,
+        };
+        let x = beside.min(self.width - pad - w).max(m.origin + pad).round();
+        let y = anchor[1].min(m.bottom - h).max(m.top).round();
+        layer.back.push(Quad {
+            rect: [x - line, y - line, w + 2.0 * line, h + 2.0 * line],
+            color: linear(c.rule, 1.0),
+            radius: pad * 0.6,
+        });
+        layer.back.push(Quad {
+            rect: [x, y, w, h],
+            color: linear(c.panel, 1.0),
+            radius: pad * 0.6,
+        });
+        let clip = [x, y, x + w, (y + h).min(m.bottom)];
+        let mut at = y + pad;
+        for row in rows {
+            match row {
+                Row::Gap(gap) => at += gap,
+                Row::Text {
+                    key,
+                    height,
+                    rgb,
+                    band,
+                    rule,
+                    span,
+                } => {
+                    let wide = span.unwrap_or(inner);
+                    if band {
+                        layer.back.push(Quad {
+                            rect: [x + pad * 0.5, at, wide + pad, height],
+                            color: linear(c.code_background, 1.0),
+                            radius: 0.0,
+                        });
+                    }
+                    if rule {
+                        layer.back.push(Quad {
+                            rect: [x + pad, at + height - line, wide, line],
+                            color: linear(c.rule, 1.0),
+                            radius: 0.0,
+                        });
+                    }
+                    layer.texts.push(TextItem {
+                        key,
+                        left: x + pad,
+                        top: at.round(),
+                        clip,
+                        color: color(rgb),
+                    });
+                    at += height;
+                }
+                Row::Picture(_) => {}
+            }
+        }
+        // A click on the panel puts it away.
+        self.targets.push(([x, y, w, h], Target::DataRef(usize::MAX)));
     }
 
     /// Rows for a chart's `data.ref`: the table, `None` while it is read.

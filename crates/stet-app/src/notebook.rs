@@ -34,6 +34,8 @@ struct Started {
     theme: String,
     /// The data refs a Python kernel was last given: name to file.
     refs: Value,
+    /// When the refs of a document not in front were last looked at.
+    refs_checked: Option<std::time::Instant>,
 }
 
 struct Probe {
@@ -117,7 +119,7 @@ impl Kernels {
     }
 
     /// The document's kernel for `spec`, started if it is not yet.
-    fn kernel_for(&mut self, ed: &Editor, doc: u64, cwd: Option<PathBuf>, spec: &Spec) -> &mut Started {
+    fn kernel_for(&mut self, ed: &mut Editor, doc: u64, cwd: Option<PathBuf>, spec: &Spec) -> &mut Started {
         let at = match self
             .started
             .iter()
@@ -141,6 +143,7 @@ impl Kernels {
                     probes: HashMap::new(),
                     theme: String::new(),
                     refs: Value::Null,
+                    refs_checked: None,
                 });
                 let started = self.started.last_mut().expect("just pushed");
                 boot(ed, started);
@@ -322,8 +325,16 @@ impl Kernels {
                 started.theme = ed.theme.name.clone();
                 args.insert("theme".into(), theme_json(ed));
             }
-            // And of the data refs its document names, as they change.
-            if let Some(refs) = refs_json(ed, started.doc)
+            // And of the data refs its document names, as they change. A
+            // document behind another tab is looked at once a second.
+            let front = ed.doc_id() == started.doc && !ed.in_margin();
+            let due = started
+                .refs_checked
+                .is_none_or(|checked| checked.elapsed() >= std::time::Duration::from_secs(1));
+            if !front && due {
+                started.refs_checked = Some(std::time::Instant::now());
+            }
+            if let Some(refs) = (front || due).then(|| refs_json(ed, started.doc)).flatten()
                 && refs != started.refs
             {
                 started.refs = refs.clone();
@@ -490,7 +501,7 @@ fn theme_json(ed: &Editor) -> Value {
 
 /// Give a Python kernel the `stet` module, before anything else runs on it:
 /// the one installed if it is Stet's, else the one built in.
-fn boot(ed: &Editor, started: &mut Started) {
+fn boot(ed: &mut Editor, started: &mut Started) {
     if !is_python(started.kernel.spec()) {
         return;
     }
@@ -527,22 +538,31 @@ del __stet_boot"#,
 const PUBLISH: &str = "application/vnd.stet.publish+json";
 
 /// The data refs of document `doc` as its kernel takes them, a name to a
-/// file. `None` unless that document is the one in front, where its refs
-/// are at hand.
-fn refs_json(ed: &Editor, doc: u64) -> Option<Value> {
-    if ed.doc_id() != doc || ed.in_margin() {
-        return None;
+/// file. `None` if the document is not open.
+fn refs_json(ed: &mut Editor, doc: u64) -> Option<Value> {
+    let read = |ed: &mut Editor| {
+        ed.refresh();
+        let refs: serde_json::Map<String, Value> = ed
+            .doc()
+            .data_refs
+            .iter()
+            .map(|data| {
+                let file = crate::data::resolve(&data.path, ed.path.as_deref());
+                (data.name.clone(), json!(file))
+            })
+            .collect();
+        Value::Object(refs)
+    };
+    if ed.doc_id() == doc && !ed.in_margin() {
+        return Some(read(ed));
     }
-    let refs: serde_json::Map<String, Value> = ed
-        .doc()
-        .data_refs
-        .iter()
-        .map(|data| {
-            let file = crate::data::resolve(&data.path, ed.path.as_deref());
-            (data.name.clone(), json!(file))
-        })
-        .collect();
-    Some(Value::Object(refs))
+    let index = doc_index_of(ed, doc)?;
+    ed.with_pane(index, false, read)
+}
+
+/// The tab that holds document `doc`.
+fn doc_index_of(ed: &mut Editor, doc: u64) -> Option<usize> {
+    (0..ed.tab_count()).find(|&index| ed.with_pane(index, false, |ed| ed.doc_id()) == Some(doc))
 }
 
 /// A kernel published a table: offer its document a ref to it, as a
@@ -551,8 +571,7 @@ fn offer_ref(ed: &mut Editor, doc: u64, published: &Value) {
     let (Some(name), Some(path)) = (published["name"].as_str(), published["path"].as_str()) else {
         return;
     };
-    let Some(index) = (0..ed.tab_count()).find(|&index| ed.with_pane(index, false, |ed| ed.doc_id()) == Some(doc))
-    else {
+    let Some(index) = doc_index_of(ed, doc) else {
         return;
     };
     let placed = ed.with_pane(index, false, |ed| {

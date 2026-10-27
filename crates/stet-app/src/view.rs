@@ -242,6 +242,8 @@ pub struct View {
     chip_hover: Option<refs::Chip>,
     /// The data ref whose first rows show, by name, and under which line.
     preview: Option<(String, usize)>,
+    /// Where the previewed ref's chip was drawn this frame.
+    preview_at: Option<[f32; 4]>,
 }
 
 /// A table on screen, in window coordinates.
@@ -308,6 +310,7 @@ impl View {
             chips: Vec::new(),
             chip_hover: None,
             preview: None,
+            preview_at: None,
         }
     }
 
@@ -1111,6 +1114,7 @@ impl View {
         self.videos.clear();
         self.pictures.clear();
         self.chips.clear();
+        self.preview_at = None;
         if self.retouch.as_ref().is_some_and(|retouch| retouch.gone(self.now)) {
             self.retouch = None;
         }
@@ -1169,6 +1173,7 @@ impl View {
         self.tabs(ed, &m, &mut frame.base);
         self.sidebar(ed, &m, &mut frame.base);
         self.chart_readout(ed, &m, &mut frame.over);
+        self.preview_panel(ed, &m, &mut frame.over);
         self.chip_card(ed, &m, &mut frame.over);
         self.palette(ed, &m, &mut frame.over);
         self.context_menu(ed, &m, &mut frame.over);
