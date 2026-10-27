@@ -20,6 +20,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 /// How long an interrupted run gets to stop before it is killed.
 const INTERRUPT_GRACE: Duration = Duration::from_secs(2);
+/// How long to keep reading output after the program exits. Something it
+/// started in the background can hold its pipes open long after.
+const DRAIN: Duration = Duration::from_millis(300);
 
 pub(crate) fn work(spec: Spec, cwd: PathBuf, mut inbox: UnboundedReceiver<Command>, emit: Emit) {
     let Backend::Runner { argv, output } = spec.backend.clone() else {
@@ -108,6 +111,10 @@ async fn execute(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Its own process group, so an interrupt reaches everything the cell
+    // started (`sleep` under `sh`), as Ctrl-C in a terminal does.
+    #[cfg(unix)]
+    command.process_group(0);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -123,6 +130,7 @@ async fn execute(
             return Next::Abort;
         }
     };
+    let pid = child.id();
     emit.send(Event::Started(run));
 
     // The code goes in on its own task, so a program that prints a lot
@@ -137,10 +145,15 @@ async fn execute(
     let mut stderr = child.stderr.take();
     let mut rows = String::new();
     let (mut out_buf, mut err_buf) = ([0u8; 4096], [0u8; 4096]);
-    let mut interrupted = None;
+    let mut deadline = None;
+    let mut interrupted = false;
     let mut after = Next::Continue;
+    let mut exit = None;
 
     let exit = loop {
+        if let Some(status) = exit.take_if(|_| stdout.is_none() && stderr.is_none()) {
+            break status;
+        }
         tokio::select! {
             read = read_some(&mut stdout, &mut out_buf) => match read {
                 Some(text) if shape == Shape::Rows => rows.push_str(&text),
@@ -154,23 +167,33 @@ async fn execute(
             command = inbox.recv(), if matches!(after, Next::Continue) => match command {
                 Some(Command::Execute(next, code)) => queue.push_back((next, code)),
                 Some(Command::Interrupt) => {
-                    signal(&child);
-                    interrupted = Some(tokio::time::Instant::now() + INTERRUPT_GRACE);
+                    signal(&mut child, pid, Signal::Interrupt);
+                    interrupted = true;
+                    deadline = Some(tokio::time::Instant::now() + INTERRUPT_GRACE);
                 }
                 Some(Command::Restart) => {
-                    let _ = child.start_kill();
+                    signal(&mut child, pid, Signal::Kill);
                     after = Next::Restart;
                 }
                 Some(Command::Shutdown) | None => {
-                    let _ = child.start_kill();
+                    signal(&mut child, pid, Signal::Kill);
                     after = Next::Shutdown;
                 }
             },
-            _ = sleep_until(interrupted) => {
-                let _ = child.start_kill();
-                interrupted = None;
+            _ = sleep_until(deadline) => {
+                deadline = None;
+                match exit {
+                    // Exited, and the pipes are still open: stop reading.
+                    Some(_) => (stdout, stderr) = (None, None),
+                    None => signal(&mut child, pid, Signal::Kill),
+                }
             }
-            exit = child.wait(), if stdout.is_none() && stderr.is_none() => break exit,
+            status = child.wait(), if exit.is_none() => {
+                exit = Some(status);
+                deadline = Some(tokio::time::Instant::now() + DRAIN);
+                // Whatever the cell left running goes with it.
+                signal(&mut child, pid, Signal::Kill);
+            }
         }
     };
 
@@ -183,7 +206,7 @@ async fn execute(
         (Next::Restart | Next::Shutdown, _) => Status::Aborted,
         (_, Ok(exit)) if exit.success() => Status::Ok,
         (_, Ok(exit)) => {
-            let (name, value) = if interrupted.is_some() || killed_by_interrupt(&exit) {
+            let (name, value) = if interrupted || killed_by_interrupt(&exit) {
                 ("KeyboardInterrupt", "interrupted".to_string())
             } else {
                 ("ExitStatus", format!("{} exited with {exit}", argv[0]))
@@ -226,14 +249,31 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-fn signal(child: &tokio::process::Child) {
+#[derive(Clone, Copy)]
+enum Signal {
+    Interrupt,
+    Kill,
+}
+
+/// Signal the run's whole process group: the program and anything it
+/// started. `pid` is the program's, kept from the start: once it has been
+/// waited for, the child no longer knows it.
+fn signal(child: &mut tokio::process::Child, pid: Option<u32>, signal: Signal) {
     #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        // SAFETY: sends a signal to the process we spawned; no memory is involved.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) };
+    if let Some(pid) = pid {
+        let _ = child;
+        let number = match signal {
+            Signal::Interrupt => libc::SIGINT,
+            Signal::Kill => libc::SIGKILL,
+        };
+        // SAFETY: signals the process group we created for this run; no memory is involved.
+        unsafe { libc::kill(-(pid as libc::pid_t), number) };
     }
     #[cfg(not(unix))]
-    let _ = child;
+    if let Signal::Kill = signal {
+        let _ = pid;
+        let _ = child.start_kill();
+    }
 }
 
 fn killed_by_interrupt(exit: &std::process::ExitStatus) -> bool {
