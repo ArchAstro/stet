@@ -2202,3 +2202,40 @@ fn table_rows_and_columns_insert_move_and_answer_to_the_mouse() {
         .collect();
     assert!(labels.contains(&"Delete row".to_string()) && labels.contains(&"Align right".to_string()));
 }
+
+#[test]
+fn deleting_lines_runs_through_our_own_suggestions() {
+    let suggested = |start: &str, keys_: &str| {
+        let mut ed = suggesting(start);
+        keys(&mut ed, keys_);
+        assert!(
+            ed.message.is_none(),
+            "{keys_}: {:?}",
+            ed.message.as_ref().map(|m| &m.text)
+        );
+        normalized(&mut ed)
+    };
+    // A line we inserted is retracted, typed text and all.
+    assert_eq!(suggested("a\n|b\nc", "o<Esc>dd"), "a\nb\nc");
+    assert_eq!(suggested("a\n|b\nc", "ofoo<Esc>dd"), "a\nb\nc");
+    assert_eq!(suggested("a\n|b", "o<Esc>dd"), "a\nb");
+    // A deletion grows line by line.
+    assert_eq!(
+        suggested("a\n|b\nc\nd", "dddd"),
+        "a\n{--b\nc\n--}{>>id:s_00000000 by:Calvin<<}d"
+    );
+    assert_eq!(
+        suggested("a\n|b\nc", "dddd"),
+        "a\n{--b\nc--}{>>id:s_00000000 by:Calvin<<}"
+    );
+    // A line that runs into an insertion goes with it.
+    assert_eq!(
+        suggested("x\n|and\n\nIn", "o<Esc>kdd"),
+        "x\n{--and\n--}{>>id:s_00000000 by:Calvin<<}\nIn"
+    );
+    assert_eq!(suggested("a\n|b\nc", "dddduu"), "a\nb\nc");
+    // Another author's suggestion still has to be resolved first.
+    let mut ed = suggesting("|a {++b++}{>>id:s_0123abcd by:Agent<<}\nc");
+    keys(&mut ed, "dd");
+    assert!(ed.message.as_ref().unwrap().error);
+}

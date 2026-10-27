@@ -1302,7 +1302,11 @@ impl Editor {
                 } else {
                     0..self.buf.len()
                 };
-                let pos = self.edit(range, "");
+                let pos = if self.suggesting {
+                    self.suggest_delete_lines(range)
+                } else {
+                    self.edit(range, "")
+                };
                 self.cursor = if self.suggesting {
                     pos.end
                 } else {

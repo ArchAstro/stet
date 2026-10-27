@@ -110,6 +110,91 @@ impl Editor {
         })
     }
 
+    /// Deletes whole lines as a suggestion. The lines may run into our own
+    /// suggestions: an insertion there is retracted, and a deletion grows to
+    /// take the lines with it.
+    pub(super) fn suggest_delete_lines(&mut self, range: Range<usize>) -> EditPos {
+        self.refresh();
+        let suggestions = self.doc.suggestions.clone();
+        let touched = |range: &Range<usize>| {
+            let mut spans: Vec<&Suggestion> = suggestions
+                .iter()
+                .filter(|s| s.span.start < range.end && range.start < s.span.end)
+                .collect();
+            spans.sort_by_key(|s| s.span.start);
+            spans
+        };
+        if touched(&range).is_empty() {
+            return self.suggest_edit(range, "");
+        }
+        let unchanged = EditPos {
+            start: range.start,
+            end: range.end,
+        };
+        let author = self.config.author.clone();
+        if !is_valid_author(&author) {
+            self.error("set a display name first: :author <name>");
+            return unchanged;
+        }
+        // Take in whole every suggestion the lines run into, and the rest of
+        // the line the last one ends on.
+        let mut range = range;
+        loop {
+            let spans = touched(&range);
+            if spans.iter().any(|s| s.author != author) {
+                self.error("resolve the suggestion here first (gsa accepts, gsr rejects)");
+                return unchanged;
+            }
+            let start = spans.iter().map(|s| s.span.start).fold(range.start, usize::min);
+            let mut end = spans.iter().map(|s| s.span.end).fold(range.end, usize::max);
+            if end > range.end {
+                let line = self.buf.line_of(end);
+                end = if line + 1 < self.buf.line_count() {
+                    self.buf.line_start(line + 1)
+                } else {
+                    self.buf.len()
+                };
+            }
+            if (start, end) == (range.start, range.end) {
+                break;
+            }
+            range = start..end;
+        }
+        let lines = self.buf.line_of(range.start)..=self.buf.line_of(range.end);
+        if lines.into_iter().any(|line| self.doc.in_fence(line)) {
+            self.error("suggestions cannot be recorded inside a code fence");
+            return unchanged;
+        }
+        let spans = touched(&range);
+        let mut deleted = String::new();
+        let mut at = range.start;
+        let mut inserted_line = false;
+        for s in &spans {
+            deleted.push_str(&self.buf.slice(at..s.span.start));
+            deleted.push_str(&s.old_text);
+            inserted_line |= s.kind != Kind::Delete && s.new_text.contains('\n');
+            at = s.span.end;
+        }
+        deleted.push_str(&self.buf.slice(at..range.end));
+        let id = match spans.iter().find(|s| s.kind == Kind::Delete) {
+            Some(s) => s.id.clone(),
+            None => self.next_id(),
+        };
+        // A line we inserted goes on its own; the break it followed stays.
+        let text = if deleted.is_empty() || (inserted_line && deleted == "\n") {
+            deleted
+        } else {
+            match compose_checked(Kind::Delete, &deleted, "", &id, &author) {
+                Some(markup) => markup,
+                None => {
+                    self.error(UNREPRESENTABLE);
+                    return unchanged;
+                }
+            }
+        };
+        self.raw_edit(range, &text)
+    }
+
     /// Accepts or rejects the suggestion under the cursor, or the next one on
     /// the cursor line.
     pub(super) fn resolve_at_cursor(&mut self, accept: bool) {
