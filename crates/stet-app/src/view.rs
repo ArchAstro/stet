@@ -1968,14 +1968,24 @@ impl View {
             let selected = completion.selected.unwrap_or(0);
             first = selected.saturating_sub(shown - 1);
             for (index, item) in completion.items.iter().enumerate().skip(first).take(shown) {
-                rows.push((item.text.clone(), item.args, item.about.clone(), completion.selected == Some(index)));
+                rows.push((
+                    item.text.clone(),
+                    item.args,
+                    item.about.clone(),
+                    completion.selected == Some(index),
+                ));
             }
         } else if let Some(spec) = ed.cmdline_spec() {
             let also = match &spec.names[1..] {
                 [] => String::new(),
                 others => format!("   also :{}", others.join(", :")),
             };
-            rows.push((format!(":{}", spec.names[0]), spec.args, format!("{}{also}", spec.about), false));
+            rows.push((
+                format!(":{}", spec.names[0]),
+                spec.args,
+                format!("{}{also}", spec.about),
+                false,
+            ));
         } else {
             return;
         }
@@ -1988,14 +1998,15 @@ impl View {
                 (name, args, about)
             })
             .collect();
-        let width_of = |key: &Option<u64>, layouts: &HashMap<u64, LineLayout>| {
-            key.map_or(0.0, |key| layouts[&key].rows[0].width)
-        };
+        let width_of =
+            |key: &Option<u64>, layouts: &HashMap<u64, LineLayout>| key.map_or(0.0, |key| layouts[&key].rows[0].width);
         let space = (m.advance).round();
         let lead = labels
             .iter()
             .map(|(name, args, _)| {
-                self.layouts[name].rows[0].width + width_of(args, &self.layouts) + if args.is_some() { space } else { 0.0 }
+                self.layouts[name].rows[0].width
+                    + width_of(args, &self.layouts)
+                    + if args.is_some() { space } else { 0.0 }
             })
             .fold(0.0, f32::max);
         let about = labels
@@ -2046,7 +2057,14 @@ impl View {
             let count = format!("{}–{} of {}", first + 1, first + rows.len(), completion.items.len());
             let key = self.label(ed, &count, c.status, m.ui * 0.85, Face::Ui, false);
             let count_width = self.layouts[&key].rows[0].width;
-            self.put(layer, key, left + width - pad - count_width, top - row / 2.0, [left, top - row, left + width, top], c.status);
+            self.put(
+                layer,
+                key,
+                left + width - pad - count_width,
+                top - row / 2.0,
+                [left, top - row, left + width, top],
+                c.status,
+            );
         }
     }
 

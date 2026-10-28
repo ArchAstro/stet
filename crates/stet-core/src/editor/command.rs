@@ -8,7 +8,10 @@ use std::path::Path;
 impl Editor {
     pub(super) fn cmdline_key(&mut self, event: KeyEvent) {
         let Some(cmdline) = &self.cmdline else { return };
-        let listing = self.completion.as_ref().is_some_and(|completion| completion.line == cmdline.text);
+        let listing = self
+            .completion
+            .as_ref()
+            .is_some_and(|completion| completion.line == cmdline.text);
         if listing && event.key == Key::Enter && self.accept_completion() {
             return self.preview_search();
         }

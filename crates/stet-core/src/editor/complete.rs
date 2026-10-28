@@ -39,40 +39,100 @@ const fn spec(names: &'static [&'static str], args: &'static str, about: &'stati
 
 /// Every command `run_command` takes, in the order the list shows them.
 pub const COMMANDS: &[Spec] = &[
-    spec(&["w", "write"], "[path]", "Save, or save to a path (! overwrites)", Values::Path),
+    spec(
+        &["w", "write"],
+        "[path]",
+        "Save, or save to a path (! overwrites)",
+        Values::Path,
+    ),
     spec(&["wq", "x", "xit"], "[path]", "Save and close the tab", Values::Path),
-    spec(&["q", "quit", "bd", "bdelete", "tabclose", "tabc"], "", "Close the tab (! discards)", Values::None),
-    spec(&["close"], "", "Close the tab, asking about unsaved changes", Values::None),
+    spec(
+        &["q", "quit", "bd", "bdelete", "tabclose", "tabc"],
+        "",
+        "Close the tab (! discards)",
+        Values::None,
+    ),
+    spec(
+        &["close"],
+        "",
+        "Close the tab, asking about unsaved changes",
+        Values::None,
+    ),
     spec(&["qa", "qall", "quitall"], "", "Quit (! discards)", Values::None),
     spec(&["wa", "wall"], "", "Save every tab", Values::None),
-    spec(&["wqa", "wqall", "xa", "xall"], "", "Save every tab and quit", Values::None),
+    spec(
+        &["wqa", "wqall", "xa", "xall"],
+        "",
+        "Save every tab and quit",
+        Values::None,
+    ),
     spec(&["saveas"], "", "Save as…", Values::None),
     spec(&["open"], "", "Open a file…", Values::None),
-    spec(&["e", "edit"], "[path]", "Open a file here, or reload this one (! discards)", Values::Path),
+    spec(
+        &["e", "edit"],
+        "[path]",
+        "Open a file here, or reload this one (! discards)",
+        Values::Path,
+    ),
     spec(&["enew", "new"], "", "A blank document here", Values::None),
-    spec(&["tabnew", "tabe", "tabedit"], "[path]", "A new tab, or a file in one", Values::Path),
+    spec(
+        &["tabnew", "tabe", "tabedit"],
+        "[path]",
+        "A new tab, or a file in one",
+        Values::Path,
+    ),
     spec(&["tabnext", "tabn", "bn", "bnext"], "", "Next tab", Values::None),
-    spec(&["tabprevious", "tabp", "tabprev", "bp", "bprevious"], "", "Previous tab", Values::None),
+    spec(
+        &["tabprevious", "tabp", "tabprev", "bp", "bprevious"],
+        "",
+        "Previous tab",
+        Values::None,
+    ),
     spec(&["files"], "", "Go to file…", Values::None),
     spec(&["find"], "[text]", "Search, or go to file with a name", Values::None),
-    spec(&["sidebar", "browse", "tree", "Ex", "Explore"], "", "Show or hide the file browser", Values::None),
+    spec(
+        &["sidebar", "browse", "tree", "Ex", "Explore"],
+        "",
+        "Show or hide the file browser",
+        Values::None,
+    ),
     spec(&["backlinks"], "", "Notes linking here…", Values::None),
     spec(&["follow"], "", "Follow the link under the cursor", Values::None),
     spec(&["back"], "", "Back to where a link was followed from", Values::None),
     spec(&["forward"], "", "Forward again", Values::None),
-    spec(&["s"], "/old/new/[g]", "Replace on this line (regex, \\1, &)", Values::None),
+    spec(
+        &["s"],
+        "/old/new/[g]",
+        "Replace on this line (regex, \\1, &)",
+        Values::None,
+    ),
     spec(&["%s"], "/old/new/[g]", "Replace in the whole document", Values::None),
-    spec(&["noh", "nohlsearch"], "", "Stop highlighting search matches", Values::None),
+    spec(
+        &["noh", "nohlsearch"],
+        "",
+        "Stop highlighting search matches",
+        Values::None,
+    ),
     spec(&["undo", "u"], "", "Undo", Values::None),
     spec(&["redo", "red"], "", "Redo", Values::None),
     spec(&["bold"], "", "Make the selection bold", Values::None),
     spec(&["italic"], "", "Make the selection italic", Values::None),
     spec(&["link"], "", "Make the selection a link", Values::None),
     spec(&["task"], "", "Toggle the task on this line", Values::None),
-    spec(&["table", "tableformat", "tf"], "[columns rows]", "Tidy the table here, or make one", Values::None),
+    spec(
+        &["table", "tableformat", "tf"],
+        "[columns rows]",
+        "Tidy the table here, or make one",
+        Values::None,
+    ),
     spec(&["pasteplain"], "", "Paste without formatting", Values::None),
     spec(&["image", "retouch"], "", "Retouch the picture here", Values::None),
-    spec(&["suggest", "sug"], "[on|off]", "Suggest changes instead of making them", Values::Words(ON_OFF)),
+    spec(
+        &["suggest", "sug"],
+        "[on|off]",
+        "Suggest changes instead of making them",
+        Values::Words(ON_OFF),
+    ),
     spec(&["accept"], "", "Accept the suggestion here", Values::None),
     spec(&["reject"], "", "Reject the suggestion here", Values::None),
     spec(&["acceptall"], "", "Accept every suggestion", Values::None),
@@ -81,7 +141,12 @@ pub const COMMANDS: &[Spec] = &[
     spec(&["prevsuggestion"], "", "Previous suggestion", Values::None),
     spec(&["author"], "[name]", "Who suggestions are written by", Values::None),
     spec(&["margin", "scratch"], "", "Show or hide the margin", Values::None),
-    spec(&["pane", "other"], "", "Switch between document and margin", Values::None),
+    spec(
+        &["pane", "other"],
+        "",
+        "Switch between document and margin",
+        Values::None,
+    ),
     spec(&["send", "copyover"], "", "Copy to the other pane", Values::None),
     spec(&["move", "moveover"], "", "Move to the other pane", Values::None),
     spec(&["pin", "annotate"], "", "Pin a margin note to this text", Values::None),
@@ -89,7 +154,12 @@ pub const COMMANDS: &[Spec] = &[
     spec(&["note", "gopin"], "", "Jump between a note and its pin", Values::None),
     spec(&["pins"], "", "Notes beside their pins, or top to bottom", Values::None),
     spec(&["attach"], "<path>", "Attach a file to the margin", Values::Path),
-    spec(&["notebook", "nb"], "[on|off]", "Run code cells in this document", Values::Words(ON_OFF)),
+    spec(
+        &["notebook", "nb"],
+        "[on|off]",
+        "Run code cells in this document",
+        Values::Words(ON_OFF),
+    ),
     spec(
         &["run"],
         "[all|stale|above|below|N]",
@@ -104,18 +174,33 @@ pub const COMMANDS: &[Spec] = &[
     spec(&["actions", "context"], "", "Actions for the text here", Values::None),
     spec(&["publish", "substack"], "", "Publish to Substack", Values::None),
     spec(&["youtube"], "", "Add a YouTube video", Values::None),
-    spec(&["theme", "colorscheme", "colo"], "[name]", "Change the colour theme", Values::Themes),
+    spec(
+        &["theme", "colorscheme", "colo"],
+        "[name]",
+        "Change the colour theme",
+        Values::Themes,
+    ),
     spec(&["font"], "[family]", "The prose font", Values::Fonts),
     spec(&["monofont"], "[family]", "The code font", Values::Fonts),
     spec(&["uifont"], "[family]", "The interface font", Values::Fonts),
-    spec(&["zoom"], "[in|out|reset]", "Zoom the text", Values::Words(&["in", "out", "reset"])),
+    spec(
+        &["zoom"],
+        "[in|out|reset]",
+        "Zoom the text",
+        Values::Words(&["in", "out", "reset"]),
+    ),
     spec(&["fullscreen"], "", "Toggle full screen", Values::None),
     spec(&["focus"], "", "Dim all but the paragraph here", Values::None),
     spec(&["typewriter"], "", "Keep the cursor line centred", Values::None),
     spec(&["vim"], "", "Vim keys", Values::None),
     spec(&["novim"], "", "Plain keys", Values::None),
     spec(&["recover"], "", "Restore the unsaved copy of this file", Values::None),
-    spec(&["help", "h", "commands", "menu"], "", "Search commands, shortcuts and markdown", Values::None),
+    spec(
+        &["help", "h", "commands", "menu"],
+        "",
+        "Search commands, shortcuts and markdown",
+        Values::None,
+    ),
 ];
 
 /// The command a typed name means, `!` and all.
@@ -154,7 +239,10 @@ const MOST: usize = 200;
 impl Editor {
     /// The command being typed on the `:` line, if it is one Stet knows.
     pub fn cmdline_spec(&self) -> Option<&'static Spec> {
-        let cmdline = self.cmdline.as_ref().filter(|cmdline| cmdline.kind == CmdKind::Command)?;
+        let cmdline = self
+            .cmdline
+            .as_ref()
+            .filter(|cmdline| cmdline.kind == CmdKind::Command)?;
         let text = cmdline.text.trim_start();
         let name = text.split(char::is_whitespace).next()?;
         // `:s/a/b/` and `:%s/a/b/` run straight into their pattern.
@@ -225,7 +313,11 @@ impl Editor {
                     .font_families
                     .iter()
                     .filter(|family| family.to_lowercase().starts_with(&lower));
-                (rest_start, families.take(MOST).map(|family| word(family)).collect(), false)
+                (
+                    rest_start,
+                    families.take(MOST).map(|family| word(family)).collect(),
+                    false,
+                )
             }
         }
     }
@@ -380,7 +472,11 @@ fn command_names(typed: &str) -> Vec<Candidate> {
     for spec in COMMANDS {
         if let Some(name) = spec.names.iter().find(|name| name.starts_with(typed)) {
             // Listed by its main name when that is what was being typed.
-            let name = if spec.names[0].starts_with(typed) { spec.names[0] } else { name };
+            let name = if spec.names[0].starts_with(typed) {
+                spec.names[0]
+            } else {
+                name
+            };
             found.push(entry(spec, name));
         }
     }

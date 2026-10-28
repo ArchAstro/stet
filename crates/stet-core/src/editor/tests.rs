@@ -2254,7 +2254,13 @@ fn cmdline(ed: &Editor) -> &str {
 fn tab_lists_commands_and_steps_through_them() {
     let mut ed = editor("|");
     keys(&mut ed, ":ta<Tab>");
-    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    let names: Vec<String> = ed
+        .completion()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect();
     // Listed by an alias when only the alias matches.
     assert_eq!(names[..5], ["tabclose", "tabnew", "tabnext", "tabprevious", "task"]);
     assert_eq!(cmdline(&ed), "tabclose");
@@ -2280,7 +2286,11 @@ fn one_match_is_taken_with_room_for_its_argument() {
     assert_eq!(cmdline(&ed), "attach ");
     assert_eq!(ed.cmdline_spec().unwrap().args, "<path>");
     keys(&mut ed, "<Esc>:colo");
-    assert_eq!(ed.cmdline_spec().unwrap().names[0], "theme", "an alias still shows its hint");
+    assert_eq!(
+        ed.cmdline_spec().unwrap().names[0],
+        "theme",
+        "an alias still shows its hint"
+    );
     keys(&mut ed, "<Esc>:%s/a/b/");
     assert_eq!(ed.cmdline_spec().unwrap().names[0], "%s");
 }
@@ -2289,12 +2299,24 @@ fn one_match_is_taken_with_room_for_its_argument() {
 fn arguments_complete_from_their_command() {
     let mut ed = editor("|");
     keys(&mut ed, ":run a<Tab>");
-    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    let names: Vec<String> = ed
+        .completion()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect();
     assert_eq!(names, ["all", "above", "stale"], "prefix first, then inside");
     assert_eq!(cmdline(&ed), "run all");
     // Typing filters the open list.
     keys(&mut ed, "<BS><BS><BS>b");
-    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    let names: Vec<String> = ed
+        .completion()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect();
     assert_eq!(names, ["below", "above"], "prefix first, then inside");
     keys(&mut ed, "<Esc>:suggest o<Tab>");
     assert_eq!(ed.completion().unwrap().items.len(), 2);
@@ -2311,12 +2333,24 @@ fn paths_complete_from_the_documents_folder() {
     let mut ed = editor("");
     ed.open(&dir.join("note.md")).unwrap();
     keys(&mut ed, ":e dr<Tab>");
-    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    let names: Vec<String> = ed
+        .completion()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect();
     assert_eq!(names, ["drafts/", "dream.md"], "folders first");
     // Enter on a folder looks inside it instead of running.
     keys(&mut ed, "<CR>");
     assert_eq!(cmdline(&ed), "e drafts/");
-    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    let names: Vec<String> = ed
+        .completion()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect();
     assert_eq!(names, ["drafts/one.md"]);
     keys(&mut ed, "<Esc>");
     keys(&mut ed, "<C-u>e .<Tab>");
