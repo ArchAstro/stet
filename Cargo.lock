@@ -3340,7 +3340,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stet-app"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -3371,14 +3371,14 @@ dependencies = [
 
 [[package]]
 name = "stet-chart"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "stet-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
@@ -3397,7 +3397,7 @@ dependencies = [
 
 [[package]]
 name = "stet-data"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "arrow-array",
  "arrow-cast",
@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "stet-kernel"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "jupyter-protocol",
  "jupyter-zmq-client",
@@ -3425,7 +3425,7 @@ dependencies = [
 
 [[package]]
 name = "stet-substack"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "pulldown-cmark",
  "serde_json",
@@ -3434,7 +3434,7 @@ dependencies = [
 
 [[package]]
 name = "stet-youtube"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "getrandom 0.3.4",
  "serde_json",
