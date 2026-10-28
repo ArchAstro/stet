@@ -1206,6 +1206,7 @@ impl View {
         self.chip_card(ed, &m, &mut frame.over);
         self.palette(ed, &m, &mut frame.over);
         self.context_menu(ed, &m, &mut frame.over);
+        self.cmdline_popup(ed, &m, &mut frame.over);
         self.retouching(ed, m.ui, &mut frame.over);
         self.sheet(ed, &m, &mut frame.over);
         // Bounded by text as well as count: a shaped line costs hundreds of
@@ -1937,6 +1938,115 @@ impl View {
                 );
             }
             at += row;
+        }
+    }
+
+    /// Above the `:` line: the list Tab opened, or a hint for the command
+    /// being typed — how its argument is written and what it does.
+    fn cmdline_popup(&mut self, ed: &Editor, m: &Metrics, layer: &mut Layer) {
+        let c = ed.theme.colors;
+        let s = self.scale;
+        let row = (26.0 * s).round();
+        let pad = (12.0 * s).round();
+        let gap = (18.0 * s).round();
+        let size = m.font * 0.78;
+        let mut left = m.chrome + (m.advance * 2.0).round() - pad;
+        let bottom = m.bottom - (4.0 * s).round();
+        // An argument's list sits under the word it completes.
+        if let (Some(completion), Some(cmdline)) = (ed.completion(), &ed.cmdline)
+            && completion.start > 0
+        {
+            let before = format!(":{}", &cmdline.text[..completion.start]);
+            let key = self.label(ed, &before, c.text, size, Face::Mono, false);
+            left += self.layouts[&key].rows[0].width;
+        }
+        let mut rows: Vec<(String, &str, String, bool)> = Vec::new();
+        let mut first = 0;
+        if let Some(completion) = ed.completion() {
+            // A window of the list that keeps the chosen entry in sight.
+            let shown = 10.min(completion.items.len());
+            let selected = completion.selected.unwrap_or(0);
+            first = selected.saturating_sub(shown - 1);
+            for (index, item) in completion.items.iter().enumerate().skip(first).take(shown) {
+                rows.push((item.text.clone(), item.args, item.about.clone(), completion.selected == Some(index)));
+            }
+        } else if let Some(spec) = ed.cmdline_spec() {
+            let also = match &spec.names[1..] {
+                [] => String::new(),
+                others => format!("   also :{}", others.join(", :")),
+            };
+            rows.push((format!(":{}", spec.names[0]), spec.args, format!("{}{also}", spec.about), false));
+        } else {
+            return;
+        }
+        let labels: Vec<(u64, Option<u64>, Option<u64>)> = rows
+            .iter()
+            .map(|(text, args, about, _)| {
+                let name = self.label(ed, text, c.text, size, Face::Mono, false);
+                let args = (!args.is_empty()).then(|| self.label(ed, args, c.status, size, Face::Mono, false));
+                let about = (!about.is_empty()).then(|| self.label(ed, about, c.status, m.ui, Face::Ui, false));
+                (name, args, about)
+            })
+            .collect();
+        let width_of = |key: &Option<u64>, layouts: &HashMap<u64, LineLayout>| {
+            key.map_or(0.0, |key| layouts[&key].rows[0].width)
+        };
+        let space = (m.advance).round();
+        let lead = labels
+            .iter()
+            .map(|(name, args, _)| {
+                self.layouts[name].rows[0].width + width_of(args, &self.layouts) + if args.is_some() { space } else { 0.0 }
+            })
+            .fold(0.0, f32::max);
+        let about = labels
+            .iter()
+            .map(|(_, _, about)| width_of(about, &self.layouts))
+            .fold(0.0, f32::max);
+        let width = (lead + if about > 0.0 { gap + about } else { 0.0 } + pad * 2.0)
+            .min(self.width - left - 8.0 * s)
+            .round();
+        let height = rows.len() as f32 * row + 8.0 * s;
+        let top = (bottom - height).round();
+        let radius = 8.0 * s;
+        layer.back.push(Quad {
+            rect: [left - s, top - s, width + s * 2.0, height + s * 2.0],
+            color: linear(c.rule, 1.0),
+            radius: radius + s,
+        });
+        layer.back.push(Quad {
+            rect: [left, top, width, height],
+            color: linear(c.panel, 1.0),
+            radius,
+        });
+        let clip = [left, top, left + width, top + height];
+        let mut at = top + 4.0 * s;
+        for ((_, _, _, chosen), (name, args, about)) in rows.iter().zip(labels) {
+            if *chosen {
+                layer.back.push(Quad {
+                    rect: [left + 4.0 * s, at, width - 8.0 * s, row],
+                    color: linear(c.panel_active, 1.0),
+                    radius: 5.0 * s,
+                });
+            }
+            let middle = at + row / 2.0;
+            let mut x = left + pad;
+            x += self.put(layer, name, x, middle, clip, c.text);
+            if let Some(args) = args {
+                self.put(layer, args, x + space, middle, clip, c.status);
+            }
+            if let Some(about) = about {
+                self.put(layer, about, left + pad + lead + gap, middle, clip, c.status);
+            }
+            at += row;
+        }
+        // Where the list goes on from, when there is more of it.
+        if let Some(completion) = ed.completion()
+            && completion.items.len() > rows.len()
+        {
+            let count = format!("{}–{} of {}", first + 1, first + rows.len(), completion.items.len());
+            let key = self.label(ed, &count, c.status, m.ui * 0.85, Face::Ui, false);
+            let count_width = self.layouts[&key].rows[0].width;
+            self.put(layer, key, left + width - pad - count_width, top - row / 2.0, [left, top - row, left + width, top], c.status);
         }
     }
 

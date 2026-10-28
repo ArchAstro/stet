@@ -287,8 +287,9 @@ fn command_line() {
     assert_eq!(ed.take_effects(), vec![Effect::ThemeChanged]);
     keys(&mut ed, ":theme no<Tab><CR>");
     assert_eq!(ed.theme.name, "nord");
-    keys(&mut ed, ":theme nord<Tab><CR>");
-    assert_eq!(ed.theme.name, "stet");
+    keys(&mut ed, ":theme <Tab><Tab><CR>");
+    let second = ed.themes.names().nth(1).unwrap().to_string();
+    assert_eq!(ed.theme.name, second);
     keys(&mut ed, ":theme bogus<CR>");
     assert!(ed.message.as_ref().unwrap().error);
     ed.take_effects();
@@ -2241,4 +2242,99 @@ fn deleting_lines_runs_through_our_own_suggestions() {
     let mut ed = suggesting("|a {++b++}{>>id:s_0123abcd by:Agent<<}\nc");
     keys(&mut ed, "dd");
     assert!(ed.message.as_ref().unwrap().error);
+}
+
+// ----- command-line completion ----------------------------------------------
+
+fn cmdline(ed: &Editor) -> &str {
+    &ed.cmdline.as_ref().unwrap().text
+}
+
+#[test]
+fn tab_lists_commands_and_steps_through_them() {
+    let mut ed = editor("|");
+    keys(&mut ed, ":ta<Tab>");
+    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    // Listed by an alias when only the alias matches.
+    assert_eq!(names[..5], ["tabclose", "tabnew", "tabnext", "tabprevious", "task"]);
+    assert_eq!(cmdline(&ed), "tabclose");
+    keys(&mut ed, "<Tab><Down>");
+    assert_eq!(cmdline(&ed), "tabnext");
+    keys(&mut ed, "<Up>");
+    assert_eq!(cmdline(&ed), "tabnew");
+    keys(&mut ed, "<S-Tab><S-Tab>");
+    assert_eq!(cmdline(&ed), names.last().unwrap());
+    // Esc closes the list and keeps the line; a second closes the line.
+    keys(&mut ed, "<Esc>");
+    assert!(ed.completion().is_none());
+    assert!(ed.cmdline.is_some());
+    keys(&mut ed, "<Esc>");
+    assert!(ed.cmdline.is_none());
+}
+
+#[test]
+fn one_match_is_taken_with_room_for_its_argument() {
+    let mut ed = editor("|");
+    keys(&mut ed, ":atta<Tab>");
+    assert!(ed.completion().is_none());
+    assert_eq!(cmdline(&ed), "attach ");
+    assert_eq!(ed.cmdline_spec().unwrap().args, "<path>");
+    keys(&mut ed, "<Esc>:colo");
+    assert_eq!(ed.cmdline_spec().unwrap().names[0], "theme", "an alias still shows its hint");
+    keys(&mut ed, "<Esc>:%s/a/b/");
+    assert_eq!(ed.cmdline_spec().unwrap().names[0], "%s");
+}
+
+#[test]
+fn arguments_complete_from_their_command() {
+    let mut ed = editor("|");
+    keys(&mut ed, ":run a<Tab>");
+    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    assert_eq!(names, ["all", "above", "stale"], "prefix first, then inside");
+    assert_eq!(cmdline(&ed), "run all");
+    // Typing filters the open list.
+    keys(&mut ed, "<BS><BS><BS>b");
+    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    assert_eq!(names, ["below", "above"], "prefix first, then inside");
+    keys(&mut ed, "<Esc>:suggest o<Tab>");
+    assert_eq!(ed.completion().unwrap().items.len(), 2);
+}
+
+#[test]
+fn paths_complete_from_the_documents_folder() {
+    let dir = temp_dir("cmdline-paths");
+    std::fs::create_dir(dir.join("drafts")).unwrap();
+    std::fs::write(dir.join("drafts/one.md"), "").unwrap();
+    std::fs::write(dir.join("dream.md"), "").unwrap();
+    std::fs::write(dir.join(".hidden"), "").unwrap();
+    std::fs::write(dir.join("note.md"), "").unwrap();
+    let mut ed = editor("");
+    ed.open(&dir.join("note.md")).unwrap();
+    keys(&mut ed, ":e dr<Tab>");
+    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    assert_eq!(names, ["drafts/", "dream.md"], "folders first");
+    // Enter on a folder looks inside it instead of running.
+    keys(&mut ed, "<CR>");
+    assert_eq!(cmdline(&ed), "e drafts/");
+    let names: Vec<String> = ed.completion().unwrap().items.iter().map(|item| item.text.clone()).collect();
+    assert_eq!(names, ["drafts/one.md"]);
+    keys(&mut ed, "<Esc>");
+    keys(&mut ed, "<C-u>e .<Tab>");
+    assert_eq!(cmdline(&ed), "e .hidden");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn every_command_the_line_runs_is_listed() {
+    let mut ed = editor("|");
+    for spec in COMMANDS {
+        for name in spec.names {
+            if name.contains('s') && name.len() <= 2 {
+                continue;
+            }
+            keys(&mut ed, &format!(":{name}"));
+            assert_eq!(ed.cmdline_spec(), Some(spec), "{name}");
+            keys(&mut ed, "<Esc><Esc>");
+        }
+    }
 }

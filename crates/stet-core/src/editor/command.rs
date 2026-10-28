@@ -7,8 +7,15 @@ use std::path::Path;
 
 impl Editor {
     pub(super) fn cmdline_key(&mut self, event: KeyEvent) {
+        let Some(cmdline) = &self.cmdline else { return };
+        let listing = self.completion.as_ref().is_some_and(|completion| completion.line == cmdline.text);
+        if listing && event.key == Key::Enter && self.accept_completion() {
+            return self.preview_search();
+        }
         let Some(cmdline) = &mut self.cmdline else { return };
         match event.key {
+            // The list goes first, then the line.
+            Key::Esc if listing => self.completion = None,
             Key::Esc => self.cmdline = None,
             Key::Char('c' | '[') if event.mods.ctrl => self.cmdline = None,
             Key::Char('u') if event.mods.ctrl => cmdline.text.clear(),
@@ -17,6 +24,7 @@ impl Editor {
                 cmdline.text.truncate(keep);
             }
             Key::Enter => {
+                self.completion = None;
                 let CmdLine { kind, text } = self.cmdline.take().unwrap();
                 match kind {
                     CmdKind::Command => self.run_command(&text),
@@ -28,9 +36,19 @@ impl Editor {
             Key::Backspace if cmdline.text.pop().is_none() => {
                 self.cmdline = None;
             }
-            Key::Tab => self.complete(),
+            Key::Tab => self.complete(event.mods.shift),
+            Key::Down if listing => self.complete(false),
+            Key::Up if listing => self.complete(true),
+            Key::Char('n') if event.mods.ctrl && listing => self.complete(false),
+            Key::Char('p') if event.mods.ctrl && listing => self.complete(true),
             Key::Char(c) if event.plain_char().is_some() => cmdline.text.push(c),
             _ => {}
+        }
+        // Typing keeps an open list in step with the line.
+        let stepped = matches!(event.key, Key::Tab | Key::Up | Key::Down | Key::Esc | Key::Enter)
+            || event.mods.ctrl && matches!(event.key, Key::Char('n' | 'p'));
+        if !stepped || self.cmdline.is_none() {
+            self.refilter(listing);
         }
         self.preview_search();
     }
@@ -43,30 +61,6 @@ impl Editor {
             }
             _ => None,
         };
-    }
-
-    /// Completes theme and font names, cycling on repeated Tab.
-    fn complete(&mut self) {
-        let Some(cmdline) = self.cmdline.as_mut().filter(|cmdline| cmdline.kind == CmdKind::Command) else {
-            return;
-        };
-        let Some((command, typed)) = cmdline.text.split_once(' ') else {
-            return;
-        };
-        let names: Vec<&str> = match command {
-            "theme" | "colorscheme" | "colo" => self.themes.names().collect(),
-            "font" | "monofont" | "uifont" => self.font_families.iter().map(String::as_str).collect(),
-            _ => return,
-        };
-        let typed_lower = typed.to_lowercase();
-        let next = match names.iter().position(|name| *name == typed) {
-            Some(at) => names[(at + 1) % names.len()],
-            None => match names.iter().find(|name| name.to_lowercase().starts_with(&typed_lower)) {
-                Some(name) => name,
-                None => return,
-            },
-        };
-        cmdline.text = format!("{command} {next}");
     }
 
     pub fn run_command(&mut self, line: &str) {

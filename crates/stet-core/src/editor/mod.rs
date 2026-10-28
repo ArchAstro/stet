@@ -4,6 +4,7 @@
 
 mod cells;
 mod command;
+mod complete;
 mod links;
 mod margin;
 mod menu;
@@ -23,6 +24,7 @@ mod vim;
 mod tests;
 
 pub use cells::{Book, CellRun, KernelState, Which};
+pub use complete::{COMMANDS, Candidate, Completion, Spec, Values, spec_for};
 pub use links::{Backlink, Link, link_in, rewrite_destinations};
 pub use margin::margin_path;
 pub use menu::{ContextMenu, MenuAt, MenuItem};
@@ -234,6 +236,8 @@ pub struct Editor {
     pub theme: Theme,
     pub message: Option<Message>,
     pub cmdline: Option<CmdLine>,
+    /// The list Tab opened under the `:` line.
+    completion: Option<complete::Completion>,
     /// Edits are recorded as suggestion markup instead of applied.
     pub suggesting: bool,
     pub primary: Primary,
@@ -325,6 +329,7 @@ impl Editor {
             theme,
             message: None,
             cmdline: None,
+            completion: None,
             suggesting: false,
             primary: if cfg!(target_os = "macos") {
                 Primary::Super
