@@ -9,16 +9,9 @@
 //! with charts drawn as SVG.
 
 use serde_json::{Map, Value, json};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use stet_core::Editor;
-use stet_core::notebook::{self, Cell, Item, Notebook, Status};
-
-const USAGE: &str = "stet import <notebook.ipynb> [out.md]
-    the notebook as markdown: code cells become fenced blocks, outputs are kept beside it
-
-stet export <doc.md> --ipynb [out.ipynb]
-stet export <doc.md> --html [out.html]
-    the document and its last outputs as a Jupyter notebook, or as one page to read";
+use stet_core::notebook::{self, Cell, Item, Notebook};
 
 /// Fences that are never code for a kernel.
 const NOT_CODE: &[&str] = &["", "chart", "raw", "text", "markdown", "md", "output", "mermaid"];
@@ -564,81 +557,6 @@ table{border-collapse:collapse;font:14px/1.4 ui-monospace,Menlo,monospace;margin
 th{text-align:left;border-bottom:1px solid var(--rule)}th,td{padding:.2rem .8rem .2rem 0}td.n{text-align:right}\
 tbody tr:nth-child(even){background:var(--code)}.note{color:var(--muted);font-size:14px}\
 a{color:inherit}";
-
-// --- Command line ---------------------------------------------------------------
-
-fn editor_for(path: &Path) -> Result<Editor, String> {
-    let text = std::fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let mut ed = Editor::new(
-        stet_core::Config::default(),
-        Box::new(stet_core::MemoryClipboard::default()),
-    );
-    ed.set_text(&text);
-    ed.path = Some(std::path::absolute(path).unwrap_or(path.to_path_buf()));
-    ed.refresh();
-    Ok(ed)
-}
-
-/// `stet import` and `stet export`. Returns the process exit code.
-pub fn cli(command: &str, args: &[String]) -> i32 {
-    let result = match command {
-        "import" => match args {
-            [source] => import_file(Path::new(source), &Path::new(source).with_extension("md")),
-            [source, out] => import_file(Path::new(source), Path::new(out)),
-            _ => Err(String::new()),
-        },
-        _ => export_cli(args),
-    };
-    match result {
-        Ok(said) => {
-            eprintln!("stet: {said}");
-            0
-        }
-        Err(err) if err.is_empty() => {
-            eprintln!("{USAGE}");
-            2
-        }
-        Err(err) => {
-            eprintln!("stet {command}: {err}");
-            1
-        }
-    }
-}
-
-fn export_cli(args: &[String]) -> Result<String, String> {
-    let mut source = None;
-    let mut format = None;
-    let mut out = None;
-    for arg in args {
-        match arg.as_str() {
-            "--ipynb" | "--html" => format = Some(arg[2..].to_string()),
-            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
-            _ if source.is_none() => source = Some(PathBuf::from(arg)),
-            _ => out = Some(PathBuf::from(arg)),
-        }
-    }
-    let (Some(source), Some(format)) = (source, format) else {
-        return Err(String::new());
-    };
-    let out = out.unwrap_or_else(|| source.with_extension(&format));
-    let ed = editor_for(&source)?;
-    let notebook = notebook::load(&source);
-    let files = notebook::files_dir(&source);
-    let files = files.exists().then_some(files.as_path());
-    let written = if format == "ipynb" {
-        let value = export_ipynb(&ed.buf.text(), &notebook, files);
-        serde_json::to_string_pretty(&value).map_err(|err| err.to_string())? + "\n"
-    } else {
-        export_html(&ed, &notebook, files)
-    };
-    std::fs::write(&out, written).map_err(|err| format!("{}: {err}", out.display()))?;
-    let ran = notebook
-        .slots
-        .iter()
-        .filter(|slot| slot.status != Status::Queued)
-        .count();
-    Ok(format!("wrote {} ({ran} cells with outputs)", out.display()))
-}
 
 #[cfg(test)]
 mod tests {

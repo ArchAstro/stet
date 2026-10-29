@@ -1,0 +1,15 @@
+[package]
+name = "stet-docx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Markdown with CriticMarkup to and from Word .docx, suggestions as tracked changes"
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
+quick-xml = "0.41"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+stet-core = { path = "../stet-core" }

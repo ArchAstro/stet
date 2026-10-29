@@ -241,7 +241,8 @@ fn data_refs(text: &str, line_starts: &[usize], defs: &[Range<u32>]) -> Vec<Data
     refs
 }
 
-pub(crate) fn options() -> Options {
+/// How stet reads Markdown: GFM with footnotes, math, metadata and wiki links.
+pub fn options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH

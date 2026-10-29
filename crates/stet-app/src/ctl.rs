@@ -21,6 +21,15 @@ pub const USAGE: &str = r#"stet ctl <command>   control the running stet (replie
                                  a notebook, the cell they are in with its outputs), and exits
   say --text TEXT                show one line in stet's status bar
   open <file>...                 open files as tabs
+  import <file|link> [out.md] [--account A] [--browser] [--md]
+                                 bring a .docx, .ipynb or Google Doc in as markdown (suggestions as
+                                 CriticMarkup, comments pinned in the margin) and open it as a tab;
+                                 replies with the file written (stet import with no arguments: more)
+  export <format> [out] [--doc D] [--account A] [--no-open]
+                                 write the live document as docx (suggestions as tracked changes,
+                                 margin notes as comments), html, ipynb, or gdoc (a new Google Doc:
+                                 copied for pasting, or with suggestions or notes a .docx for Drive);
+                                 --no-open leaves the browser and file manager closed
   command <command>              run an editor command, as typed after `:` (theme nord, sidebar, w)
   keys <notation>                press keys, in vim notation (ggVG, <D-/>, <Esc>)
   type <text>                    type text as the keyboard would
@@ -226,6 +235,35 @@ pub fn handle(editor: &mut Editor, request: &str) -> (Value, bool) {
                 Err(err) => (fail(err), false),
             }
         }
+        "export" => {
+            let index = match doc {
+                Ok(index) => index,
+                Err(err) => return (fail(err), false),
+            };
+            let format = text("format").unwrap_or("");
+            let out = text("out").map(std::path::PathBuf::from);
+            let open = request.get("open").and_then(Value::as_bool).unwrap_or(true);
+            let done = editor.with_pane(index, false, |ed| {
+                crate::convert::in_window(ed, format, out.as_deref(), text("account"), open)
+            });
+            match done {
+                Some(Ok((exported, said))) => {
+                    use crate::convert::Exported;
+                    let (action, path) = match &exported {
+                        Exported::Wrote(path) => ("wrote", Some(path)),
+                        Exported::Paste => ("copied", None),
+                        Exported::Upload(path) => ("upload", Some(path)),
+                    };
+                    let path = path.map(|path| path.to_string_lossy().into_owned());
+                    (
+                        json!({ "ok": true, "action": action, "path": path, "message": said }),
+                        false,
+                    )
+                }
+                Some(Err(err)) => (fail(err), false),
+                None => (fail("no such document"), false),
+            }
+        }
         "say" => match text("text").map(str::trim).filter(|text| !text.is_empty()) {
             Some(said) => {
                 let author = text("author").unwrap_or("Claude");
@@ -416,7 +454,10 @@ fn build(args: &[String]) -> Result<Value, String> {
             "--wait" => {
                 request.insert("wait".into(), json!(true));
             }
-            "--old" | "--new" | "--text" | "--author" | "--at" | "--name" | "--cell" | "--kernel" => {
+            "--no-open" => {
+                request.insert("open".into(), json!(false));
+            }
+            "--old" | "--new" | "--text" | "--author" | "--at" | "--name" | "--cell" | "--kernel" | "--account" => {
                 request.insert(arg[2..].to_string(), json!(value(next(arg)?)?));
             }
             "--rows" => {
@@ -539,6 +580,15 @@ fn build(args: &[String]) -> Result<Value, String> {
             );
             "edit"
         }
+        "export" => {
+            let mut words = files.iter();
+            request.insert("format".into(), json!(words.next().ok_or("export needs a format")?));
+            if let Some(out) = words.next() {
+                let out = std::path::absolute(out).map_or(out.clone(), |path| path.to_string_lossy().into_owned());
+                request.insert("out".into(), json!(out));
+            }
+            "export"
+        }
         "open" => {
             let absolute: Vec<String> = files
                 .iter()
@@ -556,6 +606,9 @@ fn build(args: &[String]) -> Result<Value, String> {
 
 /// The `stet ctl` command line. Returns the process exit code.
 pub fn cli(args: &[String]) -> i32 {
+    if args.first().is_some_and(|first| first == "import") {
+        return import(&args[1..]);
+    }
     let request = match build(args) {
         Ok(request) => request,
         Err(err) => {
@@ -575,6 +628,28 @@ pub fn cli(args: &[String]) -> i32 {
     let parsed: Value = serde_json::from_str(&reply).unwrap_or_else(|_| fail("stet sent a reply that is not JSON"));
     println!("{}", serde_json::to_string_pretty(&parsed).unwrap_or(reply));
     if parsed["ok"] == json!(true) { 0 } else { 1 }
+}
+
+/// `stet ctl import`: the import runs here, where waiting on the network or
+/// the browser holds up nothing, and the window opens what it wrote.
+fn import(args: &[String]) -> i32 {
+    let (path, said) = match crate::convert::import(args) {
+        Ok(done) => done,
+        Err(err) if err.is_empty() => {
+            eprintln!("{}", crate::convert::USAGE);
+            return 2;
+        }
+        Err(err) => {
+            println!("{}", fail(err));
+            return 1;
+        }
+    };
+    let path = std::path::absolute(&path).unwrap_or(path);
+    let open = json!({ "cmd": "open", "files": [path.to_string_lossy()] });
+    let opened = platform::request(&open.to_string(), false).is_some();
+    let reply = json!({ "ok": true, "path": path.to_string_lossy(), "message": said, "opened": opened });
+    println!("{}", serde_json::to_string_pretty(&reply).unwrap_or_default());
+    0
 }
 
 #[cfg(test)]

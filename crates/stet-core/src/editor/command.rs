@@ -163,6 +163,8 @@ impl Editor {
             "pasteplain" => self.paste(true),
             "image" | "retouch" => self.effects.push(super::Effect::EditImage),
             "publish" | "substack" => self.effects.push(super::Effect::Publish),
+            "gdoc" | "gdocs" | "googledoc" => self.export_command(&format!("gdoc {arg}")),
+            "export" => self.export_command(arg),
             "youtube" => self.effects.push(super::Effect::YouTube),
             "margin" | "scratch" => self.toggle_margin(),
             "notebook" | "nb" => self.toggle_notebook(match arg {

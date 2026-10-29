@@ -1786,6 +1786,38 @@ fn what_stet_copied_comes_back_unchanged_and_goes_out_with_html() {
 }
 
 #[test]
+fn export_asks_the_shell_and_gdoc_copies_with_pictures_inside() {
+    let dir = temp_dir("gdoc");
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("assets/a b.png"), [1, 2, 3, 4]).unwrap();
+    let taken = Taken::default();
+    let clipboard = Offered {
+        taken: taken.clone(),
+        ..Offered::default()
+    };
+    let text = "# Title\n\n![pic](assets/a%20b.png) and ![web](https://x.example/y.png)";
+    let mut ed = offered(&format!("|{text}"), clipboard);
+    ed.path = Some(dir.join("doc.md"));
+    keys(&mut ed, ":gdoc<CR>");
+    let gdoc = |out: Option<&str>| Effect::Export {
+        format: "gdoc".into(),
+        out: out.map(PathBuf::from),
+    };
+    assert_eq!(ed.take_effects(), vec![gdoc(None)]);
+    keys(&mut ed, ":export gdoc my file.docx<CR>:export pdf<CR>");
+    assert_eq!(ed.take_effects(), vec![gdoc(Some("my file.docx"))]);
+    assert!(ed.message.as_ref().unwrap().text.contains("cannot export as pdf"));
+    ed.copy_for_docs();
+    let (copied, html) = taken.borrow().clone();
+    let html = html.unwrap();
+    assert_eq!(copied.as_deref(), Some(text));
+    assert!(html.contains("<h1>Title</h1>"), "{html}");
+    assert!(html.contains(r#"src="data:image/png;base64,AQIDBA==""#), "{html}");
+    assert!(html.contains(r#"src="https://x.example/y.png""#), "{html}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_link_pasted_over_words_links_them() {
     let clipboard = || Offered {
         clip: Clip {

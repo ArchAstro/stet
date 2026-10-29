@@ -2,8 +2,11 @@
 //! window, GPU and OS integration, and drives the platform-free `stet-core`.
 
 mod app;
+mod convert;
 mod ctl;
 mod data;
+mod docx;
+mod gdoc;
 mod gpu;
 mod images;
 mod ipynb;
@@ -42,9 +45,10 @@ const USAGE: &str = "stet [options] [file]
   -h, --help              this text
 
 stet ctl ...                control the running stet from another program (stet ctl --help)
-stet import nb.ipynb        a Jupyter notebook as markdown, its outputs kept beside it
-stet export doc.md --ipynb|--html
-                            the document and its outputs as a Jupyter notebook, or a page to read";
+stet import <file|link>     a Jupyter notebook, Word file or Google Doc as markdown, review kept
+stet export doc.md --docx|--html|--ipynb|--gdoc
+                            Word (suggestions tracked), a page to read, a notebook, or a Google Doc
+                            (stet import or export with no arguments explains more)";
 
 #[derive(Default)]
 pub struct Args {
@@ -209,7 +213,7 @@ fn main() {
         std::process::exit(ctl::cli(&raw[1..]));
     }
     if let Some(command) = raw.first().filter(|first| *first == "import" || *first == "export") {
-        std::process::exit(ipynb::cli(command, &raw[1..]));
+        std::process::exit(convert::cli(command, &raw[1..]));
     }
     let args = match parse_args() {
         Ok(args) => args,

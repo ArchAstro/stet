@@ -166,46 +166,141 @@ impl Editor {
 
     /// `text` as HTML, or `None` if it is a plain run of words.
     fn rendered(&self, text: &str) -> Option<String> {
-        use pulldown_cmark::{Event, Parser, Tag, TagEnd};
         if !self.config.copy_html || text.len() > 1 << 20 {
             return None;
         }
-        let folder = self.path.as_deref().and_then(Path::parent);
-        let mut structured = false;
-        let events: Vec<Event> = Parser::new_ext(text, crate::markdown::options())
-            .map(|event| {
-                structured |= !matches!(
-                    event,
-                    Event::Start(Tag::Paragraph) | Event::End(TagEnd::Paragraph) | Event::Text(_) | Event::SoftBreak
-                );
-                match (event, folder) {
-                    // A picture beside the document, by its full address.
-                    (
-                        Event::Start(Tag::Image {
-                            link_type,
-                            dest_url,
-                            title,
-                            id,
-                        }),
-                        Some(folder),
-                    ) if !dest_url.contains(':') && !dest_url.starts_with('/') => Event::Start(Tag::Image {
+        let (html, structured) = to_html(text, self.path.as_deref().and_then(Path::parent), false);
+        structured.then_some(html)
+    }
+
+    /// The whole document on the clipboard as Google Docs takes a paste,
+    /// pictures inside it.
+    pub fn copy_for_docs(&mut self) {
+        let text = self.buf.text();
+        let html = docs_html(&text, self.path.as_deref().and_then(Path::parent));
+        self.copied = Some(text.clone());
+        self.clipboard.set_rich(&text, &html);
+    }
+
+    /// `:export <format> [path]`: the shell does the writing.
+    pub(super) fn export_command(&mut self, arg: &str) {
+        let arg = arg.trim();
+        let (format, out) = arg.split_once(char::is_whitespace).unwrap_or((arg, ""));
+        if !super::EXPORT_FORMATS.contains(&format) {
+            let formats = super::EXPORT_FORMATS.join(", ");
+            return self.error(match format {
+                "" => format!("export as what? {formats}"),
+                _ => format!("cannot export as {format}; there is {formats}"),
+            });
+        }
+        let out = Some(out.trim()).filter(|out| !out.is_empty()).map(PathBuf::from);
+        self.effects.push(super::Effect::Export {
+            format: format.to_string(),
+            out,
+        });
+    }
+
+    /// Keeps a picture's bytes beside the document, as a paste would, and
+    /// returns the link destination for it.
+    pub fn keep_picture(&mut self, bytes: &[u8], extension: &str) -> Result<String, String> {
+        self.keep_image(bytes, extension, None)
+    }
+}
+
+/// Opens a blank Google Doc in the signed-in browser.
+pub const NEW_DOC: &str = "https://docs.new";
+
+/// Pictures larger than this stay links rather than riding in the paste.
+const INLINE_LIMIT: u64 = 8 << 20;
+
+/// `text` as HTML for pasting into Google Docs: pictures beside the
+/// document travel inside it, since a browser page cannot read local files.
+pub fn docs_html(text: &str, folder: Option<&Path>) -> String {
+    to_html(text, folder, true).0
+}
+
+/// `text` as HTML, and whether it has any structure beyond words. Pictures
+/// beside the document are addressed by `file://`, or with `inline`, carried
+/// as `data:` URLs.
+fn to_html(text: &str, folder: Option<&Path>, inline: bool) -> (String, bool) {
+    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+    let mut structured = false;
+    let events: Vec<Event> = Parser::new_ext(text, crate::markdown::options())
+        .map(|event| {
+            structured |= !matches!(
+                event,
+                Event::Start(Tag::Paragraph) | Event::End(TagEnd::Paragraph) | Event::Text(_) | Event::SoftBreak
+            );
+            match (event, folder) {
+                // A picture beside the document, by its full address.
+                (
+                    Event::Start(Tag::Image {
                         link_type,
-                        dest_url: format!("file://{}", encode(&folder.join(&*dest_url).to_string_lossy())).into(),
+                        dest_url,
                         title,
                         id,
                     }),
-                    (event, _) => event,
+                    Some(folder),
+                ) if !dest_url.contains(':') && !dest_url.starts_with('/') => {
+                    let file = folder.join(super::links::percent_decode(&dest_url));
+                    let dest_url = match inline.then(|| data_url(&file)).flatten() {
+                        Some(data) => data,
+                        None => format!("file://{}", encode(&file.to_string_lossy())),
+                    };
+                    Event::Start(Tag::Image {
+                        link_type,
+                        dest_url: dest_url.into(),
+                        title,
+                        id,
+                    })
                 }
-            })
-            .collect();
-        if !structured {
-            return None;
-        }
-        let mut out = String::with_capacity(text.len() * 2);
-        pulldown_cmark::html::push_html(&mut out, events.into_iter());
-        Some(out)
-    }
+                (event, _) => event,
+            }
+        })
+        .collect();
+    let mut out = String::with_capacity(text.len() * 2);
+    pulldown_cmark::html::push_html(&mut out, events.into_iter());
+    (out, structured)
+}
 
+/// A picture file as a `data:` URL, if it is one and not too large.
+fn data_url(file: &Path) -> Option<String> {
+    let ext = file.extension()?.to_str()?.to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "jpeg",
+        "svg" => "svg+xml",
+        "png" | "gif" | "webp" | "bmp" | "avif" => &ext,
+        _ => return None,
+    };
+    if std::fs::metadata(file).ok()?.len() > INLINE_LIMIT {
+        return None;
+    }
+    Some(format!(
+        "data:image/{mime};base64,{}",
+        base64_encode(&std::fs::read(file).ok()?)
+    ))
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let bits = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |bits, (i, &b)| bits | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() {
+                ALPHABET[(bits >> (18 - 6 * i) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
+impl Editor {
     /// What the clipboard holds, as text to insert. `plain` takes its text
     /// as it is.
     pub(super) fn pasted(&mut self, plain: bool) -> Option<Pasted> {
@@ -275,7 +370,9 @@ impl Editor {
         }
     }
 
-    fn keep_data_image(&mut self, src: &str) -> Option<String> {
+    /// Saves a `data:` picture beside the document (in `image_dir`, as a
+    /// paste would) and returns the link destination for it.
+    pub fn keep_data_image(&mut self, src: &str) -> Option<String> {
         let (kind, data) = src.strip_prefix("data:image/")?.split_once(";base64,")?;
         let extension = match kind {
             "jpeg" => "jpg",

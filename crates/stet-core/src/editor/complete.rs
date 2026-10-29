@@ -15,6 +15,9 @@ pub enum Values {
     Words(&'static [&'static str]),
 }
 
+/// What `:export` writes, as its first argument names it.
+pub const EXPORT_FORMATS: &[&str] = &["docx", "gdoc", "html", "ipynb"];
+
 /// A command the `:` line knows.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Spec {
@@ -173,6 +176,18 @@ pub const COMMANDS: &[Spec] = &[
     spec(&["agent", "ask"], "[message]", "Message the assistant", Values::None),
     spec(&["actions", "context"], "", "Actions for the text here", Values::None),
     spec(&["publish", "substack"], "", "Publish to Substack", Values::None),
+    spec(
+        &["export"],
+        "<format> [path]",
+        "Export as html, ipynb, docx, or to Google Docs (gdoc)",
+        Values::Words(EXPORT_FORMATS),
+    ),
+    spec(
+        &["gdoc", "gdocs", "googledoc"],
+        "",
+        "Export to a new Google Doc",
+        Values::None,
+    ),
     spec(&["youtube"], "", "Add a YouTube video", Values::None),
     spec(
         &["theme", "colorscheme", "colo"],

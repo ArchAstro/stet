@@ -502,6 +502,30 @@ Pages like this one are how Stet asks for settings. They sit in the command menu
 </details>
 
 <details>
+<summary><b>Import and export: Word, Google Docs, Jupyter</b></summary>
+
+`:export <format> [file]` writes the document in front; `stet export doc.md --<format> [file]` does the same from a shell, and `stet ctl export` from an assistant. Review travels with it: suggestions are Word's tracked changes, and notes pinned in the margin are comments.
+
+| Format | What it writes |
+|---|---|
+| `docx` | Word. Suggestions as tracked changes, pinned margin notes (and `{>>notes<<}` in the text) as comments, pictures inside |
+| `gdoc` | A new Google Doc. With no suggestions or notes, the document goes on the clipboard and a new doc opens to paste into. With some, it is written as a `.docx`, shown in the file manager, and Drive opens: drop it in and open it with Google Docs, which turns tracked changes back into suggestions. `:gdoc` is short for it |
+| `html` | One page to read: prose, code, outputs, charts |
+| `ipynb` | A Jupyter notebook with the last outputs |
+
+`stet import <file or link> [out.md]` goes the other way, for `.docx`, `.ipynb` and Google Docs links. Suggestions come in as CriticMarkup, ready to accept or reject; comments go to the margin, each pinned to the words it is about (`## Comment from Ann`, replies below it). Pictures are saved to `assets/`.
+
+No Google account is ever connected:
+
+1. **Shared by link.** A doc shared as *Anyone with the link* is downloaded directly, through the address its own File → Download uses.
+2. **Anything else** (shared inside your work account, or only with you) is downloaded by your browser, where you are already signed in, and Stet picks the file up from Downloads. With several Google accounts in the browser, `--account you@work.com` (or the number from a `/u/1/` link, which is read for you) says which one to ask as; `--browser` skips the direct try.
+3. `--md` takes Google's own Markdown export instead, which has no suggestions or comments.
+
+Copying a selection in Stet already sends formatted text, and pasting from Google Docs already comes in as Markdown, so a few paragraphs either way need no command at all.
+
+</details>
+
+<details>
 <summary><b>Motion</b></summary>
 
 Little moves. The command menu and the selection in it answer the keyboard at once, with no animation. What is opened rarely and on purpose does move, briefly: a picture comes forward out of the text to be retouched and goes back into it, and a page of settings arrives in the menu's panel. Anything interrupted turns round from where it is. With *Reduce motion* on in System Settings, things fade where they stand instead of travelling.

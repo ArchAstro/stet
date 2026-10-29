@@ -276,6 +276,12 @@ impl Editor {
             command("Paste as plain text", chord(true, "V"), "pasteplain"),
             command("Retouch the picture on this line", ":image".to_string(), "image"),
             command("Publish to Substack…", ":publish".to_string(), "publish"),
+            command("Export to a new Google Doc", ":gdoc".to_string(), "gdoc"),
+            command(
+                "Export as Word, suggestions tracked",
+                ":export docx".to_string(),
+                "export docx",
+            ),
             command("Connect YouTube…", ":youtube".to_string(), "youtube"),
             command("Tidy the table", ":table".to_string(), "table"),
             command("Add a table row", ":table row".to_string(), "table row"),

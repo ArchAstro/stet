@@ -24,13 +24,13 @@ mod vim;
 mod tests;
 
 pub use cells::{Book, CellRun, KernelState, Which};
-pub use complete::{COMMANDS, Candidate, Completion, Spec, Values, spec_for};
-pub use links::{Backlink, Link, link_in, rewrite_destinations};
+pub use complete::{COMMANDS, Candidate, Completion, EXPORT_FORMATS, Spec, Values, spec_for};
+pub use links::{Backlink, Link, link_in, percent_decode, rewrite_destinations};
 pub use margin::margin_path;
 pub use menu::{ContextMenu, MenuAt, MenuItem};
 pub use motion::Matcher;
 pub use palette::{Act, Item, Palette, PaletteKind};
-pub use paste::{Clip, is_picture, is_video};
+pub use paste::{Clip, NEW_DOC, docs_html, is_picture, is_video};
 pub use pins::Pin;
 pub use remote::{Applied, RemoteEdit, Session, Snapshot, Target};
 pub use sheet::{Button, Field, Row, Sheet};
@@ -148,6 +148,12 @@ pub enum Effect {
     EditImage,
     /// Offer to publish the document.
     Publish,
+    /// Write the document as `format` (one of [`EXPORT_FORMATS`]), to `out`
+    /// or beside it.
+    Export {
+        format: String,
+        out: Option<PathBuf>,
+    },
     /// Offer to sign in to YouTube, where a published document's videos go.
     YouTube,
     /// A sheet's button was pressed.

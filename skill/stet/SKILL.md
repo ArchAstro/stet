@@ -232,6 +232,31 @@ stet export doc.md --ipynb       # back to Jupyter, last outputs included
 stet export doc.md --html        # one page to share: prose, code, outputs, charts
 ```
 
+### Word and Google Docs
+
+```sh
+stet ctl import '<Google Docs link>' [out.md] [--account me@work.com]   # imports and opens it as a tab
+stet ctl import report.docx                 # same for a Word file (or .ipynb)
+stet ctl export docx [out.docx] [--doc D]   # the live text; suggestions → tracked changes
+stet ctl export gdoc [--no-open]            # to Google Docs: paste, or a .docx for Drive
+```
+
+- Import: suggestions arrive as CriticMarkup (read them with `stet ctl read`,
+  they are the writer's to accept); comments go to the margin as
+  `## Comment from <name>` sections pinned with `@ <words>` (read with
+  `--margin`). Answer a comment by writing under it in the margin.
+- Export: suggestions become tracked changes and pinned margin sections
+  become comments. To leave a comment for Google Docs, add a margin section
+  pinned to the words (`stet ctl edit --margin --at end --text "## Check\n@ the words\n\nwhy?"`).
+- `gdoc` with no review copies to the clipboard and opens a new doc; with
+  review it writes a `.docx` and opens Drive. Either way the user finishes in
+  the browser (paste, or drop the file in). The reply's `action` says which
+  (`copied`, `upload`, `wrote`).
+- No OAuth: a doc shared by link is fetched directly; any other is downloaded
+  by the user's browser and read from Downloads, so they may need to pick an
+  account there. Pass `--account` when they have several Google logins.
+- `stet import`/`stet export` do the same without a running window.
+
 ## 4. Direct edits (only when asked)
 
 ```sh

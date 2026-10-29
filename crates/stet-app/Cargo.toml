@@ -17,6 +17,7 @@ stet-core = { path = "../stet-core" }
 stet-kernel = { path = "../stet-kernel" }
 stet-chart = { path = "../stet-chart" }
 stet-data = { path = "../stet-data" }
+stet-docx = { path = "../stet-docx" }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html", "simd"] }
 winit = "0.30"
 wgpu = "30"
@@ -42,10 +43,12 @@ objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = ["NSArray", "NSString", "NSURL"] }
 
 [features]
-default = ["remote-images", "substack", "youtube"]
+default = ["remote-images", "substack", "youtube", "gdocs"]
 # Publish a document to Substack as a draft.
 substack = ["dep:stet-substack"]
 # Sign in to YouTube, and upload a published document's videos there.
 youtube = ["dep:stet-youtube"]
+# Import Google Docs shared by link.
+gdocs = ["dep:ureq"]
 # Fetch images referenced by http(s) URLs.
 remote-images = ["dep:ureq"]

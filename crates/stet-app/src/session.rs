@@ -151,6 +151,10 @@ impl Session {
                     self.view.set_zoom(step);
                     rest.push(Effect::Zoom(step));
                 }
+                Effect::Export { format, out } => {
+                    let done = crate::convert::in_window(&mut self.editor, &format, out.as_deref(), None, true);
+                    self.say(done.map(|(_, said)| said));
+                }
                 Effect::Run { doc, cwd, runs } => self.kernels.run(&mut self.editor, doc, cwd, runs),
                 Effect::Interrupt { doc } => self.kernels.interrupt(doc),
                 Effect::RestartKernels { doc } => self.kernels.restart(&mut self.editor, doc),
