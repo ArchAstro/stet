@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/stet-core", "crates/stet-app", "crates/stet-kernel", "crates/stet-chart", "crates/stet-data", "crates/stet-substack", "crates/stet-youtube", "crates/stet-docx"]
 
 [workspace.package]
-version = "0.5.4"
+version = "0.5.5"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
