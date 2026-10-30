@@ -1,6 +1,7 @@
 //! Turns editor state into a `Frame`, and answers the layout questions the
 //! core cannot: display-line motion, hit testing and scrolling.
 
+mod folds;
 pub(crate) mod outputs;
 mod refs;
 
@@ -9,6 +10,7 @@ use crate::images::{self, Decoded, Images};
 use crate::motion::{self, Tween};
 use crate::retouch::{self, Button, Retouch, Tool};
 use crate::text::{Face, Fonts, Layer as Depth, LineLayout, LineSpec, RowKind, TableRow, color, layout_line};
+use folds::folded;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
@@ -70,6 +72,8 @@ pub enum Target {
     TableColumn(usize, usize),
     /// A data ref's chip; the index is into this frame's chips.
     DataRef(usize),
+    /// A code cell's fold handle, by the cell's index.
+    Fold(usize),
     /// The handle beside a table's row, by its line.
     TableRow(usize),
     /// The strips that add a column or a row at the end of the table on this line.
@@ -245,6 +249,10 @@ pub struct View {
     /// Data ref chips drawn this frame, and the one under the pointer.
     chips: Vec<refs::Chip>,
     chip_hover: Option<refs::Chip>,
+    /// Each code cell's opening fence drawn this frame, `(rect, cell)`, and
+    /// the cell whose fence the pointer is over: its fold handle shows.
+    fences: Vec<([f32; 4], usize)>,
+    fence_hover: Option<usize>,
     /// The data ref whose first rows show, by name, and under which line.
     preview: Option<(String, usize)>,
     /// Where the previewed ref's chip was drawn this frame.
@@ -315,13 +323,15 @@ impl View {
             data,
             chips: Vec::new(),
             chip_hover: None,
+            fences: Vec::new(),
+            fence_hover: None,
             preview: None,
             preview_at: None,
         }
     }
 
     /// Notes where the mouse is. True if what it is over in a table or a
-    /// chart changed, so the frame needs drawing again.
+    /// chart or a cell fence changed, so the frame needs drawing again.
     pub fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
         let hover = self.table_hover();
@@ -329,7 +339,9 @@ impl View {
         let chart_changed = std::mem::replace(&mut self.chart_hover, chart) != self.chart_hover;
         let chip = self.chip_hover();
         let chip_changed = std::mem::replace(&mut self.chip_hover, chip) != self.chip_hover;
-        (std::mem::replace(&mut self.hover, hover) != hover) | chart_changed | chip_changed
+        let fence = self.fence_at(x, y);
+        let fence_changed = std::mem::replace(&mut self.fence_hover, fence) != self.fence_hover;
+        (std::mem::replace(&mut self.hover, hover) != hover) | chart_changed | chip_changed | fence_changed
     }
 
     /// True if the table under the pointer is in the pane without the keyboard.
@@ -836,8 +848,12 @@ impl View {
         (m.line * 0.4).round()
     }
 
-    /// Full height of a line: wrapped text plus any images below it.
+    /// Full height of a line: wrapped text plus any images below it. A
+    /// folded line has no height of its own, only the outputs under it.
     fn line_height(&mut self, ed: &Editor, line: usize, m: &Metrics) -> f32 {
+        if folded(ed, line) {
+            return self.output_block(ed, line, m).map_or(0.0, |block| block.height);
+        }
         let key = self.line(ed, line, m);
         let images: f32 = self
             .line_images(ed, line, m)
@@ -972,10 +988,12 @@ impl View {
         let mut key = key;
         for _ in 0..delta.unsigned_abs() {
             if delta > 0 {
+                // Folded lines are stepped over; a fold at the very end stops.
+                let next = (line + 1..=last).find(|&next| !folded(ed, next));
                 if row + 1 < self.layouts[&key].rows.len() {
                     row += 1;
-                } else if line < last {
-                    line += 1;
+                } else if let Some(next) = next {
+                    line = next;
                     key = self.line(ed, line, &m);
                     row = 0;
                 } else {
@@ -983,8 +1001,8 @@ impl View {
                 }
             } else if row > 0 {
                 row -= 1;
-            } else if line > 0 {
-                line -= 1;
+            } else if let Some(above) = (0..line).rev().find(|&above| !folded(ed, above)) {
+                line = above;
                 key = self.line(ed, line, &m);
                 row = self.layouts[&key].rows.len() - 1;
             } else {
@@ -1011,6 +1029,13 @@ impl View {
             }
             top += height;
             line += 1;
+        }
+        // A click on a folded cell's outputs lands at the end of its summary.
+        if let Some(start) = ed
+            .notebook()
+            .and_then(|book| Some(book.cells[book.folded_over(line)?].fence.start))
+        {
+            return ed.buf.line_end(start);
         }
         let key = self.line(ed, line, &m);
         let layout = &self.layouts[&key];
@@ -1136,6 +1161,7 @@ impl View {
         self.videos.clear();
         self.pictures.clear();
         self.chips.clear();
+        self.fences.clear();
         self.preview_at = None;
         if self.retouch.as_ref().is_some_and(|retouch| retouch.gone(self.now)) {
             self.retouch = None;
@@ -1383,6 +1409,13 @@ impl View {
         let mut y = m.top_pad - ed.scroll_px;
         let mut line = ed.scroll_line;
         while y < m.bottom && line < ed.buf.line_count() {
+            if folded(ed, line) {
+                if let Some(block) = self.output_block(ed, line, &m) {
+                    y += self.draw_output(ed, block, line, y, &m, layer);
+                }
+                line += 1;
+                continue;
+            }
             let key = self.line(ed, line, &m);
             let images = self.line_images(ed, line, &m);
             let layout = &self.layouts[&key];
@@ -1431,6 +1464,7 @@ impl View {
             if !ed.doc().data_refs.is_empty() {
                 self.draw_chips(ed, line, key, left, y, &m, layer);
             }
+            self.draw_fold(ed, line, key, left, y, &m, layer);
             let layout = &self.layouts[&key];
             let bytes = |chars: Range<usize>| layout.byte_of_col(chars.start)..layout.byte_of_col(chars.end);
             if let Some(matcher) = ed.search_highlight() {

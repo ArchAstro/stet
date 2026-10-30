@@ -24,7 +24,7 @@
 //! other image.
 
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -127,6 +127,21 @@ impl Cell {
     /// The line the cell's output is shown below: its closing fence.
     pub fn last_line(&self) -> usize {
         self.fence.end.saturating_sub(1)
+    }
+
+    /// What a fold remembers the cell by: `#id` when it has one, otherwise
+    /// its code, so a fold follows the cell when lines move around it.
+    pub fn fold_key(&self) -> String {
+        match &self.info.id {
+            Some(id) => format!("#{id}"),
+            None => self.hash.clone(),
+        }
+    }
+
+    /// The lines a fold hides: the code and the closing fence. The opening
+    /// fence stays as the cell's summary, and outputs stay under it.
+    pub fn folded_lines(&self) -> Range<usize> {
+        (self.fence.start + 1).min(self.fence.end)..self.fence.end
     }
 }
 
@@ -327,6 +342,8 @@ pub struct Match {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Notebook {
     pub slots: Vec<Slot>,
+    /// [`Cell::fold_key`]s of the cells shown folded.
+    pub folded: BTreeSet<String>,
     next_uid: u64,
     /// Changed since last written.
     pub dirty: bool,
@@ -519,7 +536,7 @@ impl Notebook {
             .map(|(_, slot)| slot)
             .collect();
         slots.sort_by_key(|slot| slot.index);
-        let cells: Vec<Value> = slots
+        let entries: Vec<Value> = slots
             .into_iter()
             .map(|slot| {
                 json!({
@@ -536,7 +553,13 @@ impl Notebook {
                 })
             })
             .collect();
-        json!({ "stet_notebook": 1, "cells": cells })
+        let present: HashSet<String> = cells.iter().map(Cell::fold_key).collect();
+        let folded: Vec<&String> = self.folded.iter().filter(|key| present.contains(*key)).collect();
+        let mut value = json!({ "stet_notebook": 1, "cells": entries });
+        if !folded.is_empty() {
+            value["folded"] = json!(folded);
+        }
+        value
     }
 
     pub fn from_json(value: &Value) -> Notebook {
@@ -569,6 +592,11 @@ impl Notebook {
                 clear_on_next: false,
             });
         }
+        notebook.folded = value
+            .get("folded")
+            .and_then(Value::as_array)
+            .map(|keys| keys.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
         notebook
     }
 }
@@ -635,11 +663,11 @@ pub fn load(path: &Path) -> Notebook {
         .unwrap_or_default()
 }
 
-/// Write a notebook's outputs; with no slots left, remove the file.
+/// Write a notebook's outputs and folds; with neither left, remove the file.
 pub fn save(path: &Path, notebook: &Notebook, cells: &[Cell]) -> std::io::Result<()> {
     let file = outputs_path(path);
     let value = notebook.to_json(cells);
-    if value["cells"].as_array().is_none_or(|cells| cells.is_empty()) {
+    if value["cells"].as_array().is_none_or(|cells| cells.is_empty()) && value.get("folded").is_none() {
         return match std::fs::remove_file(&file) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),

@@ -75,6 +75,26 @@ impl Book {
         self.cells.iter().position(|cell| cell.fence.contains(&line))
     }
 
+    /// Cell `at` is shown folded: its opening fence and outputs, no code.
+    pub fn is_folded(&self, at: usize) -> bool {
+        self.on
+            && self
+                .cells
+                .get(at)
+                .is_some_and(|cell| self.notebook.folded.contains(&cell.fold_key()))
+    }
+
+    /// The folded cell whose hidden lines include `line`.
+    pub fn folded_over(&self, line: usize) -> Option<usize> {
+        let at = self.cell_at_line(line)?;
+        (self.is_folded(at) && self.cells[at].folded_lines().contains(&line)).then_some(at)
+    }
+
+    /// `line` is inside a folded cell and takes no room on screen.
+    pub fn hidden(&self, line: usize) -> bool {
+        self.folded_over(line).is_some()
+    }
+
     /// The folder pictures from runs are written to.
     pub fn files_dir(&self) -> Option<PathBuf> {
         self.path.as_deref().map(notebook::files_dir)
@@ -90,6 +110,14 @@ pub struct CellRun {
     /// The `kernel=` attribute, if the cell names one.
     pub kernel: Option<String>,
     pub code: String,
+}
+
+/// What `:fold` does to the cells it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    Toggle,
+    Close,
+    Open,
 }
 
 /// Which cells `:run` means.
@@ -167,7 +195,7 @@ impl Editor {
             book.path = path.clone();
             if let Some(path) = &path {
                 let stored = notebook::load(path);
-                if !stored.slots.is_empty() {
+                if !stored.slots.is_empty() || !stored.folded.is_empty() {
                     book.notebook = stored;
                     book.on = true;
                 }
@@ -190,6 +218,93 @@ impl Editor {
         book.matches = book.notebook.matching(&book.cells);
         book.notebook.settle(&book.matches);
         book.revision = Some(revision);
+    }
+
+    /// Fold or unfold code cells: `which` is empty for the cell at the
+    /// cursor, `all`, or a cell named as [`Book::find_cell`] takes it.
+    pub fn fold(&mut self, which: &str, how: Fold) {
+        self.refresh();
+        let cursor_line = self.buf.line_of(self.cursor);
+        let Some(book) = self.books.get_mut(&self.doc_id).filter(|book| book.on) else {
+            return self.error("folding is for notebook cells; turn on notebook mode with :notebook");
+        };
+        let targets: Vec<usize> = match which.trim() {
+            "" => match book.cell_at_line(cursor_line) {
+                Some(at) => vec![at],
+                None => return self.error("the cursor is not in a cell"),
+            },
+            "all" => (0..book.cells.len()).collect(),
+            name => match book.find_cell(name) {
+                Ok(at) => vec![at],
+                Err(err) => return self.error(err),
+            },
+        };
+        // Toggling several cells folds them all unless all are folded already.
+        let close = match how {
+            Fold::Close => true,
+            Fold::Open => false,
+            Fold::Toggle => !targets.iter().all(|&at| book.is_folded(at)),
+        };
+        for &at in &targets {
+            let key = book.cells[at].fold_key();
+            let changed = if close {
+                book.notebook.folded.insert(key)
+            } else {
+                book.notebook.folded.remove(&key)
+            };
+            book.notebook.dirty |= changed;
+        }
+        if let Some(at) = book.folded_over(cursor_line) {
+            self.cursor = self.buf.line_start(book.cells[at].fence.start);
+        }
+        let n = targets.len();
+        self.info(match (close, n) {
+            (true, 1) => "folded the cell".to_string(),
+            (false, 1) => "unfolded the cell".to_string(),
+            (true, _) => format!("folded {n} cells"),
+            (false, _) => format!("unfolded {n} cells"),
+        });
+    }
+
+    /// A folded cell the cursor has landed in, by a jump or an edit, opens:
+    /// the cursor is never somewhere the writer cannot see.
+    pub(super) fn reveal_cursor(&mut self) {
+        let line = self.buf.line_of(self.cursor);
+        let Some(book) = self.books.get_mut(&self.doc_id) else {
+            return;
+        };
+        if let Some(at) = book.folded_over(line) {
+            let key = book.cells[at].fold_key();
+            book.notebook.folded.remove(&key);
+            book.notebook.dirty = true;
+        }
+    }
+
+    /// The line `n` lines up or down from `line`, a folded cell counting as
+    /// its opening fence alone.
+    pub(super) fn step_over_folds(&self, line: usize, down: bool, n: usize) -> usize {
+        let last = self.buf.line_count() - 1;
+        let Some(book) = self.books.get(&self.doc_id) else {
+            return if down {
+                (line + n).min(last)
+            } else {
+                line.saturating_sub(n)
+            };
+        };
+        let mut at = line;
+        for _ in 0..n {
+            let next = if down { (at + 1).min(last) } else { at.saturating_sub(1) };
+            at = match book.folded_over(next) {
+                Some(cell) if down => book.cells[cell].fence.end.min(last),
+                Some(cell) => book.cells[cell].fence.start,
+                None => next,
+            };
+            // A folded cell at the end of the document: stay on its summary.
+            if book.hidden(at) {
+                at = book.cells[book.folded_over(at).unwrap_or_default()].fence.start;
+            }
+        }
+        at
     }
 
     /// `:notebook`: turn notebook mode on or off for this document.
@@ -503,6 +618,110 @@ mod editor_tests {
         assert_eq!(ed.buf.text(), DOC.replace('|', ""), "the text is untouched");
         let book = ed.notebook().unwrap();
         assert_eq!(book.output_of(1).unwrap().0.status, Status::Queued);
+    }
+
+    fn keys(ed: &mut Editor, notation: &str) {
+        for event in parse_keys(notation) {
+            ed.handle_key(event);
+        }
+        ed.refresh();
+    }
+
+    fn line(ed: &Editor) -> usize {
+        ed.buf.line_of(ed.cursor)
+    }
+
+    // DOC's cells: python on lines 5-7, sh on 9-11 (cursor on 10), plain on 13-15.
+
+    #[test]
+    fn fold_hides_the_code_and_keeps_the_opening_fence() {
+        let mut ed = editor(DOC);
+        ed.refresh();
+        ed.run_command("fold");
+        ed.refresh();
+        let book = ed.notebook().unwrap();
+        assert!(book.is_folded(1));
+        assert!(!book.hidden(9), "the opening fence is the summary");
+        assert!(book.hidden(10) && book.hidden(11), "code and closing fence are hidden");
+        assert!(!book.hidden(12));
+        assert_eq!(line(&ed), 9, "the cursor moves out of what it hid, onto the summary");
+        assert_eq!(ed.buf.text(), DOC.replace('|', ""), "folding never touches the text");
+    }
+
+    #[test]
+    fn vim_fold_keys_toggle_one_cell_or_all() {
+        let mut ed = editor(DOC);
+        ed.refresh();
+        keys(&mut ed, "za");
+        assert!(ed.notebook().unwrap().is_folded(1));
+        keys(&mut ed, "za");
+        assert!(!ed.notebook().unwrap().is_folded(1));
+        keys(&mut ed, "zM");
+        assert!((0..3).all(|at| ed.notebook().unwrap().is_folded(at)));
+        keys(&mut ed, "zR");
+        assert!((0..3).all(|at| !ed.notebook().unwrap().is_folded(at)));
+    }
+
+    #[test]
+    fn line_motion_steps_over_a_folded_cell() {
+        let mut ed = editor(DOC);
+        ed.config.visual_line_motion = false;
+        ed.refresh();
+        ed.run_command("fold 2");
+        ed.cursor = ed.buf.line_start(8);
+        keys(&mut ed, "j");
+        assert_eq!(line(&ed), 9, "onto the summary");
+        keys(&mut ed, "j");
+        assert_eq!(line(&ed), 12, "past the hidden code");
+        keys(&mut ed, "k");
+        assert_eq!(line(&ed), 9, "back onto the summary");
+        assert!(ed.notebook().unwrap().is_folded(1), "stepping over leaves it folded");
+    }
+
+    #[test]
+    fn landing_inside_a_folded_cell_opens_it() {
+        let mut ed = editor(DOC);
+        ed.refresh();
+        ed.run_command("fold all");
+        ed.run_command("11");
+        ed.refresh();
+        let book = ed.notebook().unwrap();
+        assert!(!book.is_folded(1), "a jump into hidden code unfolds that cell");
+        assert!(book.is_folded(0) && book.is_folded(2), "and only that cell");
+    }
+
+    #[test]
+    fn a_fold_follows_its_cell_through_edits() {
+        let mut ed = editor(&DOC.replace("```sh {kernel=bash}", "```sh {#greet kernel=bash}"));
+        ed.refresh();
+        ed.run_command("fold greet");
+        ed.cursor = 0;
+        keys(&mut ed, "Onew line<Esc>");
+        let book = ed.notebook().unwrap();
+        assert!(book.is_folded(1), "keyed by #id, not by line");
+        assert!(book.hidden(11) && !book.hidden(10));
+    }
+
+    #[test]
+    fn folds_are_kept_with_the_outputs_and_forgotten_with_their_cells() {
+        let mut ed = editor(DOC);
+        ed.refresh();
+        ed.run_command("fold all");
+        let book = ed.notebook().unwrap();
+        let value = book.notebook.to_json(&book.cells);
+        assert_eq!(value["folded"].as_array().map(Vec::len), Some(3));
+        let restored = Notebook::from_json(&value);
+        assert_eq!(restored.folded, book.notebook.folded);
+        let fewer = &book.cells[..1];
+        assert_eq!(book.notebook.to_json(fewer)["folded"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn folding_needs_notebook_mode() {
+        let mut ed = editor("# plain\n\n```python\nx|\n```\n");
+        ed.refresh();
+        ed.run_command("fold");
+        assert!(ed.notebook().is_none_or(|book| !book.is_folded(0)));
     }
 
     #[test]

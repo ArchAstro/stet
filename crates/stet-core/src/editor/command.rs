@@ -173,6 +173,11 @@ impl Editor {
                 _ => None,
             }),
             "run" => self.run_command_cells(arg),
+            "fold" => match arg {
+                "none" | "off" => self.fold("all", super::cells::Fold::Open),
+                _ => self.fold(arg, super::cells::Fold::Toggle),
+            },
+            "unfold" => self.fold(arg, super::cells::Fold::Open),
             "interrupt" | "stop" => self.kernel_command(false),
             "restart" => self.kernel_command(true),
             "clear" => self.clear_outputs(false),

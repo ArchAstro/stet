@@ -11,7 +11,7 @@ use crate::{Args, build_editor, no_wake};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use stet_core::editor::{Message, PaletteKind};
+use stet_core::editor::{Fold, Message, PaletteKind};
 use stet_core::input::parse_keys;
 use stet_core::{Effect, Key, KeyEvent, Mode, Mods};
 use winit::application::ApplicationHandler;
@@ -822,6 +822,7 @@ impl Running {
             Some(Target::MenuHint) => editor.open_palette(PaletteKind::Help),
             Some(Target::Note(index)) => editor.open_note(index),
             Some(Target::DataRef(index)) => session.view.toggle_preview(index),
+            Some(Target::Fold(at)) => editor.fold(&(at + 1).to_string(), Fold::Toggle),
             Some(Target::Divider) => self.splitting = true,
             Some(Target::Sheet) => {}
             Some(Target::SheetScrim) => editor.close_sheet(),

@@ -207,6 +207,8 @@ enum Action {
     Replace(char),
     CmdLine(CmdKind),
     Scroll(ScrollTo),
+    /// `za` `zo` `zc` on the cell at the cursor; `zM` `zR` on every cell.
+    Fold(char),
     SaveQuit,
     QuitForce,
     SetMark(char),
@@ -441,6 +443,7 @@ fn parse_action(event: KeyEvent, r: &mut Reader, visual: bool) -> Result<Action,
             'z' | '.' => Scroll(ScrollTo::Center),
             't' => Scroll(ScrollTo::Top),
             'b' => Scroll(ScrollTo::Bottom),
+            c @ ('a' | 'o' | 'c' | 'M' | 'R') => Fold(c),
             _ => return Err(Parse::Invalid),
         },
         'Z' => match r.char()? {
@@ -818,6 +821,16 @@ impl Editor {
                 });
             }
             Action::Scroll(to) => self.effects.push(Effect::Scroll(to)),
+            Action::Fold(key) => {
+                use super::cells::Fold;
+                match key {
+                    'a' => self.fold("", Fold::Toggle),
+                    'o' => self.fold("", Fold::Open),
+                    'c' => self.fold("", Fold::Close),
+                    'M' => self.fold("all", Fold::Close),
+                    _ => self.fold("all", Fold::Open),
+                }
+            }
             Action::SaveQuit => self.run_command("x"),
             Action::QuitForce => self.run_command("q!"),
             Action::SetMark(mark) => {
@@ -1085,10 +1098,14 @@ impl Editor {
                     return None;
                 }
                 let col = self.goal_col.unwrap_or(from - buf.line_start(line));
-                let target = if down {
-                    (line + n).min(last)
+                let target = if for_op {
+                    if down {
+                        (line + n).min(last)
+                    } else {
+                        line.saturating_sub(n)
+                    }
                 } else {
-                    line.saturating_sub(n)
+                    self.step_over_folds(line, down, n)
                 };
                 self.goal_col = Some(col);
                 self.keep_goal = true;

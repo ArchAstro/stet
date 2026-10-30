@@ -175,6 +175,12 @@ stet ctl kernel interrupt        # stop the run in progress
 stet ctl kernel restart          # forget every variable (ask first: it loses their state)
 ```
 
+Code cells fold: a folded cell shows its opening fence, a "▸ N lines" pill
+and its outputs. The user folds with `za`/`zc`/`zo` (one cell), `zM`/`zR`
+(all), a click on the pill, or `:fold [all|none|<cell>]`. Folds are kept in
+`.stet/<name>.out.json`. `stet ctl command "fold all"` folds every cell;
+fold only when asked, since it changes what they see.
+
 - Python, R and Julia cells run on Jupyter kernels and share variables
   within the document. `sh`, `node`, `sql` (duckdb, sqlite3), `ruby` and the
   like run each cell as a fresh process.

@@ -252,6 +252,9 @@ impl Editor {
             command("Restart the notebook's kernels", ":restart".to_string(), "restart"),
             command("Clear this cell's output", ":clear".to_string(), "clear"),
             command("Clear every output", ":clearall".to_string(), "clearall"),
+            command("Fold or unfold the cell at the cursor", ":fold".to_string(), "fold"),
+            command("Fold every code cell", ":fold all".to_string(), "fold all"),
+            command("Unfold every code cell", ":fold none".to_string(), "fold none"),
             command(
                 "Message the connected assistant…",
                 format!("{}  ga", chord(true, "A")),

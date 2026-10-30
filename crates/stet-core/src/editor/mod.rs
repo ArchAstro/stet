@@ -23,7 +23,7 @@ mod vim;
 #[cfg(test)]
 mod tests;
 
-pub use cells::{Book, CellRun, KernelState, Which};
+pub use cells::{Book, CellRun, Fold, KernelState, Which};
 pub use complete::{COMMANDS, Candidate, Completion, EXPORT_FORMATS, Spec, Values, spec_for};
 pub use links::{Backlink, Link, link_in, percent_decode, rewrite_destinations};
 pub use margin::margin_path;
@@ -411,6 +411,9 @@ impl Editor {
             self.code_cache.borrow_mut().1.clear();
         }
         self.refresh_book();
+        if !self.in_margin() {
+            self.reveal_cursor();
+        }
     }
 
     pub fn doc(&self) -> &Doc {
