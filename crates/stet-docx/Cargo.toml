@@ -10,6 +10,6 @@ description = "Markdown with CriticMarkup to and from Word .docx, suggestions as
 
 [dependencies]
 pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
-quick-xml = "0.41"
+quick-xml = "0.42"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 stet-core = { path = "../stet-core" }
