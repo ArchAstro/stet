@@ -27,7 +27,8 @@ pub const USAGE: &str = r#"stet ctl <command>   control the running stet (replie
                                  replies with the file written (stet import with no arguments: more)
   export <format> [out] [--doc D] [--account A] [--no-open]
                                  write the live document as docx (suggestions as tracked changes,
-                                 margin notes as comments), html, ipynb, or gdoc (a new Google Doc:
+                                 margin notes as comments), html, pdf (folded cells without their
+                                 code), ipynb, or gdoc (a new Google Doc:
                                  copied for pasting, or with suggestions or notes a .docx for Drive);
                                  --no-open leaves the browser and file manager closed
   command <command>              run an editor command, as typed after `:` (theme nord, sidebar, w)

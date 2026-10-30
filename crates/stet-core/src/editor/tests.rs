@@ -1804,9 +1804,9 @@ fn export_asks_the_shell_and_gdoc_copies_with_pictures_inside() {
         out: out.map(PathBuf::from),
     };
     assert_eq!(ed.take_effects(), vec![gdoc(None)]);
-    keys(&mut ed, ":export gdoc my file.docx<CR>:export pdf<CR>");
+    keys(&mut ed, ":export gdoc my file.docx<CR>:export rtf<CR>");
     assert_eq!(ed.take_effects(), vec![gdoc(Some("my file.docx"))]);
-    assert!(ed.message.as_ref().unwrap().text.contains("cannot export as pdf"));
+    assert!(ed.message.as_ref().unwrap().text.contains("cannot export as rtf"));
     ed.copy_for_docs();
     let (copied, html) = taken.borrow().clone();
     let html = html.unwrap();

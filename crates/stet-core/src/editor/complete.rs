@@ -16,7 +16,7 @@ pub enum Values {
 }
 
 /// What `:export` writes, as its first argument names it.
-pub const EXPORT_FORMATS: &[&str] = &["docx", "gdoc", "html", "ipynb"];
+pub const EXPORT_FORMATS: &[&str] = &["docx", "gdoc", "html", "ipynb", "pdf"];
 
 /// A command the `:` line knows.
 #[derive(Debug, PartialEq, Eq)]

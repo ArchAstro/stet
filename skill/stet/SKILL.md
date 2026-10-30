@@ -236,6 +236,7 @@ stet ctl data peek signups --rows 5
 stet import nb.ipynb             # nb.md, outputs kept beside it (.stet/)
 stet export doc.md --ipynb       # back to Jupyter, last outputs included
 stet export doc.md --html        # one page to share: prose, code, outputs, charts
+stet export doc.md --pdf --no-code   # a PDF report: prose and outputs, no code
 ```
 
 ### Word and Google Docs
@@ -244,6 +245,7 @@ stet export doc.md --html        # one page to share: prose, code, outputs, char
 stet ctl import '<Google Docs link>' [out.md] [--account me@work.com]   # imports and opens it as a tab
 stet ctl import report.docx                 # same for a Word file (or .ipynb)
 stet ctl export docx [out.docx] [--doc D]   # the live text; suggestions → tracked changes
+stet ctl export pdf [out.pdf]               # a PDF report; folded cells print without their code
 stet ctl export gdoc [--no-open]            # to Google Docs: paste, or a .docx for Drive
 ```
 

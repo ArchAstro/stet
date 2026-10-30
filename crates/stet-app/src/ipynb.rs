@@ -424,17 +424,19 @@ impl Page<'_> {
             };
             Some(format!("<img alt=\"output\" src=\"data:{mime};base64,{encoded}\">"))
         };
+        // A plotting library's own picture is the chart as its author styled
+        // it; the native chart is drawn when there is no picture.
+        for mime in ["image/png", "image/jpeg", "image/gif", "image/svg+xml"] {
+            if let Some(picture) = picture(mime) {
+                return picture;
+            }
+        }
         let chart = data
             .iter()
             .find(|(mime, _)| *mime == stet_chart::MIME || mime.starts_with("application/vnd.vegalite.v"))
             .and_then(|(_, spec)| self.chart(spec).ok());
         if let Some(chart) = chart {
             return chart;
-        }
-        for mime in ["image/png", "image/jpeg", "image/gif", "image/svg+xml"] {
-            if let Some(picture) = picture(mime) {
-                return picture;
-            }
         }
         if let Some(table) = data.get(stet_kernel::TABLE) {
             return self.table(table);
@@ -475,10 +477,22 @@ fn plain(text: &str) -> String {
     crate::view::outputs::plain_lines(text).join("\n")
 }
 
+/// Which cells' code a page shows. Outputs always show.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Code {
+    /// Every cell's code.
+    All,
+    /// The code of cells that are not folded: the page is what the window shows.
+    #[default]
+    AsFolded,
+    /// No code, only prose and outputs.
+    None,
+}
+
 /// The document as one page: prose, code, and what each cell last showed.
-pub fn export_html(ed: &Editor, notebook: &Notebook, files: Option<&Path>) -> String {
+pub fn export_html(ed: &Editor, notebook: &Notebook, files: Option<&Path>, code: Code) -> String {
     let text = ed.buf.text();
-    let parts = parts(&text);
+    let parts = parts(without_front_matter(&text));
     let code_cells: Vec<Cell> = parts
         .iter()
         .filter_map(|part| match part {
@@ -488,6 +502,11 @@ pub fn export_html(ed: &Editor, notebook: &Notebook, files: Option<&Path>) -> St
         .collect();
     let outputs = outputs_of(notebook, &code_cells);
     let page = Page { ed, files };
+    // Folds as the window has them, else as last saved.
+    let folded = ed
+        .notebook()
+        .filter(|book| book.on)
+        .map_or(&notebook.folded, |book| &book.notebook.folded);
     let mut body = String::new();
     let mut code_at = 0;
     for part in &parts {
@@ -500,6 +519,7 @@ pub fn export_html(ed: &Editor, notebook: &Notebook, files: Option<&Path>) -> St
                     .flatten();
                 match spec.map(|spec| page.chart(&spec)) {
                     Some(Ok(chart)) => body.push_str(&chart),
+                    _ if code == Code::None || (code == Code::AsFolded && folded.contains(&cell.fold_key())) => {}
                     other => {
                         body.push_str(&format!(
                             "<pre class=\"code\"><code class=\"language-{}\">{}</code></pre>",
@@ -542,6 +562,18 @@ pub fn export_html(ed: &Editor, notebook: &Notebook, files: Option<&Path>) -> St
     )
 }
 
+/// `text` after its front matter, which is settings, not something to read.
+fn without_front_matter(text: &str) -> &str {
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return text;
+    };
+    let end = rest
+        .match_indices("\n---")
+        .map(|(at, _)| at + 4)
+        .find(|&end| rest[end..].is_empty() || rest[end..].starts_with('\n'));
+    end.map_or(text, |end| &rest[end..])
+}
+
 const STYLE: &str = ":root{--bg:#fbf7f1;--fg:#1f1d1a;--muted:#7a746b;--code:#f3eee5;--rule:#e4ddd1;--err:#b4382c}\
 @media (prefers-color-scheme:dark){:root{--bg:#1b1a18;--fg:#ebe6dd;--muted:#9a9388;--code:#262420;--rule:#36332e;--err:#e0705f}}\
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.6 ui-serif,Georgia,serif}\
@@ -556,7 +588,10 @@ pre.out{margin:.4rem 0;white-space:pre-wrap}pre.err{color:var(--err)}\
 table{border-collapse:collapse;font:14px/1.4 ui-monospace,Menlo,monospace;margin:.5rem 0;display:block;overflow-x:auto}\
 th{text-align:left;border-bottom:1px solid var(--rule)}th,td{padding:.2rem .8rem .2rem 0}td.n{text-align:right}\
 tbody tr:nth-child(even){background:var(--code)}.note{color:var(--muted);font-size:14px}\
-a{color:inherit}";
+a{color:inherit}\
+@media print{:root{--bg:#fff;--fg:#1f1d1a;--muted:#6b665e;--code:#f4f1ec;--rule:#ddd6ca;--err:#b4382c}\
+body{font-size:11pt}main{max-width:none;padding:0}pre.code,pre.out{white-space:pre-wrap}\
+table{display:table}pre,figure,img,table,.outputs{break-inside:avoid}h1,h2,h3{break-after:avoid}}";
 
 #[cfg(test)]
 mod tests {
@@ -620,6 +655,42 @@ mod tests {
         assert!(joined(&back["cells"][2]["source"]).contains("An example:\n\n```python\nnot run\n```"));
         assert!(text.contains("```python {.norun}\nnot run"), "{text}");
         assert_eq!(back["metadata"]["kernelspec"]["name"], "python3");
+    }
+
+    #[test]
+    fn pages_show_code_as_asked_and_skip_front_matter() {
+        let mut ed = Editor::new(
+            stet_core::Config::default(),
+            Box::new(stet_core::MemoryClipboard::default()),
+        );
+        ed.set_text("---\nkernel: python3\n---\n\n# Report\n\n```python {#load}\nloaded = 1\n```\n\n```python {#plot}\nplotted = 2\n```\n");
+        ed.refresh();
+        ed.run_command("fold load");
+        let page = |code| export_html(&ed, &Notebook::default(), None, code);
+        let folded = page(Code::AsFolded);
+        assert!(!folded.contains("kernel:"), "front matter is settings, not prose");
+        assert!(folded.contains("<h1>Report</h1>") || folded.contains("Report</h1>"));
+        assert!(
+            !folded.contains("loaded = 1") && folded.contains("plotted = 2"),
+            "a folded cell's code stays out"
+        );
+        assert!(page(Code::All).contains("loaded = 1"));
+        let none = page(Code::None);
+        assert!(!none.contains("loaded = 1") && !none.contains("plotted = 2"));
+    }
+
+    #[test]
+    fn a_plots_own_picture_wins_over_its_native_chart() {
+        let ed = Editor::new(
+            stet_core::Config::default(),
+            Box::new(stet_core::MemoryClipboard::default()),
+        );
+        let page = Page { ed: &ed, files: None };
+        let data = json!({stet_chart::MIME: {"mark": "bar"}, "image/svg+xml": "<svg/>"});
+        assert!(
+            page.data(data.as_object().unwrap())
+                .contains("data:image/svg+xml;base64,")
+        );
     }
 
     #[test]

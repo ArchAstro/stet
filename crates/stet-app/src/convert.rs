@@ -1,6 +1,7 @@
 //! `stet import` and `stet export`: every format in and out. One export
 //! serves `:export`, the command line and `stet ctl export`.
 
+use crate::ipynb::Code;
 use crate::{docx, gdoc, ipynb};
 use std::path::{Path, PathBuf};
 use stet_core::Editor;
@@ -17,11 +18,14 @@ stet import <Google Docs link> [out.md] [--account <email|N>] [--browser] [--md]
     other is downloaded by your browser as you (--account picks which login, --browser goes
     there at once). --md takes Google's own Markdown, which has no suggestions or comments
 
-stet export <doc.md> --docx|--html|--ipynb|--gdoc [out] [--account <email|N>] [--no-open]
+stet export <doc.md> --docx|--html|--pdf|--ipynb|--gdoc [out] [--account <email|N>] [--no-open]
+             [--code|--no-code]
     docx   Word, suggestions as tracked changes and margin notes as comments
     html   one page to read: prose, code, outputs, charts
+    pdf    the same page as a PDF, printed by Chrome, Chromium or Edge
     ipynb  a Jupyter notebook with the last outputs
-    gdoc   a new Google Doc: pasted, or with suggestions or notes, a .docx to drop into Drive";
+    gdoc   a new Google Doc: pasted, or with suggestions or notes, a .docx to drop into Drive
+    html and pdf leave out the code of folded cells; --no-code leaves out all code, --code none";
 
 /// Where Google Drive takes an upload.
 const DRIVE: &str = "https://drive.google.com/drive/my-drive";
@@ -48,6 +52,11 @@ fn target(ed: &Editor, out: Option<&Path>, extension: &str) -> Result<PathBuf, S
 
 /// Writes the document as `format`, to `out` or beside it.
 pub fn export(ed: &mut Editor, format: &str, out: Option<&Path>) -> Result<Exported, String> {
+    export_with(ed, format, out, Code::default())
+}
+
+/// [`export`], with a say in which code an html or pdf page shows.
+pub fn export_with(ed: &mut Editor, format: &str, out: Option<&Path>, code: Code) -> Result<Exported, String> {
     let write = |target: &Path, text: String| {
         std::fs::write(target, text).map_err(|err| format!("{}: {err}", target.display()))
     };
@@ -60,9 +69,22 @@ pub fn export(ed: &mut Editor, format: &str, out: Option<&Path>) -> Result<Expor
                 let value = ipynb::export_ipynb(&ed.buf.text(), &notebook, files.as_deref());
                 serde_json::to_string_pretty(&value).map_err(|err| err.to_string())? + "\n"
             } else {
-                ipynb::export_html(ed, &notebook, files.as_deref())
+                ipynb::export_html(ed, &notebook, files.as_deref(), code)
             };
             write(&target, text)?;
+            Ok(Exported::Wrote(target))
+        }
+        "pdf" => {
+            let target = target(ed, out, "pdf")?;
+            let notebook = ed.path.as_deref().map(notebook::load).unwrap_or_default();
+            let files = ed.path.as_deref().map(notebook::files_dir).filter(|dir| dir.exists());
+            // Beside the document, so pictures linked from the prose resolve.
+            let folder = ed.path.as_deref().and_then(Path::parent).unwrap_or(Path::new("."));
+            let page = folder.join(format!(".stet-print-{}.html", std::process::id()));
+            write(&page, ipynb::export_html(ed, &notebook, files.as_deref(), code))?;
+            let printed = print_pdf(&page, &target);
+            let _ = std::fs::remove_file(&page);
+            printed?;
             Ok(Exported::Wrote(target))
         }
         "docx" => {
@@ -83,6 +105,94 @@ pub fn export(ed: &mut Editor, format: &str, out: Option<&Path>) -> Result<Expor
         )),
     }
 }
+
+/// A browser that prints pages to PDF: `STET_BROWSER`, else Chrome,
+/// Chromium, Edge or Brave wherever they usually are.
+fn browser() -> Option<PathBuf> {
+    if let Some(chosen) = std::env::var_os("STET_BROWSER") {
+        return Some(PathBuf::from(chosen));
+    }
+    let apps = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    ];
+    let names = [
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "microsoft-edge",
+        "brave-browser",
+    ];
+    let on_path = |name: &str| {
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    };
+    apps.iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+        .or_else(|| names.iter().find_map(|name| on_path(name)))
+}
+
+/// Prints the html file `page` to `pdf` with a headless browser.
+fn print_pdf(page: &Path, pdf: &Path) -> Result<(), String> {
+    let browser = browser().ok_or("printing a PDF needs Chrome, Chromium, Edge or Brave (or STET_BROWSER)")?;
+    let page = std::path::absolute(page).map_err(|err| err.to_string())?;
+    let pdf = std::path::absolute(pdf).map_err(|err| err.to_string())?;
+    // A profile of its own: the user's open browser holds theirs.
+    let profile = std::env::temp_dir().join(format!("stet-print-{}", std::process::id()));
+    let _ = std::fs::remove_file(&pdf);
+    let mut child = std::process::Command::new(&browser)
+        .args([
+            "--headless",
+            "--disable-gpu",
+            "--no-pdf-header-footer",
+            "--no-first-run",
+        ])
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg(format!("--print-to-pdf={}", pdf.display()))
+        .arg(format!("file://{}", page.display()))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|err| format!("{}: {err}", browser.display()))?;
+    // Chrome can linger after writing the file, so a finished file is
+    // enough: one whose size has stopped changing.
+    let size = || std::fs::metadata(&pdf).map_or(0, |meta| meta.len());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(PRINT_SECONDS);
+    let mut last = 0;
+    let printed = loop {
+        let now = size();
+        if now > 0 && now == last {
+            break true;
+        }
+        last = now;
+        match child.try_wait() {
+            Ok(Some(_)) => break size() > 0,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(250))
+            }
+            _ => break false,
+        }
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&profile);
+    if printed {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} did not print it within {PRINT_SECONDS} seconds",
+            browser.display()
+        ))
+    }
+}
+
+/// How long a browser gets to print a page.
+const PRINT_SECONDS: u64 = 60;
 
 /// Shows `path` in the file manager.
 fn reveal(path: &Path) {
@@ -208,11 +318,14 @@ pub fn import(args: &[String]) -> Result<(PathBuf, String), String> {
 /// `stet export`. Says what it did.
 fn export_cli(args: &[String]) -> Result<String, String> {
     let (mut files, mut format, mut account, mut open) = (Vec::new(), None, None, true);
+    let mut code = Code::default();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--account" => account = Some(args.next().ok_or("--account needs an email or a number")?.as_str()),
             "--no-open" => open = false,
+            "--code" => code = Code::All,
+            "--no-code" => code = Code::None,
             flag if flag
                 .strip_prefix("--")
                 .is_some_and(|name| EXPORT_FORMATS.contains(&name)) =>
@@ -233,7 +346,7 @@ fn export_cli(args: &[String]) -> Result<String, String> {
         _ => return Err(String::new()),
     };
     let mut ed = editor_for(source)?;
-    let exported = export(&mut ed, format, out.as_deref())?;
+    let exported = export_with(&mut ed, format, out.as_deref(), code)?;
     let said = finish(&exported, account, open);
     if exported == Exported::Paste {
         let text = ed.buf.text();
@@ -295,9 +408,9 @@ mod tests {
             Ok(Exported::Upload(dir.join("out.docx")))
         );
         assert!(
-            export(&mut ed, "pdf", None)
+            export(&mut ed, "rtf", None)
                 .unwrap_err()
-                .contains("cannot export as pdf")
+                .contains("cannot export as rtf")
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

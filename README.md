@@ -511,7 +511,10 @@ Pages like this one are how Stet asks for settings. They sit in the command menu
 | `docx` | Word. Suggestions as tracked changes, pinned margin notes (and `{>>notes<<}` in the text) as comments, pictures inside |
 | `gdoc` | A new Google Doc. With no suggestions or notes, the document goes on the clipboard and a new doc opens to paste into. With some, it is written as a `.docx`, shown in the file manager, and Drive opens: drop it in and open it with Google Docs, which turns tracked changes back into suggestions. `:gdoc` is short for it |
 | `html` | One page to read: prose, code, outputs, charts |
+| `pdf` | The same page as a PDF, printed by Chrome, Chromium, Edge or Brave (`STET_BROWSER` picks another) |
 | `ipynb` | A Jupyter notebook with the last outputs |
+
+In `html` and `pdf`, a folded code cell shows only its outputs, so folding everything (`zM`) gives a report with no code. From a shell, `--no-code` leaves out all code and `--code` keeps it all.
 
 `stet import <file or link> [out.md]` goes the other way, for `.docx`, `.ipynb` and Google Docs links. Suggestions come in as CriticMarkup, ready to accept or reject; comments go to the margin, each pinned to the words it is about (`## Comment from Ann`, replies below it). Pictures are saved to `assets/`.
 
