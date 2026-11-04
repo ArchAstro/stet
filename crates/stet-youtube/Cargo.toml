@@ -9,7 +9,7 @@ homepage.workspace = true
 description = "Upload a document's videos to YouTube, once each, over the YouTube Data API"
 
 [dependencies]
-getrandom = "0.3"
+getrandom = "0.4"
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 ureq = "3"
