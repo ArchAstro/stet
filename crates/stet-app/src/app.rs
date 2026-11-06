@@ -461,7 +461,16 @@ impl Running {
         }
         let texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+            // An occluded window is drawn again when it is shown (see
+            // `WindowEvent::Occluded`); asking now would spin while hidden.
+            wgpu::CurrentSurfaceTexture::Occluded => return,
+            // A timeout drops the frame, so ask for another rather than wait
+            // for input: the first frame can time out while the window is
+            // still coming on screen.
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                self.window.request_redraw();
+                return;
+            }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
                 self.surface.configure(&self.gpu.device, &self.surface_config);
                 self.window.request_redraw();
@@ -1098,6 +1107,8 @@ impl Running {
                 self.resize(size.width, size.height);
             }
             WindowEvent::RedrawRequested => self.redraw(),
+            // A frame asked for while the window was hidden was dropped.
+            WindowEvent::Occluded(false) => self.window.request_redraw(),
             WindowEvent::ModifiersChanged(mods) => self.mods = mods.state(),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
